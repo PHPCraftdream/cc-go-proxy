@@ -1,86 +1,112 @@
 // Package server implements the HTTP proxy server that translates between
-// Claude API format and OpenAI-compatible providers (OpenRouter, OpenAI Direct, Ollama).
+// Claude API format and upstream providers (OpenAI-compatible, Codex OAuth).
 //
-// The server receives Claude API requests on /v1/messages, converts them to OpenAI format,
-// forwards them to the configured provider, and converts responses back to Claude format.
-// It handles both streaming (SSE) and non-streaming responses, including tool calls and
-// thinking blocks from reasoning models.
+// Requests arrive on /call/{token}/v1/messages; the token selects a profile,
+// which selects the provider and model mapping.
 package server
 
 import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/claude-code-proxy/proxy/internal/config"
 	"github.com/claude-code-proxy/proxy/internal/converter"
-	"github.com/claude-code-proxy/proxy/internal/daemon"
+	"github.com/claude-code-proxy/proxy/internal/creds"
+	"github.com/claude-code-proxy/proxy/internal/oauth"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
 const (
-	// ProxyVersion is the current version of the Claude Code Proxy
+	// ProxyVersion is the current version of the proxy
 	ProxyVersion = "1.0.0"
 )
 
-// Start initializes and starts the HTTP server
+// sessions caches one OAuth session per codex provider.
+type sessions struct {
+	store creds.Store
+	mu    sync.Mutex
+	m     map[string]*oauth.Session
+}
+
+func (s *sessions) get(provider string) *oauth.Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.m == nil {
+		s.m = map[string]*oauth.Session{}
+	}
+	if ss, ok := s.m[provider]; ok {
+		return ss
+	}
+	ss := &oauth.Session{Store: oauth.Store{Path: s.store.OAuthPath(provider)}, Client: &oauth.Client{}}
+	s.m[provider] = ss
+	return ss
+}
+
+// Start initializes and starts the HTTP server (blocks).
 func Start(cfg *config.Config) error {
+	dir, err := creds.DefaultDir()
+	if err != nil {
+		return err
+	}
+	store := creds.Store{Dir: dir}
+	index, build := profileResolver(cfg, store)
+
 	app := fiber.New(fiber.Config{
 		DisableStartupMessage: true,
-		ServerHeader:          "Claude-Code-Proxy",
-		AppName:               "Claude Code Proxy v" + ProxyVersion,
+		ServerHeader:          "ccgp",
+		AppName:               "ccgp v" + ProxyVersion,
 	})
 
-	// Middleware
+	// Middleware. No CORS: browsers must not reach the proxy.
 	app.Use(recover.New())
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,PUT,DELETE,OPTIONS",
-		AllowHeaders: "*",
-	}))
 
 	// Enable HTTP logging only when simple log mode is enabled
 	if cfg.SimpleLog {
-		app.Use(logger.New(logger.Config{
-			Format: "[${time}] ${status} - ${latency} ${method} ${path}\n",
-		}))
+		app.Use(func(c *fiber.Ctx) error {
+			start := time.Now()
+			err := c.Next()
+			profile := ""
+			if rc := requestConfig(c); rc != nil {
+				profile = " [" + rc.Profile + "]"
+			}
+			fmt.Printf("[%s] %d - %s %s %s%s\n", start.Format("15:04:05"),
+				c.Response().StatusCode(), time.Since(start), c.Method(), maskToken(c.Path()), profile)
+			return err
+		})
 	}
 
-	// Health check endpoint
+	// Health check endpoint; pid lets `ccgp stop` verify the process.
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
+			"service": "ccgp",
 			"version": ProxyVersion,
+			"pid":     os.Getpid(),
 		})
 	})
 
-	// Root endpoint - proxy info
-	app.Get("/", func(c *fiber.Ctx) error {
+	auth := requireProfile(index, build)
+
+	// Proxy info (token-protected: exposes routing config)
+	app.Get(callPrefix+":token/", auth, func(c *fiber.Ctx) error {
+		rc := requestConfig(c)
 		return c.JSON(fiber.Map{
-			"message": "Claude Code Proxy",
-			"version": ProxyVersion,
-			"status":  "running",
-			"config": fiber.Map{
-				"openai_base_url": cfg.OpenAIBaseURL,
-				"routing_mode":    getRoutingMode(cfg),
-				"opus_model":      getOpusModel(cfg),
-				"sonnet_model":    getSonnetModel(cfg),
-				"haiku_model":     getHaikuModel(cfg),
-			},
-			"endpoints": fiber.Map{
-				"health":       "/health",
-				"messages":     "/v1/messages",
-				"count_tokens": "/v1/messages/count_tokens",
-			},
+			"version":  ProxyVersion,
+			"profile":  rc.Profile,
+			"provider": rc.ProviderName,
+			"type":     rc.ProviderType,
+			"models":   rc.ModelRules,
+			"default":  rc.DefaultModel,
 		})
 	})
 
 	// Claude API endpoints
-	setupClaudeEndpoints(app, cfg)
+	setupClaudeEndpoints(app, auth, &sessions{store: store})
 
 	// Graceful shutdown
 	go func() {
@@ -88,74 +114,81 @@ func Start(cfg *config.Config) error {
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 		<-sigChan
 		fmt.Println("\n🛑 Shutting down...")
-		daemon.Cleanup()
 		_ = app.Shutdown()
 	}()
 
-	// Start server
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
-	fmt.Printf("✅ Proxy running at http://localhost:%s\n", cfg.Port)
-
-	if cfg.PassthroughMode {
-		fmt.Printf("   Mode: PASSTHROUGH (direct to Anthropic API)\n")
-	} else {
-		fmt.Printf("   Mode: Conversion (via %s)\n", cfg.OpenAIBaseURL)
-		fmt.Printf("   Model Routing: %s\n", getRoutingMode(cfg))
-
-		// Show actual model mappings
-		if cfg.OpusModel != "" || cfg.SonnetModel != "" || cfg.HaikuModel != "" {
-			fmt.Printf("   Models:\n")
-			if cfg.OpusModel != "" {
-				fmt.Printf("     - Opus   → %s\n", cfg.OpusModel)
-			}
-			if cfg.SonnetModel != "" {
-				fmt.Printf("     - Sonnet → %s\n", cfg.SonnetModel)
-			}
-			if cfg.HaikuModel != "" {
-				fmt.Printf("     - Haiku  → %s\n", cfg.HaikuModel)
-			}
-		}
+	fmt.Printf("✅ ccgp listening on http://%s%s<token>\n", addr, callPrefix)
+	for name, p := range cfg.Profiles {
+		fmt.Printf("   profile %s → provider %s (%s)\n", name, p.Provider, cfg.Providers[p.Provider].Type)
+	}
+	if cfg.IsEnvMode() {
+		fmt.Printf("   env-only mode: routing %s\n", getRoutingMode(cfg))
 	}
 
 	return app.Listen(addr)
+}
+
+// profileResolver builds the token index and per-profile config factory.
+func profileResolver(cfg *config.Config, store creds.Store) (*creds.TokenIndex, profileBuilder) {
+	if cfg.IsEnvMode() {
+		// Single env token; base config already holds env provider + tier overrides.
+		return creds.StaticIndex(config.EnvProfile, cfg.Token),
+			func(string) (*config.Config, error) { return cfg, nil }
+	}
+	src := newCfgSource(cfg)
+	build := func(profile string) (*config.Config, error) {
+		var err error
+		cfg := src.get()
+		pf, ok := cfg.Profiles[profile]
+		if !ok {
+			// Token exists in creds but profile was removed from config.
+			return nil, fmt.Errorf("profile %q is not configured", profile)
+		}
+		pr := cfg.Providers[pf.Provider]
+		key := ""
+		if pr.Type == config.ProviderTypeOpenAI {
+			if pr.APIKeyEnv != "" {
+				key = os.Getenv(pr.APIKeyEnv)
+			} else if key, err = store.APIKey(pr.Name); err != nil {
+				return nil, err
+			}
+			if key == "" && !isLocalURL(pr.BaseURL) {
+				return nil, fmt.Errorf("provider %q has no API key, run `ccgp login %s`", pr.Name, pr.Name)
+			}
+			if key == "" {
+				key = "ollama"
+			}
+		}
+		return cfg.ForProfile(profile, key)
+	}
+	return &creds.TokenIndex{Store: store}, build
+}
+
+func isLocalURL(u string) bool {
+	c := &config.Config{OpenAIBaseURL: u}
+	return c.IsLocalhost()
 }
 
 func getRoutingMode(cfg *config.Config) string {
 	if cfg.OpusModel != "" || cfg.SonnetModel != "" || cfg.HaikuModel != "" {
 		return "custom (env overrides)"
 	}
-	return "pattern-based"
+	return "pattern-based (" + converter.DefaultOpusModel + " / " + converter.DefaultHaikuModel + ")"
 }
 
-func getOpusModel(cfg *config.Config) string {
-	if cfg.OpusModel != "" {
-		return cfg.OpusModel
-	}
-	return converter.DefaultOpusModel + " (pattern-based)"
-}
-
-func getSonnetModel(cfg *config.Config) string {
-	if cfg.SonnetModel != "" {
-		return cfg.SonnetModel
-	}
-	return "version-aware (pattern-based)"
-}
-
-func getHaikuModel(cfg *config.Config) string {
-	if cfg.HaikuModel != "" {
-		return cfg.HaikuModel
-	}
-	return converter.DefaultHaikuModel + " (pattern-based)"
-}
-
-func setupClaudeEndpoints(app *fiber.App, cfg *config.Config) {
+func setupClaudeEndpoints(app *fiber.App, auth fiber.Handler, ss *sessions) {
 	// Messages endpoint - main Claude API
-	app.Post("/v1/messages", func(c *fiber.Ctx) error {
+	app.Post(callPrefix+":token/v1/messages", auth, func(c *fiber.Ctx) error {
+		cfg := requestConfig(c)
+		if cfg.ProviderType == config.ProviderTypeCodex {
+			return handleCodexMessages(c, cfg, ss.get(cfg.ProviderName))
+		}
 		return handleMessages(c, cfg)
 	})
 
 	// Token counting endpoint
-	app.Post("/v1/messages/count_tokens", func(c *fiber.Ctx) error {
-		return handleCountTokens(c, cfg)
+	app.Post(callPrefix+":token/v1/messages/count_tokens", auth, func(c *fiber.Ctx) error {
+		return handleCountTokens(c, requestConfig(c))
 	})
 }

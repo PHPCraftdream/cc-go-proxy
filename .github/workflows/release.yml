@@ -70,38 +70,38 @@ jobs:
 
         ### macOS (Apple Silicon)
         ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/claude-code-proxy-darwin-arm64
-        chmod +x claude-code-proxy-darwin-arm64
-        sudo mv claude-code-proxy-darwin-arm64 /usr/local/bin/claude-code-proxy
+        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-darwin-arm64
+        chmod +x ccgp-darwin-arm64
+        sudo mv ccgp-darwin-arm64 /usr/local/bin/ccgp
         ```
 
         ### macOS (Intel)
         ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/claude-code-proxy-darwin-amd64
-        chmod +x claude-code-proxy-darwin-amd64
-        sudo mv claude-code-proxy-darwin-amd64 /usr/local/bin/claude-code-proxy
+        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-darwin-amd64
+        chmod +x ccgp-darwin-amd64
+        sudo mv ccgp-darwin-amd64 /usr/local/bin/ccgp
         ```
 
         ### Linux (x86_64)
         ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/claude-code-proxy-linux-amd64
-        chmod +x claude-code-proxy-linux-amd64
-        sudo mv claude-code-proxy-linux-amd64 /usr/local/bin/claude-code-proxy
+        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-linux-amd64
+        chmod +x ccgp-linux-amd64
+        sudo mv ccgp-linux-amd64 /usr/local/bin/ccgp
         ```
 
         ### Linux (ARM64)
         ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/claude-code-proxy-linux-arm64
-        chmod +x claude-code-proxy-linux-arm64
-        sudo mv claude-code-proxy-linux-arm64 /usr/local/bin/claude-code-proxy
+        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-linux-arm64
+        chmod +x ccgp-linux-arm64
+        sudo mv ccgp-linux-arm64 /usr/local/bin/ccgp
         ```
 
         ### Windows
-        Download `claude-code-proxy-windows-amd64.exe` and add to your PATH.
+        Download `ccgp-windows-amd64.exe` and add to your PATH.
 
         ## Verify Installation
         ```bash
-        claude-code-proxy --help
+        ccgp help
         ```
 
         ## Quick Start
@@ -112,7 +112,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          dist/claude-code-proxy-*
+          dist/ccgp-*
           dist/checksums.txt
         body_path: /tmp/changelog_section.md
         generate_release_notes: ${{ steps.extract-release-notes.outputs.has_changelog != 'true' }}

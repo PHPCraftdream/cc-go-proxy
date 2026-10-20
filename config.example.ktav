@@ -1,0 +1,46 @@
+## ccgp config (Ktav 0.8). Default location:
+##   Windows: %APPDATA%\cc-go-proxy\config.ktav
+##   Linux:   ~/.config/cc-go-proxy/config.ktav
+## Override with CCGP_CONFIG. HOST / PORT env vars win over `listen`.
+## ccgp never writes this file; secrets live in <config dir>/cc-go-proxy/creds.
+
+listen.host: 127.0.0.1
+listen.port: 60093
+
+providers: [
+    ## ChatGPT subscription via OAuth (device code, `ccgp login codex`).
+    {
+        name: codex
+        type: codex
+    }
+    ## OpenAI-compatible Chat Completions. Key is prompted on first use and
+    ## stored in creds, or read from the env var named by api_key_env.
+    {
+        name: openai
+        type: openai
+        base_url: https://api.openai.com/v1
+    }
+]
+
+## `ccgp <profile> [claude args]` runs Claude Code through a profile.
+## Each profile gets its own URL token (generated, stored in creds).
+## Model rules: checked in order, first glob match wins (case-insensitive);
+## default_model applies when no rule matches.
+profiles: [
+    {
+        name: work
+        provider: codex
+        default_model: gpt-5
+        models: [
+            {
+                match: *haiku*
+                model: gpt-5-mini
+            }
+        ]
+    }
+    {
+        name: agents
+        provider: openai
+        default_model: gpt-5-mini
+    }
+]

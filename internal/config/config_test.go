@@ -3,8 +3,63 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+const testToken = "test-token-0123456789abcdef0123456789"
+
+// TestMain provides a valid PROXY_TOKEN (Load requires it) and isolates
+// the user config dir so a real config.ktav is never picked up.
+func TestMain(m *testing.M) {
+	if os.Getenv("PROXY_TOKEN") == "" {
+		os.Setenv("PROXY_TOKEN", testToken)
+	}
+	dir, err := os.MkdirTemp("", "ccgp-config-test")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("APPDATA", dir)
+	os.Setenv("XDG_CONFIG_HOME", dir)
+	os.Unsetenv(ConfigFileEnv)
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func TestLoadToken(t *testing.T) {
+	orig := os.Getenv("PROXY_TOKEN")
+	t.Cleanup(func() { os.Setenv("PROXY_TOKEN", orig) })
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	tests := []struct {
+		name    string
+		token   string
+		wantErr bool
+	}{
+		{"missing", "", true},
+		{"too short", strings.Repeat("a", MinTokenLength-1), true},
+		{"min length", strings.Repeat("a", MinTokenLength), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Setenv("PROXY_TOKEN", tt.token)
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() succeeded, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error: %v", err)
+			}
+			if cfg.Token != tt.token {
+				t.Errorf("Token = %q, want %q", cfg.Token, tt.token)
+			}
+		})
+	}
+}
 
 // TestProviderDetection tests that we correctly identify providers from OPENAI_BASE_URL
 func TestProviderDetection(t *testing.T) {
@@ -219,13 +274,13 @@ func TestConfigDefaults(t *testing.T) {
 	}
 
 	// Default port
-	if cfg.Port != "8082" {
-		t.Errorf("Default Port = %q, want %q", cfg.Port, "8082")
+	if cfg.Port != DefaultPort {
+		t.Errorf("Default Port = %q, want %q", cfg.Port, DefaultPort)
 	}
 
 	// Default host
-	if cfg.Host != "0.0.0.0" {
-		t.Errorf("Default Host = %q, want %q", cfg.Host, "0.0.0.0")
+	if cfg.Host != DefaultHost {
+		t.Errorf("Default Host = %q, want %q", cfg.Host, DefaultHost)
 	}
 }
 
@@ -471,12 +526,12 @@ func TestHostAndPortDefaults(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if cfg.Host != "0.0.0.0" {
-		t.Errorf("Expected default host '0.0.0.0', got %q", cfg.Host)
+	if cfg.Host != DefaultHost {
+		t.Errorf("Expected default host %q, got %q", DefaultHost, cfg.Host)
 	}
 
-	if cfg.Port != "8082" {
-		t.Errorf("Expected default port '8082', got %q", cfg.Port)
+	if cfg.Port != DefaultPort {
+		t.Errorf("Expected default port %q, got %q", DefaultPort, cfg.Port)
 	}
 }
 

@@ -1,8 +1,8 @@
 .PHONY: build run clean test fmt lint build-all install
 
 # Binary name
-BINARY=claude-code-proxy
-CMD_PATH=cmd/$(BINARY)/main.go
+BINARY=ccgp
+CMD_PATH=./cmd/$(BINARY)
 
 # Build directory
 BUILD_DIR=dist
@@ -101,13 +101,9 @@ build-all: clean
 install: build
 	@echo "📦 Installing $(BINARY) to /usr/local/bin..."
 	sudo cp $(BINARY) /usr/local/bin/$(BINARY)
-	sudo cp scripts/ccp /usr/local/bin/ccp
-	sudo chmod +x /usr/local/bin/ccp
-	@echo "✅ Installed:"
-	@echo "   - /usr/local/bin/$(BINARY)"
-	@echo "   - /usr/local/bin/ccp (wrapper script)"
+	@echo "✅ Installed: /usr/local/bin/$(BINARY)"
 	@echo ""
 	@echo "📋 Next steps:"
-	@echo "  1. Create config: mkdir -p ~/.claude && cp .env.example ~/.claude/proxy.env"
-	@echo "  2. Edit config: nano ~/.claude/proxy.env"
-	@echo "  3. Run: ccp chat (or claude-code-proxy)"
+	@echo "  1. mkdir -p ~/.config/cc-go-proxy && cp config.example.ktav ~/.config/cc-go-proxy/config.ktav"
+	@echo "  2. Edit providers and profiles"
+	@echo "  3. Run: ccgp <profile>"

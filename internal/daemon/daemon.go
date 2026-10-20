@@ -1,130 +1,127 @@
-// Package daemon handles background process management for the proxy server.
-//
-// It manages PID file creation/deletion, process health checks, and provides functions
-// to start, stop, and check the status of the proxy daemon. The daemon runs in the
-// background and can be controlled via the CLI (start, stop, status commands).
+// Package daemon runs `ccgp serve` as a detached background process and
+// controls it via /health (which reports the server pid).
 package daemon
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
-	"syscall"
+	"os/exec"
+	"path/filepath"
+	"time"
 )
 
 const (
-	pidFile   = "/tmp/claude-code-proxy.pid"
-	healthURL = "http://localhost:8082/health"
+	serviceName = "ccgp"
+	maxLogSize  = 10 << 20
 )
 
-// IsRunning checks if the proxy daemon is running
-func IsRunning() bool {
-	// Try health check first
-	resp, err := http.Get(healthURL)
-	if err == nil {
-		_ = resp.Body.Close()
-		return resp.StatusCode == 200
-	}
-
-	// Fallback: check PID file
-	return isProcessRunning()
+// Health is the /health payload.
+type Health struct {
+	Status  string `json:"status"`
+	Service string `json:"service"`
+	Version string `json:"version"`
+	PID     int    `json:"pid"`
 }
 
-// Start daemonizes the current process
-func Start() error {
-	// Already running check
-	if IsRunning() {
-		return fmt.Errorf("proxy is already running")
-	}
+// BaseURL is http://host:port.
+func BaseURL(host, port string) string { return "http://" + host + ":" + port }
 
-	// Clean up stale PID file
-	cleanupPID()
-
-	// Write PID file
-	if err := writePID(); err != nil {
-		return fmt.Errorf("failed to write PID file: %w", err)
-	}
-
-	fmt.Println("🚀 Starting Claude Code Proxy daemon...")
-	return nil
-}
-
-// Stop stops the running daemon
-func Stop() {
-	if !IsRunning() {
-		fmt.Println("Proxy is not running")
-		return
-	}
-
-	pid, err := readPID()
+// Check returns health of a ccgp server at base, or an error if none answers.
+func Check(base string) (*Health, error) {
+	c := &http.Client{Timeout: time.Second}
+	resp, err := c.Get(base + "/health")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading PID: %v\n", err)
-		return
+		return nil, err
 	}
+	defer func() { _ = resp.Body.Close() }()
+	var h Health
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&h) != nil || h.Service != serviceName {
+		return nil, fmt.Errorf("%s is not a ccgp server", base)
+	}
+	return &h, nil
+}
 
-	process, err := os.FindProcess(pid)
+// LogPath is <UserCacheDir>/cc-go-proxy/logs/ccgp.log (%LOCALAPPDATA% on Windows).
+func LogPath() (string, error) {
+	dir, err := os.UserCacheDir()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding process: %v\n", err)
-		return
+		return "", err
 	}
-
-	if err := process.Signal(syscall.SIGTERM); err != nil {
-		fmt.Fprintf(os.Stderr, "Error stopping process: %v\n", err)
-		return
-	}
-
-	cleanupPID()
-	fmt.Println("✅ Proxy stopped")
+	return filepath.Join(dir, "cc-go-proxy", "logs", "ccgp.log"), nil
 }
 
-// Status prints the current daemon status
-func Status() {
-	if IsRunning() {
-		pid, _ := readPID()
-		fmt.Printf("✅ Proxy is running (PID: %d)\n", pid)
-		fmt.Printf("   Health endpoint: %s\n", healthURL)
-	} else {
-		fmt.Println("❌ Proxy is not running")
+// openLog opens the log for append, rotating to .1 when over maxLogSize.
+func openLog(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
 	}
+	if st, err := os.Stat(path); err == nil && st.Size() > maxLogSize {
+		_ = os.Rename(path, path+".1")
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
-// Helper functions
-
-func writePID() error {
-	pid := os.Getpid()
-	return os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644)
-}
-
-func readPID() (int, error) {
-	data, err := os.ReadFile(pidFile)
+// Start spawns `exe args...` detached with output to logPath, then waits until
+// base reports healthy.
+func Start(exe string, args []string, logPath, base string, timeout time.Duration) (*Health, error) {
+	log, err := openLog(logPath)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return strconv.Atoi(string(data))
+	defer func() { _ = log.Close() }()
+
+	cmd := exec.Command(exe, args...)
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = log, log, nil
+	cmd.SysProcAttr = detachedAttr()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if h, err := Check(base); err == nil {
+			return h, nil
+		}
+		select {
+		case err := <-exited:
+			// Lost a start race to another ccgp: fine if one is up now.
+			if h, cerr := Check(base); cerr == nil {
+				return h, nil
+			}
+			return nil, fmt.Errorf("server exited (%v), see %s", err, logPath)
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return nil, fmt.Errorf("server not healthy after %s, see %s", timeout, logPath)
 }
 
-func cleanupPID() {
-	_ = os.Remove(pidFile) // Ignore error - cleanup is best-effort
-}
-
-func isProcessRunning() bool {
-	pid, err := readPID()
+// Stop terminates the ccgp server at base, identified by the pid it reports.
+func Stop(base string, timeout time.Duration) error {
+	h, err := Check(base)
 	if err != nil {
-		return false
+		return ErrNotRunning
 	}
-
-	process, err := os.FindProcess(pid)
+	p, err := os.FindProcess(h.PID)
 	if err != nil {
-		return false
+		return err
 	}
-
-	// Send signal 0 to check if process exists
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	if err := terminate(p); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := Check(base); err != nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("pid %d still answering after %s", h.PID, timeout)
 }
 
-// Cleanup should be called on shutdown
-func Cleanup() {
-	cleanupPID()
-}
+// ErrNotRunning: no ccgp server answers.
+var ErrNotRunning = errors.New("ccgp is not running")

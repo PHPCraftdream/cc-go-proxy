@@ -164,11 +164,19 @@ func ConvertRequest(claudeReq models.ClaudeRequest, cfg *config.Config) (*models
 	return openaiReq, nil
 }
 
+// MapModel exposes model mapping for non-Chat-Completions providers.
+func MapModel(claudeModel string, cfg *config.Config) string { return mapModel(claudeModel, cfg) }
+
 // mapModel maps Claude model names to provider-specific models using pattern matching.
 // It routes haiku/sonnet/opus tiers to appropriate models (gpt-5-mini, gpt-5, etc.)
 // and allows environment variable overrides for routing to alternative providers like
 // Grok, Gemini, or DeepSeek. Non-Claude model names are passed through unchanged.
 func mapModel(claudeModel string, cfg *config.Config) string {
+	// Ktav rules and default_model take precedence
+	if m, ok := cfg.ResolveModel(claudeModel); ok {
+		return m
+	}
+
 	modelLower := strings.ToLower(claudeModel)
 
 	// Haiku tier

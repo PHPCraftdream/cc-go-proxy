@@ -26,6 +26,19 @@ const (
 	ProviderUnknown    ProviderType = "unknown"
 )
 
+// Server defaults: loopback only.
+const (
+	DefaultHost    = "127.0.0.1"
+	DefaultPort    = "60093"
+	MinTokenLength = 32
+
+	// EnvProfile names the implicit profile/provider in env-only mode.
+	EnvProfile = "default"
+)
+
+// IsEnvMode reports env-only mode (no config.ktav).
+func (c *Config) IsEnvMode() bool { return c.ConfigFile == "" }
+
 // CacheKey uniquely identifies a (provider, model) combination for capability caching
 // Using a struct as map key provides type safety and zero collision risk
 type CacheKey struct {
@@ -61,9 +74,27 @@ type Config struct {
 	SonnetModel string
 	HaikuModel  string
 
+	// Ktav config: ordered glob rules, then DefaultModel; tier logic otherwise
+	ModelRules   []ModelRule
+	DefaultModel string
+
 	// Server settings
 	Host string
 	Port string
+
+	// Env-only mode: single URL token (/call/{token}/...) for profile EnvProfile.
+	// File mode: tokens live in the creds store.
+	Token string
+
+	// From config.ktav; in env-only mode synthesized from env.
+	ConfigFile string
+	Providers  map[string]*Provider
+	Profiles   map[string]*Profile
+
+	// Per-request (set by ForProfile)
+	Profile      string
+	ProviderName string
+	ProviderType string
 
 	// Debug logging
 	Debug bool
@@ -111,8 +142,9 @@ func Load() (*Config, error) {
 		HaikuModel:  os.Getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
 
 		// Server settings
-		Host: getEnvOrDefault("HOST", "0.0.0.0"),
-		Port: getEnvOrDefault("PORT", "8082"),
+		Host:  getEnvOrDefault("HOST", DefaultHost),
+		Port:  getEnvOrDefault("PORT", DefaultPort),
+		Token: os.Getenv("PROXY_TOKEN"),
 
 		// Passthrough mode
 		PassthroughMode: getEnvAsBoolOrDefault("PASSTHROUGH_MODE", false),
@@ -122,7 +154,39 @@ func Load() (*Config, error) {
 		OpenRouterAppURL:  os.Getenv("OPENROUTER_APP_URL"),
 	}
 
+	// Ktav config file
+	p, explicit, err := configFilePath()
+	if err != nil {
+		return nil, err
+	}
+	fc, err := loadFile(p)
+	if err != nil {
+		return nil, err
+	}
+	if fc == nil && explicit {
+		return nil, fmt.Errorf("config file not found: %s", p)
+	}
+	if fc != nil {
+		applyFile(cfg, fc)
+		cfg.ConfigFile = p
+		fmt.Printf("📁 Loaded config from: %s\n", p)
+		return cfg, nil
+	}
+
+	// Env-only mode: one provider + one profile from env.
+	cfg.Providers = map[string]*Provider{
+		EnvProfile: {Name: EnvProfile, Type: ProviderTypeOpenAI, BaseURL: cfg.OpenAIBaseURL},
+	}
+	cfg.Profiles = map[string]*Profile{
+		EnvProfile: {Name: EnvProfile, Provider: EnvProfile},
+	}
+	cfg.Profile, cfg.ProviderName, cfg.ProviderType = EnvProfile, EnvProfile, ProviderTypeOpenAI
+
 	// Validate required fields
+	if len(cfg.Token) < MinTokenLength {
+		return nil, fmt.Errorf("PROXY_TOKEN is required (at least %d characters)", MinTokenLength)
+	}
+
 	// Allow missing API key for Ollama (localhost endpoints)
 	if cfg.OpenAIAPIKey == "" {
 		if !strings.Contains(cfg.OpenAIBaseURL, "localhost") &&
