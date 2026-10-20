@@ -8,14 +8,13 @@ import (
 )
 
 var sampleManaged = ManagedModels{
-	DefaultModel: "gpt-6.1-luna",
 	Rules: []ModelRule{
-		{Match: "*fable*", Model: "gpt-6.1-astra"},
-		{Match: "*opus*", Model: "gpt-6.1-sol"},
-		{Match: "*sonnet*", Model: "gpt-6.1-luna"},
-		{Match: "*haiku*", Model: "gpt-6-luna"},
+		{Match: "*fable*", Model: "gpt-6.1-astra", ContextWindow: 1000000},
+		{Match: "*opus*", Model: "gpt-6.1-sol", ContextWindow: 500000},
+		{Match: "*sonnet*", Model: "gpt-6.1-luna", ContextWindow: 800000},
+		{Match: "*haiku*", Model: "gpt-6-luna", ContextWindow: 272000},
+		{Match: "*", Model: "gpt-6.1-luna", ContextWindow: 800000},
 	},
-	ContextWindow: 800000,
 }
 
 func TestReplaceManagedOnTemplate(t *testing.T) {
@@ -35,9 +34,13 @@ func TestReplaceManagedOnTemplate(t *testing.T) {
 			pf = p
 		}
 	}
-	if pf.DefaultModel != "gpt-6.1-luna" || pf.ContextWindow != 800000 || len(pf.Models) != 4 ||
-		pf.Models[3].Match != "*haiku*" || pf.Models[3].Model != "gpt-6-luna" {
+	if len(pf.Models) != 5 || pf.Models[3].Match != "*haiku*" || pf.Models[3].Model != "gpt-6-luna" ||
+		pf.Models[3].ContextWindow != 272000 || pf.Models[4].Match != "*" || pf.DefaultModel != "" {
 		t.Errorf("codex profile = %+v", pf)
+	}
+	// Every rule carries its own window; the smallest one is what the launcher uses.
+	if got := pf.EffectiveContextWindow(); got != 272000 {
+		t.Errorf("EffectiveContextWindow = %d, want 272000", got)
 	}
 	// Outside the markers nothing changes: strip the block from both and compare.
 	cut := func(s string) string {
@@ -52,11 +55,13 @@ func TestReplaceManagedOnTemplate(t *testing.T) {
 
 func TestReplaceManagedKeepsCRLFAndIndent(t *testing.T) {
 	text := "a: 1\r\n    ## ccgp:managed-models begin p\r\n    old: x\r\n    ## ccgp:managed-models end p\r\nb: 2\r\n"
-	out, err := ReplaceManaged(text, "p", ManagedModels{DefaultModel: "m"})
+	out, err := ReplaceManaged(text, "p", ManagedModels{Rules: []ModelRule{{Match: "*", Model: "m", ContextWindow: 123}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "a: 1\r\n    ## ccgp:managed-models begin p\r\n    default_model: m\r\n    models: [\r\n    ]\r\n    ## ccgp:managed-models end p\r\nb: 2\r\n"
+	want := "a: 1\r\n    ## ccgp:managed-models begin p\r\n" +
+		"    models: [\r\n        {\r\n            match: *\r\n            model: m\r\n            context_window: 123\r\n        }\r\n    ]\r\n" +
+		"    ## ccgp:managed-models end p\r\nb: 2\r\n"
 	if out != want {
 		t.Errorf("got %q\nwant %q", out, want)
 	}
@@ -179,7 +184,8 @@ func TestEnsureManagedMigratesOldProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("result does not load: %v\n%s", err, text)
 	}
-	if fc.Profiles[0].DefaultModel != "gpt-6.1-luna" || fc.Profiles[0].CompactPercent != 70 || fc.Profiles[1].DefaultModel != "keep" {
+	if fc.Profiles[0].DefaultModel != "" || len(fc.Profiles[0].Models) != 5 ||
+		fc.Profiles[0].CompactPercent != 70 || fc.Profiles[1].DefaultModel != "keep" {
 		t.Errorf("profiles = %+v", fc.Profiles)
 	}
 	// Idempotent once the block exists.

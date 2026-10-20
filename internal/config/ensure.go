@@ -6,6 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/claude-code-proxy/proxy/internal/securefile"
 )
 
 //go:embed config.example.ktav
@@ -39,4 +42,26 @@ func EnsureFile() (path string, created bool, err error) {
 		return path, false, err
 	}
 	return path, true, f.Close()
+}
+
+// ResetFile replaces the config with the current default template, keeping the
+// old file as <name>.bak-<timestamp>. It returns the config path and the backup
+// path ("" when there was no config).
+func ResetFile() (path, backup string, err error) {
+	path, _, err = configFilePath()
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return path, "", err
+	}
+	if old, rerr := os.ReadFile(path); rerr == nil {
+		backup = path + ".bak-" + time.Now().Format("20060102-150405")
+		if err := os.WriteFile(backup, old, 0o600); err != nil {
+			return path, "", err
+		}
+	} else if !errors.Is(rerr, fs.ErrNotExist) {
+		return path, "", rerr
+	}
+	return path, backup, securefile.WriteFile(path, defaultTemplate)
 }

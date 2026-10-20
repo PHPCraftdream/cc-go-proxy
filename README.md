@@ -48,9 +48,10 @@ Background server log: `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log`
 See the generated file (template: [`config.example.ktav`](internal/config/config.example.ktav)). Summary:
 
 - `listen.host` / `listen.port` — default `127.0.0.1:60093` (loopback only).
-- `providers[]` — `name`, `type` (`codex` — ChatGPT subscription via OAuth, or `codex_api` — API key, pay per token; `openai` is accepted as the old name of `codex_api`), `base_url`, optional `api_key_env`.
+- `providers[]` — `name`, `type` (`codex` — ChatGPT subscription via OAuth; `codex_api` — API key, pay per token, `openai` is the old name; `anthropic_compat` — an Anthropic-compatible endpoint such as z.ai, forwarded unconverted), `base_url`, optional `api_key_env`, optional `effort_map`.
 - `profiles[]` — `name`, `provider`, ordered `models[]` rules (`match` glob → `model`),
-  `default_model`. Without rules or default, tier names map to `gpt-5` / `gpt-5-mini`.
+  `default_model` (legacy; prefer a final `match: *` rule). Each rule can carry `context_window`.
+  Without rules or default, tier names map to `gpt-5` / `gpt-5-mini`.
 
 `config.ktav` is created once and afterwards only read, never rewritten by ccgp (your comments are safe). All machine-managed state — profile tokens, API keys and the rotating OAuth tokens — lives in the separate `creds` directory (`ccgp status` shows both paths). Config edits apply to a running server
 without restart (listen address changes need `ccgp stop`).
@@ -64,22 +65,65 @@ newest releases (read-only preview); `ccgp models apply [profile]` writes the ma
 | --- | --- |
 | Fable | newest `astra` |
 | Opus | newest `sol` |
-| Sonnet | newest `luna` (also `default_model`) |
+| Sonnet | newest `luna` |
 | Haiku | `luna` of the release before the newest one (e.g. `gpt-5.6-luna`) |
+| anything else | the Sonnet model (final `match: *` rule) |
+
+Every rule states its own context window:
+
+```
+models: [
+    {
+        match: *opus*
+        model: gpt-6.1-sol
+        context_window: 872000
+    }
+    ...
+]
+```
 
 It rewrites only the block between the `ccgp:managed-models begin/end <profile>` marker
-lines of a profile (added automatically if missing; a profile's old `default_model`,
+lines of a profile (added automatically if missing; the profile's old `default_model`,
 `context_window` and `models` entries are then replaced). The mapping is also refreshed
 after every fresh `ccgp login <codex provider>`.
 
-Codex models have smaller context windows than the Claude models Claude Code thinks it
-talks to, so the block also stores `context_window`: the smallest window among the
-Fable/Opus/Sonnet models (the main conversation; unknown windows count as 272000). The
-launcher passes it to Claude Code as `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, so conversations
-are compacted before the backend limit. Add `compact_percent: 70` to a profile to
-compact earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`). Claude Code accepts one window
-per process: Haiku-tier models with a smaller window are reported by `ccgp models` but do
-not lower it. Variables you set yourself are never overridden.
+Windows come from the account catalog (`ccgp models -v` shows every field). The catalog has two
+numbers: `context_window` is only the default of Codex clients, `max_context_window` is the
+largest input the backend takes. For the GPT-6 generation and newer ccgp writes
+`max_context_window` (872000), for earlier releases such as `gpt-5.6-luna` the default
+(272000). A model without any window is written as 272000 and noted.
+
+Claude Code accepts one window per process, so the launcher passes
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW` = the `context_window` of the rule that serves the
+session's **main model** (`--model`, `ANTHROPIC_MODEL`, `model` in settings.json, default
+`sonnet`). A smaller window on another rule (the Haiku model's 272000) does not shrink the
+main session but is not covered either. A profile-level `context_window: N` overrides this,
+`compact_percent: 70` compacts earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), and
+variables you set yourself are never overridden.
+
+## z.ai (GLM)
+
+```
+ccgp login zai     # asks for your z.ai API key once (hidden input), saves it owner-only
+ccgp zai           # runs Claude Code through z.ai; extra arguments go to claude
+```
+
+The `zai` provider (type `anthropic_compat`) talks to z.ai's Anthropic-compatible endpoint
+`https://api.z.ai/api/anthropic`: requests are forwarded unconverted, only the model is
+mapped and the model identity in the system prompt is corrected. Built-in mapping
+(`ccgp models apply zai` rewrites it; saving the key does it automatically):
+
+| Claude tier | z.ai model | context |
+| --- | --- | --- |
+| Fable | `glm-5.3` | 1M |
+| Opus, Sonnet, Haiku, anything else | `glm-5.3-flash` | 1M |
+
+z.ai accepts only three effort levels, so Claude Code's five are converted (the provider's
+`effort_map`): `low` → `low`, `medium` → `high`, `high` / `xhigh` / `max` → `max`. Any
+provider of type `anthropic_compat` can set its own `effort_map`.
+
+Endpoint and model data come from [docs.z.ai](https://docs.z.ai/devpack/tool/claude).
+`ccgp config reset` backs up your config and writes the current default one.
 
 ## Official credentials never reach a ccgp session
 

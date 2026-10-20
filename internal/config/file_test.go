@@ -190,3 +190,80 @@ func TestLegacyOpenAIProviderType(t *testing.T) {
 		t.Errorf("unknown type error = %v", err)
 	}
 }
+
+func TestRuleContextWindowAndEffective(t *testing.T) {
+	cfg := "providers: [\n    {\n        name: p\n        type: codex\n    }\n]\nprofiles: [\n    {\n        name: w\n        provider: p\n        models: [\n" +
+		"            {\n                match: *a*\n                model: m1\n                context_window: 500000\n            }\n" +
+		"            {\n                match: *b*\n                model: m2\n                context_window: 272000\n            }\n" +
+		"            {\n                match: *\n                model: m3\n            }\n" +
+		"        ]\n    }\n]\n"
+	fc, err := loadFile(writeKtav(t, cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pf := fc.Profiles[0]
+	if pf.Models[0].ContextWindow != 500000 || pf.Models[2].ContextWindow != 0 {
+		t.Errorf("rule windows = %+v", pf.Models)
+	}
+	// Smallest known rule window; rules without one are ignored.
+	if got := pf.EffectiveContextWindow(); got != 272000 {
+		t.Errorf("EffectiveContextWindow = %d, want 272000", got)
+	}
+	// A profile-level value overrides the derived one.
+	pf.ContextWindow = 123000
+	if got := pf.EffectiveContextWindow(); got != 123000 {
+		t.Errorf("override: EffectiveContextWindow = %d", got)
+	}
+	var none *Profile
+	if none.EffectiveContextWindow() != 0 || (&Profile{}).EffectiveContextWindow() != 0 {
+		t.Error("empty profile must have no window")
+	}
+
+	bad := strings.Replace(cfg, "context_window: 500000", "context_window: -1", 1)
+	if _, err := loadFile(writeKtav(t, bad)); err == nil || !strings.Contains(err.Error(), "context_window") {
+		t.Errorf("negative rule window accepted: %v", err)
+	}
+}
+
+func TestContextWindowFor(t *testing.T) {
+	pf := &Profile{Models: []ModelRule{
+		{Match: "*opus*", Model: "sol", ContextWindow: 872000},
+		{Match: "*haiku*", Model: "old", ContextWindow: 272000},
+		{Match: "*", Model: "luna"}, // catch-all without a window
+	}}
+	tests := map[string]int64{
+		"opus":              872000,
+		"Claude-Opus-5-5":   872000, // case-insensitive
+		"haiku":             272000,
+		"something-else":    272000, // matched rule has no window: smallest known
+		"claude-sonnet-5-5": 272000,
+	}
+	for model, want := range tests {
+		if got := pf.ContextWindowFor(model); got != want {
+			t.Errorf("ContextWindowFor(%q) = %d, want %d", model, got, want)
+		}
+	}
+	pf.ContextWindow = 123000
+	if got := pf.ContextWindowFor("opus"); got != 123000 {
+		t.Errorf("override ignored: %d", got)
+	}
+	var none *Profile
+	if none.ContextWindowFor("x") != 0 {
+		t.Error("nil profile")
+	}
+}
+
+func TestAnthropicCompatProvider(t *testing.T) {
+	ok := "providers: [\n    {\n        name: z\n        type: anthropic_compat\n        base_url: https://api.z.ai/api/anthropic\n        effort_map: {\n            medium: high\n            xhigh: max\n        }\n    }\n]\n"
+	fc, err := loadFile(writeKtav(t, ok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := fc.Providers[0]; p.Type != ProviderTypeAnthropicCompat || p.EffortMap["medium"] != "high" || p.EffortMap["xhigh"] != "max" {
+		t.Errorf("provider = %+v", p)
+	}
+	noURL := "providers: [\n    {\n        name: z\n        type: anthropic_compat\n    }\n]\n"
+	if _, err := loadFile(writeKtav(t, noURL)); err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Errorf("anthropic_compat without base_url accepted: %v", err)
+	}
+}

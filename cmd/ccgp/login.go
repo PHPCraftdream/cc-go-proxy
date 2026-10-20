@@ -41,7 +41,14 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 		}
 		return err
 	case config.ProviderTypeCodexAPI:
-		return loginAPIKey(store, pr, force)
+		_, err := loginAPIKey(store, pr, force)
+		return err
+	case config.ProviderTypeAnthropicCompat:
+		fresh, err := loginAPIKey(store, pr, force)
+		if err == nil && fresh {
+			autoApplyPreset(cfg, pr.Name)
+		}
+		return err
 	}
 	return fmt.Errorf("provider %q: unsupported type %q", pr.Name, pr.Type)
 }
@@ -103,35 +110,35 @@ func deviceLogin(ctx context.Context, provider string) (*oauth.Tokens, error) {
 	return c.CompleteDeviceLogin(ctx, dc)
 }
 
-func loginAPIKey(store creds.Store, pr *config.Provider, force bool) error {
+func loginAPIKey(store creds.Store, pr *config.Provider, force bool) (fresh bool, err error) {
 	if pr.APIKeyEnv != "" {
 		if os.Getenv(pr.APIKeyEnv) == "" {
-			return fmt.Errorf("provider %q reads its key from $%s, which is empty", pr.Name, pr.APIKeyEnv)
+			return false, fmt.Errorf("provider %q reads its key from $%s, which is empty", pr.Name, pr.APIKeyEnv)
 		}
-		return nil
+		return false, nil
 	}
 	if !force {
 		if k, err := store.APIKey(pr.Name); err != nil || k != "" {
-			return err
+			return false, err
 		}
 		if isLocal(pr.BaseURL) {
-			return nil // local backends (Ollama) need no key
+			return false, nil // local backends (Ollama) need no key
 		}
 	}
 	fmt.Fprintf(os.Stderr, "API key for provider %q (%s): ", pr.Name, pr.BaseURL)
 	key, err := readSecret()
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if key == "" {
-		return errors.New("empty API key")
+		return false, errors.New("empty API key")
 	}
 	if err := store.SaveAPIKey(pr.Name, key); err != nil {
-		return err
+		return false, err
 	}
 	fmt.Fprintf(os.Stderr, "API key saved (provider %q).\n", pr.Name)
-	return nil
+	return true, nil
 }
 
 // readSecret reads a line without echo when stdin is a terminal.
@@ -180,7 +187,7 @@ func loginState(store creds.Store, pr *config.Provider) string {
 			return "error: " + err.Error()
 		}
 		return "logged in, tokens refreshed " + t.LastRefresh.Local().Format("2006-01-02 15:04")
-	case config.ProviderTypeCodexAPI:
+	case config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat:
 		if pr.APIKeyEnv != "" {
 			if os.Getenv(pr.APIKeyEnv) == "" {
 				return "$" + pr.APIKeyEnv + " is empty"

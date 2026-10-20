@@ -48,7 +48,7 @@ func run(args []string) error {
 	case "version", "--version":
 		fmt.Println(version)
 		return nil
-	case "stop", "status":
+	case "stop", "status", "config":
 	default:
 		if err := ensureConfig(); err != nil {
 			return err
@@ -77,6 +77,8 @@ func run(args []string) error {
 		return nil
 	case "status":
 		return status()
+	case "config":
+		return configCmd(args[1:])
 	case "models":
 		cfg, err := config.Load()
 		if err != nil {
@@ -244,7 +246,8 @@ Usage:
   ccgp stop                        Stop background server
   ccgp status                      Show background server status
   ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)
-  ccgp models [apply] [profile]    Show (or write into config) the newest Codex models per Claude tier
+  ccgp models [apply] [-v] [profile] Show (or write into config) the newest Codex models per Claude tier
+  ccgp config reset                Back up the config and regenerate the default one
   ccgp version                     Show version
 
 Config (Ktav):
@@ -258,4 +261,21 @@ Env-only mode (no config.ktav):
 
 Example:
   ccgp codex -p "hello"`)
+}
+
+// configCmd implements `ccgp config reset`.
+func configCmd(args []string) error {
+	if len(args) != 1 || args[0] != "reset" {
+		return errors.New("usage: ccgp config reset")
+	}
+	path, backup, err := config.ResetFile()
+	if err != nil {
+		return err
+	}
+	if backup != "" {
+		fmt.Printf("old config saved as %s\n", backup)
+	}
+	fmt.Printf("default config written to %s\n", path)
+	fmt.Println("next: ccgp models apply   (refresh the generated model mappings)")
+	return nil
 }

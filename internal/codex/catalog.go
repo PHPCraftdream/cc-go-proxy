@@ -23,10 +23,15 @@ const catalogClientVersion = "0.159.0"
 type Model struct {
 	Slug          string
 	Name          string
-	ContextWindow int64 // 0 when the catalog does not say
+	ContextWindow int64 // default window of Codex clients; 0 when the catalog does not say
+	// MaxContextWindow is the largest input the backend accepts for the model
+	// (the catalog's max_context_window); 0 when absent.
+	MaxContextWindow int64
 	// Hidden entries are not offered in pickers but may still be usable; they
 	// qualify only as the previous release (Haiku), never as the newest.
 	Hidden bool
+	// Raw holds the catalog entry as received (for `ccgp models -v`).
+	Raw map[string]json.RawMessage
 }
 
 // FetchCatalog reads the models available to the signed-in account.
@@ -120,7 +125,7 @@ func ParseCatalog(body []byte) ([]Model, error) {
 		if name == "" {
 			name = slug
 		}
-		out = append(out, Model{Slug: slug, Name: name, ContextWindow: num(f["context_window"]), Hidden: v == "hide" || v == "hidden"})
+		out = append(out, Model{Slug: slug, Name: name, ContextWindow: num(f["context_window"]), MaxContextWindow: num(f["max_context_window"]), Hidden: v == "hide" || v == "hidden", Raw: f})
 	}
 	return out, nil
 }
@@ -148,14 +153,10 @@ func num(raw json.RawMessage) int64 {
 // Selection maps Claude tiers to Codex model slugs.
 type Selection struct {
 	Fable, Opus, Sonnet, Haiku string
-	// ContextWindow is the smallest window among the Fable, Opus and Sonnet
-	// models (the main conversation); Claude Code takes one value per process.
-	// Unknown windows count as DefaultContextWindow.
-	ContextWindow int64
-	// HaikuWindow is the window of the Haiku model, which is not part of
-	// ContextWindow because it serves small background and subagent calls.
-	HaikuWindow int64
-	Notes       []string
+	// Per-model context windows in tokens. A model without a window in the
+	// catalog gets DefaultContextWindow (and a note), so every value is explicit.
+	FableWindow, OpusWindow, SonnetWindow, HaikuWindow int64
+	Notes                                              []string
 }
 
 // DefaultContextWindow is assumed for models whose catalog entry has none
@@ -167,7 +168,8 @@ var gpt6Re = regexp.MustCompile(`^gpt-(\d+(?:\.\d+)*)-(astra|sol|luna)$`)
 type release struct {
 	slug    string
 	version []int
-	window  int64
+	window  int64 // context_window
+	max     int64 // max_context_window
 	hidden  bool
 }
 
@@ -188,7 +190,7 @@ func Pick(models []Model) (Selection, error) {
 		if !ok {
 			continue
 		}
-		tiers[g[2]] = append(tiers[g[2]], release{m.Slug, v, m.ContextWindow, m.Hidden})
+		tiers[g[2]] = append(tiers[g[2]], release{m.Slug, v, m.ContextWindow, m.MaxContextWindow, m.Hidden})
 	}
 	for _, t := range tiers {
 		sort.Slice(t, func(i, j int) bool { return cmpVersion(t[i].version, t[j].version) > 0 })
@@ -214,52 +216,43 @@ func Pick(models []Model) (Selection, error) {
 		}
 		return release{}, false
 	}
+	// windowOf is the input size the model really takes: the GPT-6 generation
+	// (and newer) runs up to the catalog's max_context_window, while the catalog's
+	// context_window is only a default of Codex clients; earlier releases are
+	// held to that default.
 	windowOf := func(r release) int64 {
+		if r.version[0] >= 6 && r.max > 0 {
+			return r.max
+		}
 		if r.window > 0 {
 			return r.window
 		}
+		sel.Notes = append(sel.Notes, fmt.Sprintf("catalog gives no context window for %s: assuming %d", r.slug, DefaultContextWindow))
 		return DefaultContextWindow
 	}
-	var main []int64 // windows of the Fable, Opus and Sonnet models
-
 	if r, ok := newest("astra"); ok {
-		sel.Fable = r.slug
-		main = append(main, windowOf(r))
+		sel.Fable, sel.FableWindow = r.slug, windowOf(r)
 	} else {
 		missing = append(missing, "astra (Fable)")
 	}
 	if r, ok := newest("sol"); ok {
-		sel.Opus = r.slug
-		main = append(main, windowOf(r))
+		sel.Opus, sel.OpusWindow = r.slug, windowOf(r)
 	} else {
 		missing = append(missing, "sol (Opus)")
 	}
 	if r, ok := newest("luna"); ok {
-		sel.Sonnet = r.slug
-		main = append(main, windowOf(r))
+		sel.Sonnet, sel.SonnetWindow = r.slug, windowOf(r)
 		prev, hasPrev := before("luna", r)
 		if !hasPrev {
 			prev = r
 			sel.Notes = append(sel.Notes, "only one luna release is available: Haiku uses the same model as Sonnet")
 		}
-		sel.Haiku = prev.slug
-		sel.HaikuWindow = windowOf(prev)
+		sel.Haiku, sel.HaikuWindow = prev.slug, windowOf(prev)
 	} else {
 		missing = append(missing, "luna (Sonnet, Haiku)")
 	}
 	if len(missing) > 0 {
 		return sel, fmt.Errorf("catalog has no %s model", strings.Join(missing, ", "))
-	}
-	for _, w := range main {
-		if sel.ContextWindow == 0 || w < sel.ContextWindow {
-			sel.ContextWindow = w
-		}
-	}
-	if sel.HaikuWindow < sel.ContextWindow {
-		sel.Notes = append(sel.Notes, fmt.Sprintf(
-			"Haiku model %s has a smaller context (%d) than the main models (%d): "+
-				"long Haiku-tier subagent runs may hit its limit before Claude Code compacts",
-			sel.Haiku, sel.HaikuWindow, sel.ContextWindow))
 	}
 	return sel, nil
 }

@@ -150,7 +150,7 @@ func profileResolver(cfg *config.Config, store creds.Store) (*creds.TokenIndex, 
 		}
 		pr := cfg.Providers[pf.Provider]
 		key := ""
-		if pr.Type == config.ProviderTypeCodexAPI {
+		if pr.Type == config.ProviderTypeCodexAPI || pr.Type == config.ProviderTypeAnthropicCompat {
 			if pr.APIKeyEnv != "" {
 				key = os.Getenv(pr.APIKeyEnv)
 			} else if key, err = store.APIKey(pr.Name); err != nil {
@@ -184,14 +184,21 @@ func setupClaudeEndpoints(app *fiber.App, auth fiber.Handler, ss *sessions) {
 	// Messages endpoint - main Claude API
 	app.Post(callPrefix+":token/v1/messages", auth, func(c *fiber.Ctx) error {
 		cfg := requestConfig(c)
-		if cfg.ProviderType == config.ProviderTypeCodex {
+		switch cfg.ProviderType {
+		case config.ProviderTypeCodex:
 			return handleCodexMessages(c, cfg, ss.get(cfg.ProviderName))
+		case config.ProviderTypeAnthropicCompat:
+			return handleAnthropicCompat(c, cfg)
 		}
 		return handleMessages(c, cfg)
 	})
 
 	// Token counting endpoint
 	app.Post(callPrefix+":token/v1/messages/count_tokens", auth, func(c *fiber.Ctx) error {
-		return handleCountTokens(c, requestConfig(c))
+		cfg := requestConfig(c)
+		if cfg.ProviderType == config.ProviderTypeAnthropicCompat {
+			return handleAnthropicCountTokens(c, cfg)
+		}
+		return handleCountTokens(c, cfg)
 	})
 }

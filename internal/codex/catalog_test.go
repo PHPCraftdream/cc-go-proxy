@@ -54,8 +54,8 @@ func TestPickLatestPerTier(t *testing.T) {
 	if sel.Haiku != "gpt-6-luna" {
 		t.Errorf("Haiku = %q, want gpt-6-luna", sel.Haiku)
 	}
-	if sel.ContextWindow != 800_000 {
-		t.Errorf("ContextWindow = %d, want min(1000000, 900000, 800000)", sel.ContextWindow)
+	if sel.FableWindow != 1_000_000 || sel.OpusWindow != 900_000 || sel.SonnetWindow != 800_000 || sel.HaikuWindow != 1_050_000 {
+		t.Errorf("windows = %d %d %d %d", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow, sel.HaikuWindow)
 	}
 }
 
@@ -72,12 +72,12 @@ func TestPickPreviousLunaMayBeHidden(t *testing.T) {
 	if sel.Haiku != "gpt-5.6-luna" || sel.HaikuWindow != 372_000 {
 		t.Errorf("Haiku = %q window %d", sel.Haiku, sel.HaikuWindow)
 	}
-	// Haiku's smaller window does not shrink the main window but is reported.
-	if sel.ContextWindow != 1_050_000 {
-		t.Errorf("ContextWindow = %d", sel.ContextWindow)
+	// Each tier carries its own window; nothing is averaged or hidden.
+	if sel.FableWindow != 1_050_000 || sel.OpusWindow != 1_050_000 || sel.SonnetWindow != 1_050_000 {
+		t.Errorf("windows = %d %d %d", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow)
 	}
-	if len(sel.Notes) != 1 || !strings.Contains(sel.Notes[0], "gpt-5.6-luna") {
-		t.Errorf("notes = %v", sel.Notes)
+	if len(sel.Notes) != 0 {
+		t.Errorf("unexpected notes = %v", sel.Notes)
 	}
 }
 
@@ -105,11 +105,17 @@ func TestPickSingleLunaAndUnknownWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.Haiku != "gpt-6-luna" || len(sel.Notes) != 1 {
-		t.Errorf("Haiku=%q notes=%v", sel.Haiku, sel.Notes)
+	if sel.Haiku != "gpt-6-luna" {
+		t.Errorf("Haiku = %q", sel.Haiku)
 	}
-	if sel.ContextWindow != DefaultContextWindow {
-		t.Errorf("unknown windows -> %d, want %d", sel.ContextWindow, DefaultContextWindow)
+	for name, w := range map[string]int64{"fable": sel.FableWindow, "opus": sel.OpusWindow, "sonnet": sel.SonnetWindow, "haiku": sel.HaikuWindow} {
+		if w != DefaultContextWindow {
+			t.Errorf("%s window = %d, want the default %d", name, w, DefaultContextWindow)
+		}
+	}
+	notes := strings.Join(sel.Notes, "|")
+	if !strings.Contains(notes, "only one luna release") || !strings.Contains(notes, "gives no context window for gpt-6-sol") {
+		t.Errorf("notes = %v", sel.Notes)
 	}
 }
 
@@ -126,5 +132,44 @@ func TestVersionOrder(t *testing.T) {
 	c, _ := parseVersion("6")
 	if cmpVersion(a, b) <= 0 || cmpVersion(b, c) <= 0 || cmpVersion(c, c) != 0 {
 		t.Errorf("cmp: 6.10 vs 6.9 = %d, 6.9 vs 6 = %d", cmpVersion(a, b), cmpVersion(b, c))
+	}
+}
+
+func mm(slug string, window, max int64, hidden bool) Model {
+	return Model{Slug: slug, ContextWindow: window, MaxContextWindow: max, Hidden: hidden}
+}
+
+// The catalog's context_window is only the default of Codex clients; the GPT-6
+// generation really takes up to max_context_window, earlier releases stay at
+// the default (same max_context_window in the catalog, but not usable).
+func TestPickWindowsFollowGenerations(t *testing.T) {
+	sel, err := Pick([]Model{
+		mm("gpt-6-astra", 272_000, 872_000, false),
+		mm("gpt-6.1-sol", 500_000, 872_000, false),
+		mm("gpt-6-sol", 272_000, 872_000, false),
+		mm("gpt-6-luna", 272_000, 872_000, false),
+		mm("gpt-5.6-luna", 272_000, 872_000, false),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Fable != "gpt-6-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6-luna" || sel.Haiku != "gpt-5.6-luna" {
+		t.Fatalf("selection = %+v", sel)
+	}
+	if sel.FableWindow != 872_000 || sel.OpusWindow != 872_000 || sel.SonnetWindow != 872_000 {
+		t.Errorf("GPT-6 windows = %d %d %d, want max_context_window", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow)
+	}
+	if sel.HaikuWindow != 272_000 {
+		t.Errorf("previous-generation window = %d, want the 272000 default", sel.HaikuWindow)
+	}
+}
+
+func TestParseCatalogReadsMaxContextWindow(t *testing.T) {
+	ms, err := ParseCatalog([]byte(`{"models":[{"slug":"gpt-6-luna","context_window":272000,"max_context_window":872000}]}`))
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("ParseCatalog = %v, %v", ms, err)
+	}
+	if ms[0].ContextWindow != 272000 || ms[0].MaxContextWindow != 872000 || ms[0].Raw["max_context_window"] == nil {
+		t.Errorf("model = %+v", ms[0])
 	}
 }

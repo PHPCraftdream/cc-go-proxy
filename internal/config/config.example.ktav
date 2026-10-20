@@ -28,14 +28,34 @@ providers: [
         type: codex_api
         base_url: https://api.openai.com/v1
     }
+    ## "zai": z.ai GLM models through their Anthropic-compatible endpoint, requests are
+    ## forwarded unconverted. API key from z.ai: `ccgp login zai`.
+    {
+        name: zai
+        type: anthropic_compat
+        base_url: https://api.z.ai/api/anthropic
+        ## z.ai knows only three effort levels; Claude Code's five are converted:
+        ## low -> low, medium -> high, high / xhigh / max -> max.
+        effort_map: {
+            low: low
+            medium: high
+            high: max
+            xhigh: max
+            max: max
+        }
+    }
 ]
 
 ## `ccgp <profile> [claude args]` runs Claude Code through a profile.
 ## Each profile gets its own URL token (generated, stored in creds).
-## Model rules: checked in order, first glob match wins (case-insensitive);
-## default_model applies when no rule matches.
-## context_window is the backend's context size in tokens: Claude Code is told
-## to compact before reaching it (0 or absent: no change).
+##
+## models: rules checked in order, first glob match wins (case-insensitive).
+## Every rule states the backend model and that model's context window in
+## tokens. Claude Code accepts one window per process, so ccgp tells it to
+## compact before the window of the rule that serves the session's main model
+## (--model, ANTHROPIC_MODEL or settings.json "model"; default sonnet). A
+## profile-level `context_window: N` overrides that; `compact_percent: 70`
+## compacts earlier. The last rule `match: *` catches every other model name.
 profiles: [
     {
         name: codex
@@ -43,23 +63,31 @@ profiles: [
         ## Fable -> astra, Opus -> sol, Sonnet -> luna, Haiku -> previous luna.
         ## Run `ccgp models apply codex` to refresh these to the newest releases.
         ## ccgp:managed-models begin codex
-        default_model: gpt-6-luna
         models: [
             {
                 match: *fable*
                 model: gpt-6-astra
+                context_window: 872000
             }
             {
                 match: *opus*
                 model: gpt-6-sol
+                context_window: 872000
             }
             {
                 match: *sonnet*
                 model: gpt-6-luna
+                context_window: 872000
             }
             {
                 match: *haiku*
                 model: gpt-5.6-luna
+                context_window: 272000
+            }
+            {
+                match: *
+                model: gpt-6-luna
+                context_window: 872000
             }
         ]
         ## ccgp:managed-models end codex
@@ -67,6 +95,48 @@ profiles: [
     {
         name: codex_api
         provider: codex_api
-        default_model: gpt-5-mini
+        ## Check the model names and context windows against your API account.
+        models: [
+            {
+                match: *
+                model: gpt-5-mini
+                context_window: 400000
+            }
+        ]
+    }
+    {
+        name: zai
+        provider: zai
+        ## Fable -> glm-5.3, Opus and everything below -> glm-5.3-flash (1M windows).
+        ## Run `ccgp models apply zai` to refresh these from the built-in preset.
+        ## ccgp:managed-models begin zai
+        models: [
+            {
+                match: *fable*
+                model: glm-5.3
+                context_window: 1000000
+            }
+            {
+                match: *opus*
+                model: glm-5.3-flash
+                context_window: 1000000
+            }
+            {
+                match: *sonnet*
+                model: glm-5.3-flash
+                context_window: 1000000
+            }
+            {
+                match: *haiku*
+                model: glm-5.3-flash
+                context_window: 1000000
+            }
+            {
+                match: *
+                model: glm-5.3-flash
+                context_window: 1000000
+            }
+        ]
+        ## ccgp:managed-models end zai
     }
 ]

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,7 +59,7 @@ func launch(profile string, claudeArgs []string) error {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = compactEnv(
 		claudeEnv(os.Environ(), daemon.BaseURL(cfg.Host, cfg.Port)+"/call/"+token, configDir),
-		cfg.Profiles[profile])
+		cfg.Profiles[profile], mainModel(claudeArgs, os.Getenv, configDir))
 
 	// Ctrl+C goes to claude (same console group); ccgp must not exit first.
 	sig := make(chan os.Signal, 1)
@@ -75,11 +76,14 @@ func launch(profile string, claudeArgs []string) error {
 	return nil
 }
 
-// compactEnv tells Claude Code the backend's real context size so it compacts
-// before the backend limit instead of at its own (larger) model window.
+// compactEnv tells Claude Code the real context size of the backend model that
+// serves the session's main Claude model (mainModel), so it compacts before
+// that limit instead of at its own model window. Claude Code takes one window
+// per process; models on other rules (e.g. a smaller Haiku) are not covered.
 // Variables the user already set win.
-func compactEnv(env []string, pf *config.Profile) []string {
-	if pf == nil || pf.ContextWindow <= 0 {
+func compactEnv(env []string, pf *config.Profile, mainModel string) []string {
+	window := pf.ContextWindowFor(mainModel)
+	if pf == nil || window <= 0 {
 		return env
 	}
 	has := func(name string) bool {
@@ -91,7 +95,7 @@ func compactEnv(env []string, pf *config.Profile) []string {
 		return false
 	}
 	if !has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") {
-		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.FormatInt(pf.ContextWindow, 10))
+		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.FormatInt(window, 10))
 	}
 	if pf.CompactPercent > 0 && !has("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") {
 		env = append(env, "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="+strconv.FormatInt(pf.CompactPercent, 10))
@@ -178,4 +182,30 @@ func prepareClaudeHome(profile string) (string, error) {
 		return "", err
 	}
 	return dst, nil
+}
+
+// mainModel returns the Claude model name the session's main conversation will
+// use, in Claude Code's own precedence: --model, ANTHROPIC_MODEL, the "model"
+// of the (mirrored) settings.json, else the default alias "sonnet".
+func mainModel(args []string, getenv func(string) string, configDir string) string {
+	for i, a := range args {
+		if v, ok := strings.CutPrefix(a, "--model="); ok && v != "" {
+			return v
+		}
+		if a == "--model" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	if v := getenv("ANTHROPIC_MODEL"); v != "" {
+		return v
+	}
+	if b, err := os.ReadFile(filepath.Join(configDir, "settings.json")); err == nil {
+		var s struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal(b, &s) == nil && s.Model != "" {
+			return s.Model
+		}
+	}
+	return "sonnet"
 }

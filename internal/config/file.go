@@ -19,7 +19,10 @@ const ConfigFileEnv = "CCGP_CONFIG"
 // Provider types.
 const (
 	ProviderTypeCodexAPI = "codex_api" // OpenAI-compatible API with an API key (Chat Completions)
-	ProviderTypeCodex    = "codex"     // ChatGPT subscription via OAuth, Responses API
+	// ProviderTypeAnthropicCompat is an endpoint that speaks the Anthropic
+	// Messages API (z.ai and others): requests are forwarded unconverted.
+	ProviderTypeAnthropicCompat = "anthropic_compat"
+	ProviderTypeCodex           = "codex" // ChatGPT subscription via OAuth, Responses API
 )
 
 // legacyTypeOpenAI is the former name of ProviderTypeCodexAPI.
@@ -28,13 +31,16 @@ const legacyTypeOpenAI = "openai"
 // reservedProfiles collide with `ccgp <command>`.
 var reservedProfiles = map[string]bool{
 	"serve": true, "start": true, "stop": true, "status": true,
-	"login": true, "help": true, "version": true, "models": true,
+	"login": true, "help": true, "version": true, "models": true, "config": true,
 }
 
-// ModelRule maps Claude model names matching a glob to a backend model.
+// ModelRule maps Claude model names matching a glob to a backend model and
+// states that model's context size.
 type ModelRule struct {
 	Match string `json:"match"`
 	Model string `json:"model"`
+	// ContextWindow is the backend model's context size in tokens (0: unknown).
+	ContextWindow int64 `json:"context_window"`
 }
 
 // Provider is an upstream backend.
@@ -44,6 +50,10 @@ type Provider struct {
 	BaseURL string `json:"base_url"`
 	// APIKeyEnv names an env var holding the key; otherwise the creds store is used.
 	APIKeyEnv string `json:"api_key_env"`
+	// EffortMap rewrites Claude Code's effort level (output_config.effort) for
+	// providers that support fewer levels, e.g. {medium: high, xhigh: max}.
+	// Levels not listed pass through. Only used by anthropic_compat.
+	EffortMap map[string]string `json:"effort_map"`
 }
 
 // Profile binds a URL token (managed in creds) to a provider and model mapping.
@@ -51,10 +61,10 @@ type Profile struct {
 	Name         string `json:"name"`
 	Provider     string `json:"provider"`
 	DefaultModel string `json:"default_model"`
-	// ContextWindow is the backend context size in tokens (0: unknown); the
-	// launcher uses it to make Claude Code compact earlier.
+	// ContextWindow overrides the context size derived from the rules
+	// (see EffectiveContextWindow); 0: derive.
 	ContextWindow int64 `json:"context_window"`
-	// CompactPercent lowers the point (percent of ContextWindow) where Claude
+	// CompactPercent lowers the point (percent of the context window) where Claude
 	// Code compacts; 0 keeps its default (about 83%).
 	CompactPercent int64       `json:"compact_percent"`
 	Models         []ModelRule `json:"models"`
@@ -122,8 +132,14 @@ func (fc *fileConfig) validate() error {
 		if providers[pr.Name] {
 			return fmt.Errorf("providers[%d]: duplicate name %q", i, pr.Name)
 		}
-		if pr.Type != ProviderTypeCodexAPI && pr.Type != ProviderTypeCodex {
-			return fmt.Errorf("provider %q: type must be %q or %q", pr.Name, ProviderTypeCodexAPI, ProviderTypeCodex)
+		switch pr.Type {
+		case ProviderTypeCodex, ProviderTypeCodexAPI:
+		case ProviderTypeAnthropicCompat:
+			if pr.BaseURL == "" {
+				return fmt.Errorf("provider %q: base_url is required for type %q", pr.Name, pr.Type)
+			}
+		default:
+			return fmt.Errorf("provider %q: type must be %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat)
 		}
 		providers[pr.Name] = true
 	}
@@ -150,6 +166,9 @@ func (fc *fileConfig) validate() error {
 		for j, r := range pf.Models {
 			if r.Match == "" || r.Model == "" {
 				return fmt.Errorf("profile %q: models[%d]: match and model are required", pf.Name, j)
+			}
+			if r.ContextWindow < 0 {
+				return fmt.Errorf("profile %q: models[%d]: context_window must not be negative", pf.Name, j)
 			}
 			if _, err := path.Match(strings.ToLower(r.Match), ""); err != nil {
 				return fmt.Errorf("profile %q: models[%d]: bad pattern %q: %w", pf.Name, j, r.Match, err)
@@ -199,7 +218,7 @@ func (c *Config) ForProfile(profile string, apiKey string) (*Config, error) {
 	out.DefaultModel = pf.DefaultModel
 	// Tier env overrides apply only in env-only mode.
 	out.OpusModel, out.SonnetModel, out.HaikuModel = "", "", ""
-	if pr.Type == ProviderTypeCodexAPI {
+	if pr.Type == ProviderTypeCodexAPI || pr.Type == ProviderTypeAnthropicCompat {
 		out.OpenAIBaseURL = pr.BaseURL
 		out.OpenAIAPIKey = apiKey
 	}
@@ -218,4 +237,47 @@ func (c *Config) ResolveModel(claudeModel string) (model string, ok bool) {
 		return c.DefaultModel, true
 	}
 	return "", false
+}
+
+// EffectiveContextWindow is the fallback context size (tokens) of a profile:
+// its own context_window when set, else the smallest window among its rules,
+// the only value that is safe for every model the profile can route to.
+// 0: unknown.
+func (p *Profile) EffectiveContextWindow() int64 {
+	if p == nil {
+		return 0
+	}
+	if p.ContextWindow > 0 {
+		return p.ContextWindow
+	}
+	var w int64
+	for _, r := range p.Models {
+		if r.ContextWindow > 0 && (w == 0 || r.ContextWindow < w) {
+			w = r.ContextWindow
+		}
+	}
+	return w
+}
+
+// ContextWindowFor is the context size (tokens) of the backend model that
+// serves the session's main Claude model name (e.g. "sonnet", "claude-opus-5-5"):
+// the profile's own context_window when set, else the window of the first
+// matching rule, else the smallest rule window. 0: unknown.
+func (p *Profile) ContextWindowFor(claudeModel string) int64 {
+	if p == nil {
+		return 0
+	}
+	if p.ContextWindow > 0 {
+		return p.ContextWindow
+	}
+	name := strings.ToLower(claudeModel)
+	for _, r := range p.Models {
+		if ok, _ := path.Match(strings.ToLower(r.Match), name); ok {
+			if r.ContextWindow > 0 {
+				return r.ContextWindow
+			}
+			break
+		}
+	}
+	return p.EffectiveContextWindow()
 }

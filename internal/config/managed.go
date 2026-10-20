@@ -21,26 +21,21 @@ const (
 	managedEnd   = "## ccgp:managed-models end "
 )
 
-// ManagedModels is the content of a managed block.
+// ManagedModels is the content of a managed block: the ordered model rules,
+// each with its own context window. A final "*" rule plays the default.
 type ManagedModels struct {
-	DefaultModel  string
-	Rules         []ModelRule
-	ContextWindow int64 // 0: omit
+	Rules []ModelRule
 }
 
 // Render returns the block body, one line per element, indented by indent.
 func (m ManagedModels) Render(indent string) []string {
-	lines := []string{"default_model: " + m.DefaultModel}
-	if m.ContextWindow > 0 {
-		lines = append(lines, "context_window: "+strconv.FormatInt(m.ContextWindow, 10))
-	}
-	lines = append(lines, "models: [")
+	lines := []string{"models: ["}
 	for _, r := range m.Rules {
-		lines = append(lines,
-			"    {",
-			"        match: "+r.Match,
-			"        model: "+r.Model,
-			"    }")
+		lines = append(lines, "    {", "        match: "+r.Match, "        model: "+r.Model)
+		if r.ContextWindow > 0 {
+			lines = append(lines, "        context_window: "+strconv.FormatInt(r.ContextWindow, 10))
+		}
+		lines = append(lines, "    }")
 	}
 	lines = append(lines, "]")
 	for i := range lines {
