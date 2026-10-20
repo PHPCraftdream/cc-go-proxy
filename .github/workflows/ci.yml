@@ -6,79 +6,101 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
+# A newer push supersedes older runs of the same ref instead of queueing behind them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
-        go-version: ['1.24']
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
+    # setup-go restores and saves the module and build caches itself.
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
-        go-version: ${{ matrix.go-version }}
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+        go-version: '1.24'
 
     - name: Download dependencies
       run: go mod download
 
+    # ccgp targets Windows first: its DACL, junction and detached-process code only runs there.
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+      run: |
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          go test -v -race -coverprofile=coverage.out ./...
+        else
+          go test -v ./...
+        fi
 
     - name: Upload coverage
-      uses: codecov/codecov-action@v4
-      if: matrix.go-version == '1.24'
+      uses: codecov/codecov-action@v7
+      if: runner.os == 'Linux'
       with:
         files: ./coverage.out
         flags: unittests
         fail_ci_if_error: false
 
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
         go-version: '1.24'
 
     - name: Build binary
-      run: make build
-
-    - name: Verify binary
-      run: ./ccgp version
+      run: |
+        ext=""
+        if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+        go build -ldflags "-s -w" -o "ccgp-ci$ext" ./cmd/ccgp
+        ./ccgp-ci version
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v7
       with:
         go-version: '1.24'
 
     - name: golangci-lint
-      uses: golangci/golangci-lint-action@v8
+      uses: golangci/golangci-lint-action@v9
       with:
         version: v2.5.0
         args: --timeout=5m
