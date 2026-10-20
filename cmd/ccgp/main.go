@@ -3,7 +3,7 @@
 //	ccgp <profile> [claude args...]   start server if needed, ensure creds, run claude
 //	ccgp serve [-d] [-s]              run server in foreground
 //	ccgp start|stop|status            manage background server
-//	ccgp login <provider>             (re)authenticate a provider
+//	ccgp login <provider> [--device] (re)authenticate a provider
 package main
 
 import (
@@ -78,14 +78,22 @@ func run(args []string) error {
 	case "status":
 		return status()
 	case "login":
-		if len(args) != 2 {
-			return errors.New("usage: ccgp login <provider>")
+		device, rest := false, []string{}
+		for _, a := range args[1:] {
+			if a == "--device" {
+				device = true
+			} else {
+				rest = append(rest, a)
+			}
+		}
+		if len(rest) != 1 {
+			return errors.New("usage: ccgp login <provider> [--device]")
 		}
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
-		return login(cfg, args[1], true)
+		return login(cfg, rest[0], true, device)
 	default:
 		return launch(args[0], args[1:])
 	}
@@ -226,7 +234,7 @@ Usage:
   ccgp start                       Start background server
   ccgp stop                        Stop background server
   ccgp status                      Show background server status
-  ccgp login <provider>            Authenticate provider (codex: device code, openai: API key)
+  ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; openai: API key)
   ccgp version                     Show version
 
 Config (Ktav):

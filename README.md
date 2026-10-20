@@ -3,7 +3,7 @@
 `ccgp` runs Claude Code against non-Anthropic backends:
 
 - **OpenAI-compatible** Chat Completions (OpenAI, OpenRouter, Ollama, …) with an API key;
-- **ChatGPT Codex** (subscription) via OAuth device-code login, with refresh-token rotation.
+- **ChatGPT Codex** (subscription) via OAuth (browser sign-in or device code), with refresh-token rotation.
 
 It is a fork of [nielspeter/claude-code-proxy](https://github.com/nielspeter/claude-code-proxy)
 (MIT), reworked for headless use: profiles, Ktav config, per-profile URL tokens,
@@ -26,7 +26,7 @@ background server management.
 On first run for a profile `ccgp`:
 
 1. starts the proxy in the background if it is not running;
-2. ensures provider credentials — prints a device-code link for `codex`
+2. ensures provider credentials — prints a sign-in link for `codex`
    (the browser is never opened automatically), or prompts for an API key;
 3. generates the profile's URL token;
 4. runs `claude` with `ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/<token>`.
@@ -38,7 +38,7 @@ On first run for a profile `ccgp`:
 | `ccgp <profile> [claude args…]` | Ensure server + credentials, run `claude` |
 | `ccgp serve [-d] [-s]` | Run the server in the foreground (`-d` debug bodies, `-s` request log) |
 | `ccgp start` / `stop` / `status` | Manage the background server |
-| `ccgp login <provider>` | (Re)authenticate a provider |
+| `ccgp login <provider> [--device]` | (Re)authenticate a provider. Codex: browser OAuth by default, `--device` for device code |
 
 Background server log: `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log`
 (Linux: `~/.cache/cc-go-proxy/logs/ccgp.log`), rotated at 10 MB.

@@ -149,19 +149,24 @@ func (c *Client) CompleteDeviceLogin(ctx context.Context, dc *DeviceCode) (*Toke
 		}
 	}
 
+	return c.exchangeCode(ctx, code.AuthorizationCode, code.CodeVerifier, c.issuer()+"/deviceauth/callback")
+}
+
+// exchangeCode trades an authorization code for tokens. Single attempt: a
+// retried exchange may hit an already consumed code.
+func (c *Client) exchangeCode(ctx context.Context, code, verifier, redirectURI string) (*Tokens, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {ClientID},
-		"code":          {code.AuthorizationCode},
-		"redirect_uri":  {c.issuer() + "/deviceauth/callback"},
-		"code_verifier": {code.CodeVerifier},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
 	}
 	var tok struct {
 		IDToken      string `json:"id_token"`
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 	}
-	// Single attempt: a retried exchange may hit an already consumed code.
 	status, body, err := c.do(ctx, c.issuer()+"/oauth/token", "application/x-www-form-urlencoded",
 		strings.NewReader(form.Encode()))
 	if err != nil {
@@ -176,14 +181,13 @@ func (c *Client) CompleteDeviceLogin(ctx context.Context, dc *DeviceCode) (*Toke
 	if tok.AccessToken == "" || tok.RefreshToken == "" {
 		return nil, errors.New("oauth: code exchange: missing tokens")
 	}
-	t := &Tokens{
+	return &Tokens{
 		IDToken:      tok.IDToken,
 		AccessToken:  tok.AccessToken,
 		RefreshToken: tok.RefreshToken,
-		AccountID:    accountID(tok.IDToken),
+		AccountID:    accountID(tok.AccessToken, tok.IDToken),
 		LastRefresh:  time.Now().UTC(),
-	}
-	return t, nil
+	}, nil
 }
 
 // Refresh exchanges the refresh token. Rotated tokens replace old ones.
@@ -218,9 +222,9 @@ func (c *Client) Refresh(ctx context.Context, t *Tokens) (*Tokens, error) {
 	next.AccessToken = resp.AccessToken
 	if resp.IDToken != "" {
 		next.IDToken = resp.IDToken
-		if id := accountID(resp.IDToken); id != "" {
-			next.AccountID = id
-		}
+	}
+	if id := accountID(resp.AccessToken, resp.IDToken); id != "" {
+		next.AccountID = id
 	}
 	if resp.RefreshToken != "" {
 		next.RefreshToken = resp.RefreshToken
@@ -320,9 +324,14 @@ func jwtExpiry(tok string) (time.Time, bool) {
 	return time.Unix(int64(exp), 0), true
 }
 
-// accountID reads chatgpt_account_id from the id_token auth claims.
-func accountID(idToken string) string {
-	auth, _ := jwtClaims(idToken)["https://api.openai.com/auth"].(map[string]any)
-	id, _ := auth["chatgpt_account_id"].(string)
-	return id
+// accountID returns chatgpt_account_id from the first JWT (access or id token)
+// that carries it.
+func accountID(tokens ...string) string {
+	for _, t := range tokens {
+		auth, _ := jwtClaims(t)["https://api.openai.com/auth"].(map[string]any)
+		if id, _ := auth["chatgpt_account_id"].(string); id != "" {
+			return id
+		}
+	}
+	return ""
 }

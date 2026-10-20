@@ -21,7 +21,7 @@ func credsStore() (creds.Store, error) {
 }
 
 // login authenticates a provider. force=false skips when credentials exist.
-func login(cfg *config.Config, provider string, force bool) error {
+func login(cfg *config.Config, provider string, force, device bool) error {
 	if cfg.IsEnvMode() {
 		return errors.New("login needs config.ktav; env-only mode uses OPENAI_API_KEY")
 	}
@@ -35,14 +35,16 @@ func login(cfg *config.Config, provider string, force bool) error {
 	}
 	switch pr.Type {
 	case config.ProviderTypeCodex:
-		return loginCodex(store, pr.Name, force)
+		return loginCodex(store, pr.Name, force, device)
 	case config.ProviderTypeOpenAI:
 		return loginAPIKey(store, pr, force)
 	}
 	return fmt.Errorf("provider %q: unsupported type %q", pr.Name, pr.Type)
 }
 
-func loginCodex(store creds.Store, provider string, force bool) error {
+// loginCodex signs in with ChatGPT OAuth: browser callback flow by default,
+// device-code flow with device=true. The browser is never opened automatically.
+func loginCodex(store creds.Store, provider string, force, device bool) error {
 	ts := oauth.Store{Path: store.OAuthPath(provider)}
 	if !force {
 		if _, err := ts.Load(); err == nil {
@@ -54,17 +56,13 @@ func loginCodex(store creds.Store, provider string, force bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	c := &oauth.Client{}
-	dc, err := c.RequestDeviceCode(ctx)
-	if err != nil {
-		return err
+	var tok *oauth.Tokens
+	var err error
+	if device {
+		tok, err = deviceLogin(ctx, provider)
+	} else {
+		tok, err = browserLogin(ctx, provider)
 	}
-	fmt.Fprintf(os.Stderr, "\nSign in to ChatGPT for provider %q:\n\n", provider)
-	fmt.Fprintf(os.Stderr, "  1. Open in a browser:  %s\n", dc.VerificationURL)
-	fmt.Fprintf(os.Stderr, "  2. Enter the code:     %s   (expires in 15 minutes)\n\n", dc.UserCode)
-	fmt.Fprintln(os.Stderr, "Only continue if you started this login yourself. Waiting...")
-
-	tok, err := c.CompleteDeviceLogin(ctx, dc)
 	if err != nil {
 		return err
 	}
@@ -73,6 +71,33 @@ func loginCodex(store creds.Store, provider string, force bool) error {
 	}
 	fmt.Fprintf(os.Stderr, "Logged in (provider %q).\n", provider)
 	return nil
+}
+
+func browserLogin(ctx context.Context, provider string) (*oauth.Tokens, error) {
+	tok, err := (&oauth.Client{}).BrowserLogin(ctx, func(authURL string) {
+		fmt.Fprintf(os.Stderr, "\nSign in to ChatGPT for provider %q.\n\n", provider)
+		fmt.Fprintf(os.Stderr, "Open this link in a browser on this computer:\n\n  %s\n\n", authURL)
+		fmt.Fprintf(os.Stderr, "After you sign in, the browser returns to localhost:%s and ccgp continues.\n", oauth.CallbackPort)
+		fmt.Fprintf(os.Stderr, "No browser on this computer? Use: ccgp login %s --device\n\nWaiting (10 minutes)...\n", provider)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tok, nil
+}
+
+func deviceLogin(ctx context.Context, provider string) (*oauth.Tokens, error) {
+	c := &oauth.Client{}
+	dc, err := c.RequestDeviceCode(ctx)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(os.Stderr, "\nSign in to ChatGPT for provider %q (device code):\n\n", provider)
+	fmt.Fprintf(os.Stderr, "  1. Open in a browser:  %s\n", dc.VerificationURL)
+	fmt.Fprintf(os.Stderr, "  2. Enter the code:     %s   (expires in 15 minutes)\n\n", dc.UserCode)
+	fmt.Fprintln(os.Stderr, "Device-code sign-in must be enabled in ChatGPT Security Settings.")
+	fmt.Fprintln(os.Stderr, "Only continue if you started this login yourself. Waiting...")
+	return c.CompleteDeviceLogin(ctx, dc)
 }
 
 func loginAPIKey(store creds.Store, pr *config.Provider, force bool) error {

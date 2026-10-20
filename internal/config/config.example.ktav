@@ -12,7 +12,7 @@ listen.host: 127.0.0.1
 listen.port: 60093
 
 providers: [
-    ## ChatGPT subscription via OAuth (device code, `ccgp login codex`).
+    ## ChatGPT subscription via OAuth (`ccgp login codex`, or `--device` for device code).
     {
         name: codex
         type: codex

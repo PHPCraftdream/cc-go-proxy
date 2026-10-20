@@ -27,7 +27,7 @@ func launch(profile string, claudeArgs []string) error {
 
 	token := cfg.Token // env-only mode
 	if !cfg.IsEnvMode() {
-		if err := login(cfg, cfg.Profiles[profile].Provider, false); err != nil {
+		if err := login(cfg, cfg.Profiles[profile].Provider, false, false); err != nil {
 			return err
 		}
 		store, err := credsStore()
