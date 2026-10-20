@@ -103,8 +103,11 @@ func mirrorTree(src, dst, name string, man mirrored) error {
 		key := filepath.ToSlash(filepath.Join(name, rel))
 		seen[key] = true
 		want := stamp{info.Size(), info.ModTime().UnixNano()}
+		// Unchanged at the source and still present: leave the copy alone. Its
+		// size is not compared, because rewritePluginPaths (and the session)
+		// legitimately change mirrored files.
 		if man[key] == want {
-			if st, err := os.Stat(target); err == nil && st.Size() == want.Size {
+			if _, err := os.Stat(target); err == nil {
 				return nil
 			}
 		}
