@@ -250,3 +250,22 @@ func TestErrorMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertRequestCorrectsModelIdentity(t *testing.T) {
+	body := `{"model":"claude-sonnet-5-5","system":[{"type":"text","text":"You are Claude Code.\nYou are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.\nMore."}],"messages":[{"role":"user","content":"hi"}]}`
+	req, _, err := ConvertRequest([]byte(body), "gpt-6-luna", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := mustJSON(t, req.Input[0])
+	for _, want := range []string{"named gpt-6-luna", "The exact model ID is gpt-6-luna.", "You are Claude Code.", "More."} {
+		if !strings.Contains(dev, want) {
+			t.Errorf("developer message lacks %q: %s", want, dev)
+		}
+	}
+	for _, bad := range []string{"Sonnet 5.5. The exact", "June 2026"} {
+		if strings.Contains(dev, bad) {
+			t.Errorf("developer message still has %q: %s", bad, dev)
+		}
+	}
+}

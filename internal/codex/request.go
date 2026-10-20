@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/claude-code-proxy/proxy/internal/identity"
 )
 
 // SignaturePrefix marks thinking-block signatures that carry Responses
@@ -148,7 +150,7 @@ func ConvertRequest(body []byte, model, cacheScope string) (req *Request, wantSt
 		Reasoning:         &Reasoning{Effort: effort(in.Thinking), Summary: "auto"},
 	}
 
-	if sys := systemText(in.System); sys != "" {
+	if sys := identity.Rewrite(systemText(in.System), in.Model, model); sys != "" {
 		out.Input = append(out.Input, messageItem{
 			Type: "message", Role: "developer",
 			Content: []contentPart{{Type: "input_text", Text: sys}},

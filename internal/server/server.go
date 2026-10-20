@@ -74,6 +74,9 @@ func Start(cfg *config.Config) error {
 			if rc := requestConfig(c); rc != nil {
 				profile = " [" + rc.Profile + "]"
 			}
+			if m, _ := c.Locals(localsModel).(string); m != "" {
+				profile += " " + m
+			}
 			fmt.Printf("[%s] %d - %s %s %s%s\n", start.Format("15:04:05"),
 				c.Response().StatusCode(), time.Since(start), c.Method(), maskToken(c.Path()), profile)
 			return err

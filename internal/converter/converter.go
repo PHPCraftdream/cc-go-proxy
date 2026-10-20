@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/claude-code-proxy/proxy/internal/config"
+	"github.com/claude-code-proxy/proxy/internal/identity"
 	"github.com/claude-code-proxy/proxy/pkg/models"
 )
 
@@ -87,7 +88,7 @@ func ConvertRequest(claudeReq models.ClaudeRequest, cfg *config.Config) (*models
 	openaiModel := mapModel(claudeReq.Model, cfg)
 
 	// Extract system message (can be string or array of content blocks)
-	systemText := extractSystemText(claudeReq.System)
+	systemText := identity.Rewrite(extractSystemText(claudeReq.System), claudeReq.Model, openaiModel)
 
 	// Convert messages
 	openaiMessages := convertMessages(claudeReq.Messages, systemText)

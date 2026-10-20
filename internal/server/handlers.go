@@ -68,6 +68,9 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 
 	// Convert Claude request to OpenAI format
 	openaiReq, err := converter.ConvertRequest(claudeReq, cfg)
+	if err == nil {
+		c.Locals(localsModel, claudeReq.Model+" -> "+openaiReq.Model)
+	}
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{
 			"type": "error",

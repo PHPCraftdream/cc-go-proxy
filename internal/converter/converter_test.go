@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/claude-code-proxy/proxy/internal/config"
@@ -825,5 +826,22 @@ func BenchmarkConvertResponse(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ConvertResponse(openaiResp, "claude-sonnet-4-20250514")
+	}
+}
+
+func TestConvertRequestCorrectsModelIdentity(t *testing.T) {
+	cfg := &config.Config{ModelRules: []config.ModelRule{{Match: "*sonnet*", Model: "gpt-6-luna"}}}
+	req := models.ClaudeRequest{
+		Model:    "claude-sonnet-5-5",
+		System:   "You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5.",
+		Messages: []models.ClaudeMessage{{Role: "user", Content: "hi"}},
+	}
+	out, err := ConvertRequest(req, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys, _ := out.Messages[0].Content.(string)
+	if !strings.Contains(sys, "named gpt-6-luna") || strings.Contains(sys, "Sonnet 5.5") {
+		t.Errorf("system message = %q", sys)
 	}
 }

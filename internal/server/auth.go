@@ -11,7 +11,10 @@ import (
 // callPrefix is the URL prefix that carries the access token: /call/{token}/...
 const callPrefix = "/call/"
 
-const localsCfg = "ccgp.cfg"
+const (
+	localsCfg   = "ccgp.cfg"
+	localsModel = "ccgp.model" // "requested -> backend", shown in the request log
+)
 
 // profileBuilder returns the per-request config for a profile.
 type profileBuilder func(profile string) (*config.Config, error)

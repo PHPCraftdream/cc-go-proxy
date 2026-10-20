@@ -33,6 +33,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	_ = json.Unmarshal(body, &probe)
 	model := converter.MapModel(probe.Model, cfg)
+	c.Locals(localsModel, probe.Model+" -> "+model)
 
 	req, wantStream, err := codex.ConvertRequest(body, model, cfg.Profile)
 	if err != nil {
