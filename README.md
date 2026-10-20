@@ -14,8 +14,8 @@ background server management.
 1. Run `ccgp codex` (or any profile/`serve`/`start`/`login`): on first
    run it creates a default
    [`config.ktav`](internal/config/config.example.ktav) in
-   `%APPDATA%\cc-go-proxy\` (Linux: `~/.config/cc-go-proxy/`) with a `codex` and an
-   `openai` provider/profile. Edit model names to what your account can use.
+   `%APPDATA%\cc-go-proxy\` (Linux: `~/.config/cc-go-proxy/`) with a `codex` and a
+   `codex_api` provider/profile. Edit model names to what your account can use.
 2. Run Claude Code through a profile:
 
    ```sh
@@ -48,7 +48,7 @@ Background server log: `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log`
 See the generated file (template: [`config.example.ktav`](internal/config/config.example.ktav)). Summary:
 
 - `listen.host` / `listen.port` — default `127.0.0.1:60093` (loopback only).
-- `providers[]` — `name`, `type` (`openai` | `codex`), `base_url`, optional `api_key_env`.
+- `providers[]` — `name`, `type` (`codex` — ChatGPT subscription via OAuth, or `codex_api` — API key, pay per token; `openai` is accepted as the old name of `codex_api`), `base_url`, optional `api_key_env`.
 - `profiles[]` — `name`, `provider`, ordered `models[]` rules (`match` glob → `model`),
   `default_model`. Without rules or default, tier names map to `gpt-5` / `gpt-5-mini`.
 
@@ -80,6 +80,24 @@ are compacted before the backend limit. Add `compact_percent: 70` to a profile t
 compact earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`). Claude Code accepts one window
 per process: Haiku-tier models with a smaller window are reported by `ccgp models` but do
 not lower it. Variables you set yourself are never overridden.
+
+## Official credentials never reach a ccgp session
+
+`ccgp <profile>` runs `claude` with its own config directory,
+`%APPDATA%\cc-go-proxy\claude\<profile>` (`CLAUDE_CONFIG_DIR`), so your claude.ai login
+and Anthropic API keys are not available to it:
+
+- no `.credentials.json` there; one left behind (e.g. by `/login`) is deleted at the next launch;
+- parent environment variables that select an official endpoint or credential
+  (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK/VERTEX/FOUNDRY`) are dropped;
+- `settings.json` is mirrored without `apiKeyHelper`, `forceLogin*` and those variables in `env`;
+- `.claude.json` is seeded once with onboarding state, theme and MCP servers only (no account data).
+
+To keep working conditions familiar, `CLAUDE.md`, `settings.json` and `keybindings.json`
+are copied from your own Claude Code config dir at every launch (edits made in the isolated
+copy are overwritten), and `agents`, `commands`, `skills`, `output-styles` and `plugins`
+are shared with it through junctions/symlinks. History, sessions and projects stay separate.
 
 ## Security model
 

@@ -147,7 +147,7 @@ func profileResolver(cfg *config.Config, store creds.Store) (*creds.TokenIndex, 
 		}
 		pr := cfg.Providers[pf.Provider]
 		key := ""
-		if pr.Type == config.ProviderTypeOpenAI {
+		if pr.Type == config.ProviderTypeCodexAPI {
 			if pr.APIKeyEnv != "" {
 				key = os.Getenv(pr.APIKeyEnv)
 			} else if key, err = store.APIKey(pr.Name); err != nil {

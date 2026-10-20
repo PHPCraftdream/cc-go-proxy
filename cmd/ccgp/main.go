@@ -191,6 +191,9 @@ func serve(args []string) error {
 		return err
 	}
 	cfg.SimpleLog = simple
+	if cfg.ConfigFile != "" {
+		fmt.Printf("config: %s\n", cfg.ConfigFile)
+	}
 	if h, err := daemon.Check(daemon.BaseURL(cfg.Host, cfg.Port)); err == nil {
 		return fmt.Errorf("already running (pid %d)", h.PID)
 	}
@@ -240,7 +243,7 @@ Usage:
   ccgp start                       Start background server
   ccgp stop                        Stop background server
   ccgp status                      Show background server status
-  ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; openai: API key)
+  ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)
   ccgp models [apply] [profile]    Show (or write into config) the newest Codex models per Claude tier
   ccgp version                     Show version
 

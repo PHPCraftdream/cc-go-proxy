@@ -71,7 +71,7 @@ func TestReplaceManagedMissingMarkers(t *testing.T) {
 		t.Error("HasManaged true without markers")
 	}
 	// Markers of another profile do not count.
-	if HasManaged(string(DefaultTemplate()), "openai") {
+	if HasManaged(string(DefaultTemplate()), "codex_api") {
 		t.Error("HasManaged true for a profile without a block")
 	}
 	if !HasManaged(string(DefaultTemplate()), "codex") {

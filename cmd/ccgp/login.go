@@ -40,7 +40,7 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 			autoApplyModels(cfg, pr.Name)
 		}
 		return err
-	case config.ProviderTypeOpenAI:
+	case config.ProviderTypeCodexAPI:
 		return loginAPIKey(store, pr, force)
 	}
 	return fmt.Errorf("provider %q: unsupported type %q", pr.Name, pr.Type)
@@ -180,7 +180,7 @@ func loginState(store creds.Store, pr *config.Provider) string {
 			return "error: " + err.Error()
 		}
 		return "logged in, tokens refreshed " + t.LastRefresh.Local().Format("2006-01-02 15:04")
-	case config.ProviderTypeOpenAI:
+	case config.ProviderTypeCodexAPI:
 		if pr.APIKeyEnv != "" {
 			if os.Getenv(pr.APIKeyEnv) == "" {
 				return "$" + pr.APIKeyEnv + " is empty"

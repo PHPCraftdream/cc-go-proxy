@@ -124,7 +124,6 @@ func Load() (*Config, error) {
 		if _, err := os.Stat(loc); err == nil {
 			// File exists, load it (overload to override existing env vars)
 			if err := godotenv.Overload(loc); err == nil {
-				fmt.Printf("📁 Loaded config from: %s\n", loc)
 				break
 			}
 		}
@@ -169,18 +168,17 @@ func Load() (*Config, error) {
 	if fc != nil {
 		applyFile(cfg, fc)
 		cfg.ConfigFile = p
-		fmt.Printf("📁 Loaded config from: %s\n", p)
 		return cfg, nil
 	}
 
 	// Env-only mode: one provider + one profile from env.
 	cfg.Providers = map[string]*Provider{
-		EnvProfile: {Name: EnvProfile, Type: ProviderTypeOpenAI, BaseURL: cfg.OpenAIBaseURL},
+		EnvProfile: {Name: EnvProfile, Type: ProviderTypeCodexAPI, BaseURL: cfg.OpenAIBaseURL},
 	}
 	cfg.Profiles = map[string]*Profile{
 		EnvProfile: {Name: EnvProfile, Provider: EnvProfile},
 	}
-	cfg.Profile, cfg.ProviderName, cfg.ProviderType = EnvProfile, EnvProfile, ProviderTypeOpenAI
+	cfg.Profile, cfg.ProviderName, cfg.ProviderType = EnvProfile, EnvProfile, ProviderTypeCodexAPI
 
 	// Validate required fields
 	if len(cfg.Token) < MinTokenLength {

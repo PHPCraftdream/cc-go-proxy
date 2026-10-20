@@ -27,7 +27,7 @@ providers: [
     }
     {
         name: oai
-        type: openai
+        type: codex_api
         api_key_env: MY_OPENAI_KEY
     }
 ]
@@ -68,10 +68,10 @@ func TestLoadFileKtav(t *testing.T) {
 }
 
 func TestLoadFileErrors(t *testing.T) {
-	provider := "providers: [\n    {\n        name: p\n        type: openai\n    }\n]\n"
+	provider := "providers: [\n    {\n        name: p\n        type: codex_api\n    }\n]\n"
 	tests := []struct{ name, body, want string }{
 		{"bad provider type", "providers: [\n    {\n        name: p\n        type: foo\n    }\n]\n", "type must be"},
-		{"duplicate provider", "providers: [\n    {\n        name: p\n        type: openai\n    }\n    {\n        name: p\n        type: codex\n    }\n]\n", "duplicate"},
+		{"duplicate provider", "providers: [\n    {\n        name: p\n        type: codex_api\n    }\n    {\n        name: p\n        type: codex\n    }\n]\n", "duplicate"},
 		{"unknown provider", provider + "profiles: [\n    {\n        name: w\n        provider: nope\n    }\n]\n", "unknown provider"},
 		{"rule without model", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: *opus*\n            }\n        ]\n    }\n]\n", "required"},
 		{"bad pattern", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: op[us\n                model: x\n            }\n        ]\n    }\n]\n", "bad pattern"},
@@ -150,7 +150,7 @@ func TestLoadFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.ProviderType != ProviderTypeOpenAI || a.OpenAIAPIKey != "sk-test" || a.OpenAIBaseURL != "https://api.openai.com/v1" {
+	if a.ProviderType != ProviderTypeCodexAPI || a.OpenAIAPIKey != "sk-test" || a.OpenAIBaseURL != "https://api.openai.com/v1" {
 		t.Errorf("agents = %+v", a)
 	}
 	if _, err := cfg.ForProfile("nope", ""); err == nil {
@@ -174,5 +174,19 @@ func TestLoadExplicitMissingFile(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with missing explicit config")
+	}
+}
+
+func TestLegacyOpenAIProviderType(t *testing.T) {
+	fc, err := loadFile(writeKtav(t, "providers: [\n    {\n        name: old\n        type: openai\n    }\n]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.Providers[0].Type != ProviderTypeCodexAPI {
+		t.Errorf("type = %q, want %q", fc.Providers[0].Type, ProviderTypeCodexAPI)
+	}
+	if _, err := loadFile(writeKtav(t, "providers: [\n    {\n        name: x\n        type: nope\n    }\n]\n")); err == nil ||
+		!strings.Contains(err.Error(), ProviderTypeCodexAPI) {
+		t.Errorf("unknown type error = %v", err)
 	}
 }

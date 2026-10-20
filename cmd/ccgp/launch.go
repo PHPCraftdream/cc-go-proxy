@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/claude-code-proxy/proxy/internal/claudehome"
 	"github.com/claude-code-proxy/proxy/internal/config"
 	"github.com/claude-code-proxy/proxy/internal/daemon"
 )
@@ -48,10 +50,14 @@ func launch(profile string, claudeArgs []string) error {
 	if err != nil {
 		return errors.New("claude not found in PATH")
 	}
+	configDir, err := prepareClaudeHome(profile)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(claude, claudeArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = compactEnv(
-		claudeEnv(os.Environ(), daemon.BaseURL(cfg.Host, cfg.Port)+"/call/"+token),
+		claudeEnv(os.Environ(), daemon.BaseURL(cfg.Host, cfg.Port)+"/call/"+token, configDir),
 		cfg.Profiles[profile])
 
 	// Ctrl+C goes to claude (same console group); ccgp must not exit first.
@@ -94,19 +100,82 @@ func compactEnv(env []string, pf *config.Profile) []string {
 }
 
 // claudeEnv points Claude Code at the proxy and drops conflicting Anthropic creds.
-func claudeEnv(env []string, baseURL string) []string {
-	drop := map[string]bool{
-		"ANTHROPIC_BASE_URL":   true,
-		"ANTHROPIC_API_KEY":    true,
-		"ANTHROPIC_AUTH_TOKEN": true,
-	}
-	out := make([]string, 0, len(env)+2)
+//
+// No official credential may reach the session: every endpoint/credential
+// variable of the parent is dropped and CLAUDE_CONFIG_DIR points at the
+// profile's isolated directory (see claudehome).
+func claudeEnv(env []string, baseURL, configDir string) []string {
+	out := make([]string, 0, len(env)+3)
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
-		if !drop[strings.ToUpper(k)] {
-			out = append(out, kv)
+		if claudehome.IsAuthEnv(k) || strings.EqualFold(k, "CLAUDE_CONFIG_DIR") {
+			continue
 		}
+		out = append(out, kv)
 	}
 	// Auth is the URL token; Claude Code still requires a credential to be set.
-	return append(out, "ANTHROPIC_BASE_URL="+baseURL, "ANTHROPIC_AUTH_TOKEN=ccgp")
+	out = append(out, "ANTHROPIC_BASE_URL="+baseURL, "ANTHROPIC_AUTH_TOKEN=ccgp", "CLAUDE_CONFIG_DIR="+configDir)
+	return withDefaults(out, gatewayDefaults)
+}
+
+// gatewayDefaults are Claude Code's documented opt-outs for features that
+// cannot work behind a non-Anthropic gateway. They only silence startup notices.
+var gatewayDefaults = [][2]string{
+	// claude.ai connectors need a claude.ai login, which the gateway token replaces.
+	{"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
+	// Server-side auto-mode classifier checks need Anthropic's API; use the local classifier.
+	{"CLAUDE_CODE_AUTO_MODE_SERVER", "0"},
+}
+
+// withDefaults appends name=value for each pair the environment does not set.
+func withDefaults(env []string, defaults [][2]string) []string {
+	for _, d := range defaults {
+		set := false
+		for _, kv := range env {
+			if k, _, _ := strings.Cut(kv, "="); strings.EqualFold(k, d[0]) {
+				set = true
+				break
+			}
+		}
+		if !set {
+			env = append(env, d[0]+"="+d[1])
+		}
+	}
+	return env
+}
+
+// claudeHomeBase holds the isolated Claude Code config dirs, one per profile.
+func claudeHomeBase() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "cc-go-proxy", "claude"), nil
+}
+
+// prepareClaudeHome creates the profile's isolated Claude Code config dir
+// (no official credentials) mirrored from the user's own one, and returns it.
+func prepareClaudeHome(profile string) (string, error) {
+	base, err := claudeHomeBase()
+	if err != nil {
+		return "", err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	env := func(k string) string {
+		v := os.Getenv(k)
+		// A nested launch inherits an isolated dir: mirror from the real one.
+		if k == "CLAUDE_CONFIG_DIR" && strings.HasPrefix(strings.ToLower(filepath.Clean(v)), strings.ToLower(base)) {
+			return ""
+		}
+		return v
+	}
+	src, srcState := claudehome.SourceDir(env, home)
+	dst := filepath.Join(base, profile)
+	if err := claudehome.Prepare(src, srcState, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
 }

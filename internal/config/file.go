@@ -18,9 +18,12 @@ const ConfigFileEnv = "CCGP_CONFIG"
 
 // Provider types.
 const (
-	ProviderTypeOpenAI = "openai" // OpenAI-compatible Chat Completions, API key
-	ProviderTypeCodex  = "codex"  // ChatGPT subscription via OAuth, Responses API
+	ProviderTypeCodexAPI = "codex_api" // OpenAI-compatible API with an API key (Chat Completions)
+	ProviderTypeCodex    = "codex"     // ChatGPT subscription via OAuth, Responses API
 )
+
+// legacyTypeOpenAI is the former name of ProviderTypeCodexAPI.
+const legacyTypeOpenAI = "openai"
 
 // reservedProfiles collide with `ccgp <command>`.
 var reservedProfiles = map[string]bool{
@@ -98,6 +101,12 @@ func loadFile(p string) (*fileConfig, error) {
 	if err := ktav.LoadsInto(string(data), &fc); err != nil {
 		return nil, fmt.Errorf("parse %s: %w (hint: write numeric-looking strings as `key:: value`)", p, err)
 	}
+	for i := range fc.Providers {
+		// "openai" is the former name of codex_api; old configs keep working.
+		if fc.Providers[i].Type == legacyTypeOpenAI {
+			fc.Providers[i].Type = ProviderTypeCodexAPI
+		}
+	}
 	if err := fc.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", p, err)
 	}
@@ -113,8 +122,8 @@ func (fc *fileConfig) validate() error {
 		if providers[pr.Name] {
 			return fmt.Errorf("providers[%d]: duplicate name %q", i, pr.Name)
 		}
-		if pr.Type != ProviderTypeOpenAI && pr.Type != ProviderTypeCodex {
-			return fmt.Errorf("provider %q: type must be %q or %q", pr.Name, ProviderTypeOpenAI, ProviderTypeCodex)
+		if pr.Type != ProviderTypeCodexAPI && pr.Type != ProviderTypeCodex {
+			return fmt.Errorf("provider %q: type must be %q or %q", pr.Name, ProviderTypeCodexAPI, ProviderTypeCodex)
 		}
 		providers[pr.Name] = true
 	}
@@ -162,7 +171,7 @@ func applyFile(cfg *Config, fc *fileConfig) {
 	cfg.Providers = map[string]*Provider{}
 	for i := range fc.Providers {
 		p := fc.Providers[i]
-		if p.Type == ProviderTypeOpenAI && p.BaseURL == "" {
+		if p.Type == ProviderTypeCodexAPI && p.BaseURL == "" {
 			p.BaseURL = "https://api.openai.com/v1"
 		}
 		cfg.Providers[p.Name] = &p
@@ -190,7 +199,7 @@ func (c *Config) ForProfile(profile string, apiKey string) (*Config, error) {
 	out.DefaultModel = pf.DefaultModel
 	// Tier env overrides apply only in env-only mode.
 	out.OpusModel, out.SonnetModel, out.HaikuModel = "", "", ""
-	if pr.Type == ProviderTypeOpenAI {
+	if pr.Type == ProviderTypeCodexAPI {
 		out.OpenAIBaseURL = pr.BaseURL
 		out.OpenAIAPIKey = apiKey
 	}

@@ -15,16 +15,17 @@ listen.host: 127.0.0.1
 listen.port: 60093
 
 providers: [
-    ## ChatGPT subscription via OAuth (`ccgp login codex`, or `--device` for device code).
+    ## "codex": your ChatGPT subscription via OAuth (`ccgp login codex`, or `--device` for device code).
     {
         name: codex
         type: codex
     }
-    ## OpenAI-compatible Chat Completions. Key is prompted on first use and
-    ## stored in creds, or read from the env var named by api_key_env.
+    ## "codex_api": an OpenAI-compatible API with an API key (pay per token; OpenRouter,
+    ## Ollama etc. work via base_url). The key is prompted on first use and stored in
+    ## creds, or read from the env var named by api_key_env.
     {
-        name: openai
-        type: openai
+        name: codex_api
+        type: codex_api
         base_url: https://api.openai.com/v1
     }
 ]
@@ -64,8 +65,8 @@ profiles: [
         ## ccgp:managed-models end codex
     }
     {
-        name: openai
-        provider: openai
+        name: codex_api
+        provider: codex_api
         default_model: gpt-5-mini
     }
 ]

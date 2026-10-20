@@ -14,16 +14,32 @@ func TestClaudeEnv(t *testing.T) {
 		"anthropic_base_url=http://old",
 		"ANTHROPIC_AUTH_TOKEN=x",
 		"ANTHROPIC_MODEL=keep",
+		"CLAUDE_CODE_OAUTH_TOKEN=official",
+		"CLAUDE_CODE_USE_BEDROCK=1",
+		"CLAUDE_CONFIG_DIR=/real/.claude",
 	}
-	got := claudeEnv(in, "http://127.0.0.1:60093/call/tok")
+	got := claudeEnv(in, "http://127.0.0.1:60093/call/tok", "/iso")
 	want := []string{
 		"PATH=/bin",
 		"ANTHROPIC_MODEL=keep",
 		"ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/tok",
 		"ANTHROPIC_AUTH_TOKEN=ccgp",
+		"CLAUDE_CONFIG_DIR=/iso",
+		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
+		"CLAUDE_CODE_AUTO_MODE_SERVER=0",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("claudeEnv =\n%q\nwant\n%q", got, want)
+	}
+
+	// Values the user already set are kept.
+	got = claudeEnv([]string{"claude_code_auto_mode_server=1", "ENABLE_CLAUDEAI_MCP_SERVERS=true"}, "http://x", "/iso")
+	want = []string{
+		"claude_code_auto_mode_server=1", "ENABLE_CLAUDEAI_MCP_SERVERS=true",
+		"ANTHROPIC_BASE_URL=http://x", "ANTHROPIC_AUTH_TOKEN=ccgp", "CLAUDE_CONFIG_DIR=/iso",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("user overrides: claudeEnv =\n%q\nwant\n%q", got, want)
 	}
 }
 
