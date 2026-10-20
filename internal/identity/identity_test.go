@@ -72,3 +72,31 @@ func TestRewriteWithoutRequestedName(t *testing.T) {
 		t.Errorf("out = %q", out)
 	}
 }
+
+func TestRewriteContent(t *testing.T) {
+	text := "You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5."
+	// Plain string.
+	if got, _ := RewriteContent(text, "c", "gpt-6-luna").(string); !strings.Contains(got, "named gpt-6-luna") {
+		t.Errorf("string content: %q", got)
+	}
+	// Blocks: text blocks rewritten, others untouched.
+	blocks := []any{
+		map[string]any{"type": "text", "text": text},
+		map[string]any{"type": "tool_result", "content": text},
+		"stray",
+	}
+	out := RewriteContent(blocks, "c", "gpt-6-luna").([]any)
+	if !strings.Contains(out[0].(map[string]any)["text"].(string), "named gpt-6-luna") {
+		t.Errorf("text block not rewritten: %v", out[0])
+	}
+	if out[1].(map[string]any)["content"] != text {
+		t.Errorf("tool_result altered: %v", out[1])
+	}
+	// Other types pass through.
+	if got := RewriteContent(42, "c", "b"); got != 42 {
+		t.Errorf("non-content value changed: %v", got)
+	}
+	if !Mentions([]byte(`{"a":"You are powered by the model named X"}`)) || Mentions([]byte(`{}`)) {
+		t.Error("Mentions wrong")
+	}
+}

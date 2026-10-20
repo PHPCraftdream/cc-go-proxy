@@ -90,6 +90,13 @@ func ConvertRequest(claudeReq models.ClaudeRequest, cfg *config.Config) (*models
 	// Extract system message (can be string or array of content blocks)
 	systemText := identity.Rewrite(extractSystemText(claudeReq.System), claudeReq.Model, openaiModel)
 
+	// Claude Code also states the model identity in context blocks sent as user or system messages.
+	for i := range claudeReq.Messages {
+		if claudeReq.Messages[i].Role != "assistant" {
+			claudeReq.Messages[i].Content = identity.RewriteContent(claudeReq.Messages[i].Content, claudeReq.Model, openaiModel)
+		}
+	}
+
 	// Convert messages
 	openaiMessages := convertMessages(claudeReq.Messages, systemText)
 

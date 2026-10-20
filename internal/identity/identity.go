@@ -45,3 +45,30 @@ func Rewrite(text, requested, backend string) string {
 	}
 	return cutoff.ReplaceAllString(out, "")
 }
+
+const marker = "You are powered by the model"
+
+// RewriteContent applies Rewrite to the text of a Claude message content value
+// (a string, or a list of blocks): only top-level text blocks are touched, so
+// tool results and other structured content are passed through unchanged.
+// It returns content itself when nothing needs changing.
+func RewriteContent(content any, requested, backend string) any {
+	switch c := content.(type) {
+	case string:
+		return Rewrite(c, requested, backend)
+	case []any:
+		for _, b := range c {
+			m, ok := b.(map[string]any)
+			if !ok || m["type"] != "text" {
+				continue
+			}
+			if s, ok := m["text"].(string); ok {
+				m["text"] = Rewrite(s, requested, backend)
+			}
+		}
+	}
+	return content
+}
+
+// Mentions reports whether raw JSON text may contain the identity sentence.
+func Mentions(raw []byte) bool { return strings.Contains(string(raw), marker) }

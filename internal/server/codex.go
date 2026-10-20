@@ -28,6 +28,9 @@ func anthropicError(c *fiber.Ctx, status int, typ, msg string) error {
 // reach Claude Code with their real status.
 func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) error {
 	body := append([]byte(nil), c.Body()...)
+	if cfg.Debug {
+		fmt.Printf("\n=== CLAUDE REQUEST ===\n%s\n=====================\n", body)
+	}
 	var probe struct {
 		Model string `json:"model"`
 	}

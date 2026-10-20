@@ -269,3 +269,39 @@ func TestConvertRequestCorrectsModelIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestConvertRequestCorrectsIdentityInUserMessages(t *testing.T) {
+	ctx := "You are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.\n\n# Language"
+	body := `{"model":"claude-sonnet-5-5","system":"s","messages":[` +
+		`{"role":"user","content":[{"type":"text","text":"x"}]},` +
+		`{"role":"user","content":[{"type":"text","text":` + mustJSON(t, ctx) + `},` +
+		`{"type":"tool_result","tool_use_id":"c1","content":[{"type":"text","text":` + mustJSON(t, ctx) + `}]}]}]}`
+	req, _, err := ConvertRequest([]byte(body), "gpt-6-luna", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := mustJSON(t, req.Input)
+	if !strings.Contains(all, "named gpt-6-luna") {
+		t.Errorf("user text block not rewritten: %s", all)
+	}
+	// Tool results are data, not instructions: the one remaining original is theirs.
+	if n := strings.Count(all, "Sonnet 5.5. The exact"); n != 1 {
+		t.Errorf("original sentence occurs %d times, want 1 (the tool result): %s", n, all)
+	}
+}
+
+// Claude Code sends some context as role "system" entries of the messages array.
+func TestConvertRequestCorrectsIdentityInSystemRoleMessages(t *testing.T) {
+	ctx := "ctx\nYou are powered by the model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5. Assistant knowledge cutoff is June 2026.\n\n# Language"
+	body := `{"model":"claude-sonnet-5-5","system":"s","messages":[` +
+		`{"role":"system","content":[{"type":"text","text":` + mustJSON(t, ctx) + `}]},` +
+		`{"role":"user","content":"hi"}]}`
+	req, _, err := ConvertRequest([]byte(body), "gpt-6-luna", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := mustJSON(t, req.Input)
+	if strings.Contains(all, "Sonnet 5.5. The exact") || !strings.Contains(all, "named gpt-6-luna") {
+		t.Errorf("system-role message not corrected: %s", all)
+	}
+}

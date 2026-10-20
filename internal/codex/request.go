@@ -140,6 +140,11 @@ func ConvertRequest(body []byte, model, cacheScope string) (req *Request, wantSt
 	if err := json.Unmarshal(body, &in); err != nil {
 		return nil, false, fmt.Errorf("invalid request body: %w", err)
 	}
+	for i := range in.Messages {
+		if in.Messages[i].Role != "assistant" {
+			in.Messages[i].Content = rewriteIdentity(in.Messages[i].Content, in.Model, model)
+		}
+	}
 	out := &Request{
 		Model:             model,
 		Stream:            true,
@@ -236,6 +241,23 @@ func systemText(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// rewriteIdentity corrects the model identity sentence Claude Code puts into non-assistant
+// message text (system reminders and context blocks).
+func rewriteIdentity(raw json.RawMessage, requested, backend string) json.RawMessage {
+	if !identity.Mentions(raw) {
+		return raw
+	}
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return raw
+	}
+	out, err := json.Marshal(identity.RewriteContent(v, requested, backend))
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func parseBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
