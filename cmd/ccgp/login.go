@@ -124,14 +124,51 @@ func isLocal(u string) bool {
 	return (&config.Config{OpenAIBaseURL: u}).IsLocalhost()
 }
 
-func names[T any](m map[string]T) string {
-	if len(m) == 0 {
-		return "none"
-	}
+func sortedKeys[T any](m map[string]T) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
 	sortStrings(out)
-	return strings.Join(out, ", ")
+	return out
+}
+
+func names[T any](m map[string]T) string {
+	if len(m) == 0 {
+		return "none"
+	}
+	return strings.Join(sortedKeys(m), ", ")
+}
+
+// loginState describes stored credentials without exposing them.
+func loginState(store creds.Store, pr *config.Provider) string {
+	switch pr.Type {
+	case config.ProviderTypeCodex:
+		t, err := oauth.Store{Path: store.OAuthPath(pr.Name)}.Load()
+		switch {
+		case errors.Is(err, oauth.ErrNotLoggedIn):
+			return "not logged in (ccgp login " + pr.Name + ")"
+		case err != nil:
+			return "error: " + err.Error()
+		}
+		return "logged in, tokens refreshed " + t.LastRefresh.Local().Format("2006-01-02 15:04")
+	case config.ProviderTypeOpenAI:
+		if pr.APIKeyEnv != "" {
+			if os.Getenv(pr.APIKeyEnv) == "" {
+				return "$" + pr.APIKeyEnv + " is empty"
+			}
+			return "key from $" + pr.APIKeyEnv
+		}
+		k, err := store.APIKey(pr.Name)
+		switch {
+		case err != nil:
+			return "error: " + err.Error()
+		case k != "":
+			return "API key saved"
+		case isLocal(pr.BaseURL):
+			return "no key needed (local)"
+		}
+		return "no API key (ccgp login " + pr.Name + ")"
+	}
+	return "unknown type"
 }

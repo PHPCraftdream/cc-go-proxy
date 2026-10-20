@@ -104,6 +104,6 @@ install: build
 	@echo "✅ Installed: /usr/local/bin/$(BINARY)"
 	@echo ""
 	@echo "📋 Next steps:"
-	@echo "  1. mkdir -p ~/.config/cc-go-proxy && cp config.example.ktav ~/.config/cc-go-proxy/config.ktav"
+	@echo "  1. Run ccgp: it creates ~/.config/cc-go-proxy/config.ktav on first start"
 	@echo "  2. Edit providers and profiles"
 	@echo "  3. Run: ccgp <profile>"

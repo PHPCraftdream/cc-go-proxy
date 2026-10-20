@@ -11,14 +11,16 @@ background server management.
 
 ## Quick start
 
-1. Copy [`config.example.ktav`](config.example.ktav) to
-   `%APPDATA%\cc-go-proxy\config.ktav` (Linux: `~/.config/cc-go-proxy/config.ktav`)
-   and edit providers and profiles.
+1. Run `ccgp codex` (or any profile/`serve`/`start`/`login`): on first
+   run it creates a default
+   [`config.ktav`](internal/config/config.example.ktav) in
+   `%APPDATA%\cc-go-proxy\` (Linux: `~/.config/cc-go-proxy/`) with a `codex` and an
+   `openai` provider/profile. Edit model names to what your account can use.
 2. Run Claude Code through a profile:
 
    ```sh
-   ccgp work                 # interactive
-   ccgp work -p "hello"      # headless; everything after the profile goes to claude
+   ccgp codex                # interactive
+   ccgp codex -p "hello"     # headless; everything after the profile goes to claude
    ```
 
 On first run for a profile `ccgp`:
@@ -43,14 +45,14 @@ Background server log: `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log`
 
 ## Configuration
 
-See [`config.example.ktav`](config.example.ktav). Summary:
+See the generated file (template: [`config.example.ktav`](internal/config/config.example.ktav)). Summary:
 
 - `listen.host` / `listen.port` — default `127.0.0.1:60093` (loopback only).
 - `providers[]` — `name`, `type` (`openai` | `codex`), `base_url`, optional `api_key_env`.
 - `profiles[]` — `name`, `provider`, ordered `models[]` rules (`match` glob → `model`),
   `default_model`. Without rules or default, tier names map to `gpt-5` / `gpt-5-mini`.
 
-`config.ktav` is only read, never written; edits apply to a running server
+`config.ktav` is created once and afterwards only read, never rewritten by ccgp (your comments are safe). All machine-managed state — profile tokens, API keys and the rotating OAuth tokens — lives in the separate `creds` directory (`ccgp status` shows both paths). Config edits apply to a running server
 without restart (listen address changes need `ccgp stop`).
 
 ## Security model

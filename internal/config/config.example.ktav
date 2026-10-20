@@ -1,8 +1,12 @@
-## ccgp config (Ktav 0.8). Default location:
+## ccgp config (Ktav 0.8). Created by ccgp on first run; edit freely.
+## ccgp only reads this file and never rewrites it, so comments are safe.
+## Machine-managed state (profile URL tokens, API keys, rotating OAuth tokens)
+## lives next to it in the `creds` directory (see `ccgp status`).
+##
+## Location:
 ##   Windows: %APPDATA%\cc-go-proxy\config.ktav
 ##   Linux:   ~/.config/cc-go-proxy/config.ktav
 ## Override with CCGP_CONFIG. HOST / PORT env vars win over `listen`.
-## ccgp never writes this file; secrets live in <config dir>/cc-go-proxy/creds.
 
 listen.host: 127.0.0.1
 listen.port: 60093
@@ -26,9 +30,10 @@ providers: [
 ## Each profile gets its own URL token (generated, stored in creds).
 ## Model rules: checked in order, first glob match wins (case-insensitive);
 ## default_model applies when no rule matches.
+## Adjust model names to what your account can use.
 profiles: [
     {
-        name: work
+        name: codex
         provider: codex
         default_model: gpt-5
         models: [
@@ -39,7 +44,7 @@ profiles: [
         ]
     }
     {
-        name: agents
+        name: openai
         provider: openai
         default_model: gpt-5-mini
     }

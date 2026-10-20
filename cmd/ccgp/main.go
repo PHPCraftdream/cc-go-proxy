@@ -9,6 +9,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"time"
 
@@ -47,6 +48,13 @@ func run(args []string) error {
 	case "version", "--version":
 		fmt.Println(version)
 		return nil
+	case "stop", "status":
+	default:
+		if err := ensureConfig(); err != nil {
+			return err
+		}
+	}
+	switch args[0] {
 	case "serve":
 		return serve(args[1:])
 	case "start":
@@ -68,16 +76,7 @@ func run(args []string) error {
 		fmt.Println("ccgp stopped")
 		return nil
 	case "status":
-		host, port := listenAddr()
-		base := daemon.BaseURL(host, port)
-		h, err := daemon.Check(base)
-		if err != nil {
-			fmt.Printf("ccgp not running at %s\n", base)
-			return exitError(3)
-		}
-		logPath, _ := daemon.LogPath()
-		fmt.Printf("ccgp %s running (pid %d) at %s\nlog: %s\n", h.Version, h.PID, base, logPath)
-		return nil
+		return status()
 	case "login":
 		if len(args) != 2 {
 			return errors.New("usage: ccgp login <provider>")
@@ -90,6 +89,74 @@ func run(args []string) error {
 	default:
 		return launch(args[0], args[1:])
 	}
+}
+
+// ensureConfig creates the default config on first run.
+func ensureConfig() error {
+	p, created, err := config.EnsureFile()
+	if err != nil {
+		return fmt.Errorf("create default config: %w", err)
+	}
+	if created {
+		fmt.Fprintf(os.Stderr, "ccgp: created default config %s (edit providers, profiles and model names)\n", p)
+	}
+	return nil
+}
+
+func missingDefaultConfig() bool {
+	if os.Getenv(config.ConfigFileEnv) != "" {
+		return false
+	}
+	p, err := config.DefaultConfigPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
+	return errors.Is(err, fs.ErrNotExist)
+}
+
+// status prints server state, file locations and per-provider login state.
+func status() error {
+	host, port := listenAddr()
+	base := daemon.BaseURL(host, port)
+	logPath, _ := daemon.LogPath()
+
+	h, err := daemon.Check(base)
+	if err != nil {
+		fmt.Printf("server:  not running at %s\n", base)
+	} else {
+		fmt.Printf("server:  %s running (pid %d) at %s\n", h.Version, h.PID, base)
+	}
+	fmt.Printf("log:     %s\n", logPath)
+
+	cfg, cfgErr := config.Load()
+	switch {
+	case cfgErr != nil && missingDefaultConfig():
+		p, _ := config.DefaultConfigPath()
+		fmt.Printf("config:  %s (not created yet; created on first run)\n", p)
+	case cfgErr != nil:
+		fmt.Printf("config:  error: %v\n", cfgErr)
+	case cfg.IsEnvMode():
+		fmt.Println("config:  env-only mode (no config.ktav)")
+	default:
+		fmt.Printf("config:  %s\n", cfg.ConfigFile)
+		store, err := credsStore()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("creds:   %s\n", store.Dir)
+		for _, name := range sortedKeys(cfg.Providers) {
+			pr := cfg.Providers[name]
+			fmt.Printf("  provider %-12s %-7s %s\n", name, pr.Type, loginState(store, pr))
+		}
+		for _, name := range sortedKeys(cfg.Profiles) {
+			fmt.Printf("  profile  %-12s -> %s\n", name, cfg.Profiles[name].Provider)
+		}
+	}
+	if err != nil {
+		return exitError(3)
+	}
+	return nil
 }
 
 // serve runs the server in the foreground.
@@ -164,7 +231,7 @@ Usage:
 
 Config (Ktav):
   Windows: %APPDATA%\cc-go-proxy\config.ktav   Linux: ~/.config/cc-go-proxy/config.ktav
-  Override: CCGP_CONFIG. See config.example.ktav.
+  Override: CCGP_CONFIG. Created automatically on first run.
   Credentials are stored separately in <config dir>/cc-go-proxy/creds (owner-only).
 
 Env-only mode (no config.ktav):
@@ -172,5 +239,5 @@ Env-only mode (no config.ktav):
   Profile name: default
 
 Example:
-  ccgp work -p "hello"`)
+  ccgp codex -p "hello"`)
 }
