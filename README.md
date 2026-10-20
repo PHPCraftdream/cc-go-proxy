@@ -94,10 +94,16 @@ and Anthropic API keys are not available to it:
 - `settings.json` is mirrored without `apiKeyHelper`, `forceLogin*` and those variables in `env`;
 - `.claude.json` is seeded once with onboarding state, theme and MCP servers only (no account data).
 
-To keep working conditions familiar, `CLAUDE.md`, `settings.json` and `keybindings.json`
-are copied from your own Claude Code config dir at every launch (edits made in the isolated
-copy are overwritten), and `agents`, `commands`, `skills`, `output-styles` and `plugins`
-are shared with it through junctions/symlinks. History, sessions and projects stay separate.
+To keep working conditions familiar, everything except credentials is copied from your own
+Claude Code config dir at every launch, one way (your own dir is only ever read):
+
+- `CLAUDE.md`, `settings.json` and `keybindings.json` are overwritten from the source;
+- `agents`, `commands`, `skills`, `output-styles` and `plugins` are mirrored incrementally
+  (only changed files are copied; files you delete at the source are removed from the copy;
+  files created inside the isolated dir are kept; credential files are never copied).
+  Absolute paths in `plugins/*.json` are rewritten to point at the copy.
+
+History, sessions and projects stay separate.
 
 ## Security model
 

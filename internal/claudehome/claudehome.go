@@ -21,8 +21,8 @@ const credentialsFile = ".credentials.json"
 // mirroredFiles are copied from the source config dir on every launch.
 var mirroredFiles = []string{"CLAUDE.md", "keybindings.json"}
 
-// linkedDirs are shared with the source config dir via junction/symlink.
-var linkedDirs = []string{"agents", "commands", "skills", "output-styles", "plugins"}
+// mirroredDirs are copied (one-way) from the source config dir on every launch.
+var mirroredDirs = []string{"agents", "commands", "skills", "output-styles", "plugins"}
 
 // SourceDir returns the Claude Code config dir the user normally runs with:
 // $CLAUDE_CONFIG_DIR when set, else ~/.claude. stateFile is its .claude.json.
@@ -57,10 +57,17 @@ func Prepare(src, srcState, dst string) error {
 	if err := mirrorSettings(filepath.Join(src, "settings.json"), filepath.Join(dst, "settings.json")); err != nil {
 		return err
 	}
-	for _, name := range linkedDirs {
-		if err := linkDir(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
-			return fmt.Errorf("claudehome: link %s: %w", name, err)
+	man := loadManifest(dst)
+	for _, name := range mirroredDirs {
+		if err := mirrorTree(src, dst, name, man); err != nil {
+			return fmt.Errorf("claudehome: %w", err)
 		}
+	}
+	if err := man.save(dst); err != nil {
+		return err
+	}
+	if err := rewritePluginPaths(src, dst); err != nil {
+		return fmt.Errorf("claudehome: %w", err)
 	}
 	return seedState(srcState, filepath.Join(dst, ".claude.json"))
 }
