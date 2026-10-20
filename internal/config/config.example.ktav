@@ -1,5 +1,8 @@
 ## ccgp config (Ktav 0.8). Created by ccgp on first run; edit freely.
-## ccgp only reads this file and never rewrites it, so comments are safe.
+## ccgp only reads this file, with one exception: the block between the
+## `ccgp:managed-models` marker lines of a profile is rewritten by
+## `ccgp models apply` (and after `ccgp login codex`). Everything else,
+## including your comments, is never touched.
 ## Machine-managed state (profile URL tokens, API keys, rotating OAuth tokens)
 ## lives next to it in the `creds` directory (see `ccgp status`).
 ##
@@ -30,18 +33,35 @@ providers: [
 ## Each profile gets its own URL token (generated, stored in creds).
 ## Model rules: checked in order, first glob match wins (case-insensitive);
 ## default_model applies when no rule matches.
-## Adjust model names to what your account can use.
+## context_window is the backend's context size in tokens: Claude Code is told
+## to compact before reaching it (0 or absent: no change).
 profiles: [
     {
         name: codex
         provider: codex
-        default_model: gpt-5
+        ## Fable -> astra, Opus -> sol, Sonnet -> luna, Haiku -> previous luna.
+        ## Run `ccgp models apply codex` to refresh these to the newest releases.
+        ## ccgp:managed-models begin codex
+        default_model: gpt-6-luna
         models: [
             {
+                match: *fable*
+                model: gpt-6-astra
+            }
+            {
+                match: *opus*
+                model: gpt-6-sol
+            }
+            {
+                match: *sonnet*
+                model: gpt-6-luna
+            }
+            {
                 match: *haiku*
-                model: gpt-5-mini
+                model: gpt-5.6-luna
             }
         ]
+        ## ccgp:managed-models end codex
     }
     {
         name: openai

@@ -25,7 +25,7 @@ const (
 // reservedProfiles collide with `ccgp <command>`.
 var reservedProfiles = map[string]bool{
 	"serve": true, "start": true, "stop": true, "status": true,
-	"login": true, "help": true, "version": true,
+	"login": true, "help": true, "version": true, "models": true,
 }
 
 // ModelRule maps Claude model names matching a glob to a backend model.
@@ -45,10 +45,16 @@ type Provider struct {
 
 // Profile binds a URL token (managed in creds) to a provider and model mapping.
 type Profile struct {
-	Name         string      `json:"name"`
-	Provider     string      `json:"provider"`
-	DefaultModel string      `json:"default_model"`
-	Models       []ModelRule `json:"models"`
+	Name         string `json:"name"`
+	Provider     string `json:"provider"`
+	DefaultModel string `json:"default_model"`
+	// ContextWindow is the backend context size in tokens (0: unknown); the
+	// launcher uses it to make Claude Code compact earlier.
+	ContextWindow int64 `json:"context_window"`
+	// CompactPercent lowers the point (percent of ContextWindow) where Claude
+	// Code compacts; 0 keeps its default (about 83%).
+	CompactPercent int64       `json:"compact_percent"`
+	Models         []ModelRule `json:"models"`
 }
 
 // fileConfig is the Ktav config file shape.
@@ -119,6 +125,12 @@ func (fc *fileConfig) validate() error {
 		}
 		if profiles[pf.Name] {
 			return fmt.Errorf("profiles[%d]: duplicate name %q", i, pf.Name)
+		}
+		if pf.ContextWindow < 0 {
+			return fmt.Errorf("profile %q: context_window must not be negative", pf.Name)
+		}
+		if pf.CompactPercent < 0 || pf.CompactPercent > 100 {
+			return fmt.Errorf("profile %q: compact_percent must be 0-100", pf.Name)
 		}
 		if reservedProfiles[pf.Name] {
 			return fmt.Errorf("profiles[%d]: %q is a ccgp command name", i, pf.Name)

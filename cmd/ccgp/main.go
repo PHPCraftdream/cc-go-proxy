@@ -77,6 +77,12 @@ func run(args []string) error {
 		return nil
 	case "status":
 		return status()
+	case "models":
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		return models(cfg, args[1:])
 	case "login":
 		device, rest := false, []string{}
 		for _, a := range args[1:] {
@@ -235,6 +241,7 @@ Usage:
   ccgp stop                        Stop background server
   ccgp status                      Show background server status
   ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; openai: API key)
+  ccgp models [apply] [profile]    Show (or write into config) the newest Codex models per Claude tier
   ccgp version                     Show version
 
 Config (Ktav):

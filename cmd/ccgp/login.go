@@ -35,7 +35,11 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 	}
 	switch pr.Type {
 	case config.ProviderTypeCodex:
-		return loginCodex(store, pr.Name, force, device)
+		fresh, err := loginCodex(store, pr.Name, force, device)
+		if err == nil && fresh {
+			autoApplyModels(cfg, pr.Name)
+		}
+		return err
 	case config.ProviderTypeOpenAI:
 		return loginAPIKey(store, pr, force)
 	}
@@ -44,33 +48,32 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 
 // loginCodex signs in with ChatGPT OAuth: browser callback flow by default,
 // device-code flow with device=true. The browser is never opened automatically.
-func loginCodex(store creds.Store, provider string, force, device bool) error {
+func loginCodex(store creds.Store, provider string, force, device bool) (fresh bool, err error) {
 	ts := oauth.Store{Path: store.OAuthPath(provider)}
 	if !force {
-		if _, err := ts.Load(); err == nil {
-			return nil
-		} else if !errors.Is(err, oauth.ErrNotLoggedIn) {
-			return err
+		if _, lerr := ts.Load(); lerr == nil {
+			return false, nil
+		} else if !errors.Is(lerr, oauth.ErrNotLoggedIn) {
+			return false, lerr
 		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	var tok *oauth.Tokens
-	var err error
 	if device {
 		tok, err = deviceLogin(ctx, provider)
 	} else {
 		tok, err = browserLogin(ctx, provider)
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := ts.Save(tok); err != nil {
-		return err
+		return false, err
 	}
 	fmt.Fprintf(os.Stderr, "Logged in (provider %q).\n", provider)
-	return nil
+	return true, nil
 }
 
 func browserLogin(ctx context.Context, provider string) (*oauth.Tokens, error) {

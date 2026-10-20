@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/claude-code-proxy/proxy/internal/config"
@@ -49,7 +50,9 @@ func launch(profile string, claudeArgs []string) error {
 	}
 	cmd := exec.Command(claude, claudeArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = claudeEnv(os.Environ(), daemon.BaseURL(cfg.Host, cfg.Port)+"/call/"+token)
+	cmd.Env = compactEnv(
+		claudeEnv(os.Environ(), daemon.BaseURL(cfg.Host, cfg.Port)+"/call/"+token),
+		cfg.Profiles[profile])
 
 	// Ctrl+C goes to claude (same console group); ccgp must not exit first.
 	sig := make(chan os.Signal, 1)
@@ -64,6 +67,30 @@ func launch(profile string, claudeArgs []string) error {
 		return err
 	}
 	return nil
+}
+
+// compactEnv tells Claude Code the backend's real context size so it compacts
+// before the backend limit instead of at its own (larger) model window.
+// Variables the user already set win.
+func compactEnv(env []string, pf *config.Profile) []string {
+	if pf == nil || pf.ContextWindow <= 0 {
+		return env
+	}
+	has := func(name string) bool {
+		for _, kv := range env {
+			if k, _, _ := strings.Cut(kv, "="); strings.EqualFold(k, name) {
+				return true
+			}
+		}
+		return false
+	}
+	if !has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") {
+		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.FormatInt(pf.ContextWindow, 10))
+	}
+	if pf.CompactPercent > 0 && !has("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") {
+		env = append(env, "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="+strconv.FormatInt(pf.CompactPercent, 10))
+	}
+	return env
 }
 
 // claudeEnv points Claude Code at the proxy and drops conflicting Anthropic creds.

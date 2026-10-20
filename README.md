@@ -55,6 +55,32 @@ See the generated file (template: [`config.example.ktav`](internal/config/config
 `config.ktav` is created once and afterwards only read, never rewritten by ccgp (your comments are safe). All machine-managed state — profile tokens, API keys and the rotating OAuth tokens — lives in the separate `creds` directory (`ccgp status` shows both paths). Config edits apply to a running server
 without restart (listen address changes need `ccgp stop`).
 
+## Codex models and context
+
+`ccgp models` reads your account's Codex model catalog and maps Claude tiers to the
+newest releases (read-only preview); `ccgp models apply [profile]` writes the mapping:
+
+| Claude tier | Codex model |
+| --- | --- |
+| Fable | newest `astra` |
+| Opus | newest `sol` |
+| Sonnet | newest `luna` (also `default_model`) |
+| Haiku | `luna` of the release before the newest one (e.g. `gpt-5.6-luna`) |
+
+It rewrites only the block between the `ccgp:managed-models begin/end <profile>` marker
+lines of a profile (added automatically if missing; a profile's old `default_model`,
+`context_window` and `models` entries are then replaced). The mapping is also refreshed
+after every fresh `ccgp login <codex provider>`.
+
+Codex models have smaller context windows than the Claude models Claude Code thinks it
+talks to, so the block also stores `context_window`: the smallest window among the
+Fable/Opus/Sonnet models (the main conversation; unknown windows count as 272000). The
+launcher passes it to Claude Code as `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, so conversations
+are compacted before the backend limit. Add `compact_percent: 70` to a profile to
+compact earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`). Claude Code accepts one window
+per process: Haiku-tier models with a smaller window are reported by `ccgp models` but do
+not lower it. Variables you set yourself are never overridden.
+
 ## Security model
 
 - Every request must carry a profile token in the path: `/call/<token>/v1/messages`.
