@@ -76,6 +76,7 @@ func TestLoadFileErrors(t *testing.T) {
 		{"rule without model", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: *opus*\n            }\n        ]\n    }\n]\n", "required"},
 		{"import is a command", provider + "profiles: [\n    {\n        name: import\n        provider: p\n    }\n]\n", "ccgp command name"},
 		{"export is a command", provider + "profiles: [\n    {\n        name: export\n        provider: p\n    }\n]\n", "ccgp command name"},
+		{"claude is a send endpoint", provider + "profiles: [\n    {\n        name: claude\n        provider: p\n    }\n]\n", "ccgp command name"},
 		{"bad pattern", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: op[us\n                model: x\n            }\n        ]\n    }\n]\n", "bad pattern"},
 	}
 	for _, tt := range tests {
