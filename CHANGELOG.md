@@ -9,6 +9,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Fixed
+- Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
+  with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
+  config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
+
 ## [0.1.0] - 2026-10-21
 
 First release of ccgp as an independent project.

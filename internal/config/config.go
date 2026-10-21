@@ -32,9 +32,25 @@ const (
 	DefaultPort    = "60093"
 	MinTokenLength = 32
 
+	// DefaultMaxBodyMB caps a request body (listen.max_body_mb). A long Claude
+	// Code conversation resends its whole history on every call, and reasoning
+	// signatures alone reach megabytes; fiber's 4 MiB default cut live sessions off.
+	DefaultMaxBodyMB = 256
+	// maxBodyMBLimit keeps the byte limit inside a 32-bit int.
+	maxBodyMBLimit = 2047
+
 	// EnvProfile names the implicit profile/provider in env-only mode.
 	EnvProfile = "default"
 )
+
+// MaxBodyBytes is the request body cap in bytes.
+func (c *Config) MaxBodyBytes() int {
+	mb := c.MaxBodyMB
+	if mb <= 0 {
+		mb = DefaultMaxBodyMB
+	}
+	return int(mb) << 20
+}
 
 // IsEnvMode reports env-only mode (no config.ktav).
 func (c *Config) IsEnvMode() bool { return c.ConfigFile == "" }
@@ -81,6 +97,8 @@ type Config struct {
 	// Server settings
 	Host string
 	Port string
+	// MaxBodyMB is the request body cap in MiB (listen.max_body_mb); 0: DefaultMaxBodyMB.
+	MaxBodyMB int64
 
 	// Env-only mode: single URL token (/call/{token}/...) for profile EnvProfile.
 	// File mode: tokens live in the creds store.
@@ -144,6 +162,8 @@ func Load() (*Config, error) {
 		Host:  getEnvOrDefault("HOST", DefaultHost),
 		Port:  getEnvOrDefault("PORT", DefaultPort),
 		Token: os.Getenv("PROXY_TOKEN"),
+
+		MaxBodyMB: DefaultMaxBodyMB,
 
 		// Passthrough mode
 		PassthroughMode: getEnvAsBoolOrDefault("PASSTHROUGH_MODE", false),

@@ -75,8 +75,9 @@ type Profile struct {
 // fileConfig is the Ktav config file shape.
 type fileConfig struct {
 	Listen struct {
-		Host string `json:"host"`
-		Port int64  `json:"port"`
+		Host      string `json:"host"`
+		Port      int64  `json:"port"`
+		MaxBodyMB int64  `json:"max_body_mb"`
 	} `json:"listen"`
 	Providers []Provider `json:"providers"`
 	Profiles  []Profile  `json:"profiles"`
@@ -126,6 +127,9 @@ func loadFile(p string) (*fileConfig, error) {
 }
 
 func (fc *fileConfig) validate() error {
+	if mb := fc.Listen.MaxBodyMB; mb < 0 || mb > maxBodyMBLimit {
+		return fmt.Errorf("listen.max_body_mb must be 0-%d (0: default %d)", maxBodyMBLimit, DefaultMaxBodyMB)
+	}
 	providers := map[string]bool{}
 	for i, pr := range fc.Providers {
 		if pr.Name == "" {
@@ -188,6 +192,9 @@ func applyFile(cfg *Config, fc *fileConfig) {
 	}
 	if os.Getenv("PORT") == "" && fc.Listen.Port != 0 {
 		cfg.Port = strconv.FormatInt(fc.Listen.Port, 10)
+	}
+	if fc.Listen.MaxBodyMB != 0 {
+		cfg.MaxBodyMB = fc.Listen.MaxBodyMB
 	}
 	cfg.Providers = map[string]*Provider{}
 	for i := range fc.Providers {

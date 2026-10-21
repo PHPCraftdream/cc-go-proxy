@@ -6,6 +6,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,6 +25,34 @@ import (
 // ProxyVersion is the version of the proxy. Release builds set it from the
 // tag: -ldflags "-X github.com/PHPCraftdream/cc-go-proxy/internal/server.ProxyVersion=1.2.3".
 var ProxyVersion = "0.1.0"
+
+// appConfig sets the request body cap from listen.max_body_mb: a long Claude
+// Code conversation resends its whole history on every call, so fiber's 4 MiB
+// default cuts live sessions off with a connection reset.
+func appConfig(maxBody int) fiber.Config {
+	return fiber.Config{
+		DisableStartupMessage: true,
+		ServerHeader:          "ccgp",
+		AppName:               "ccgp v" + ProxyVersion,
+		BodyLimit:             maxBody,
+		ErrorHandler:          errorHandler,
+	}
+}
+
+// errorHandler logs requests that fasthttp refuses before any route runs
+// (oversized body or headers); they never reach the access log.
+func errorHandler(c *fiber.Ctx, err error) error {
+	var fe *fiber.Error
+	if errors.As(err, &fe) && (fe.Code == fiber.StatusRequestEntityTooLarge || fe.Code == fiber.StatusRequestHeaderFieldsTooLarge) {
+		hint := ""
+		if fe.Code == fiber.StatusRequestEntityTooLarge {
+			hint = "; raise listen.max_body_mb"
+		}
+		fmt.Printf("[%s] %d - rejected %s %s: %s (content-length %d%s)\n", time.Now().Format("15:04:05"),
+			fe.Code, c.Method(), maskToken(c.Path()), fe.Message, c.Request().Header.ContentLength(), hint)
+	}
+	return fiber.DefaultErrorHandler(c, err)
+}
 
 // sessions caches one OAuth session per codex provider.
 type sessions struct {
@@ -55,11 +84,7 @@ func Start(cfg *config.Config) error {
 	store := creds.Store{Dir: dir}
 	index, build := profileResolver(cfg, store)
 
-	app := fiber.New(fiber.Config{
-		DisableStartupMessage: true,
-		ServerHeader:          "ccgp",
-		AppName:               "ccgp v" + ProxyVersion,
-	})
+	app := fiber.New(appConfig(cfg.MaxBodyBytes()))
 
 	// Middleware. No CORS: browsers must not reach the proxy.
 	app.Use(recover.New())

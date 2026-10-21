@@ -13,6 +13,10 @@
 
 listen.host: 127.0.0.1
 listen.port: 60093
+## Largest request body in MiB. A long conversation is resent in full on every
+## call (reasoning signatures alone reach megabytes); bigger bodies are refused
+## with 413. Needs a server restart (`ccgp stop`) to change.
+listen.max_body_mb: 256
 
 providers: [
     ## "codex": your ChatGPT subscription via OAuth (`ccgp login codex`, or `--device` for device code).

@@ -89,6 +89,39 @@ func TestLoadFileErrors(t *testing.T) {
 	}
 }
 
+func TestMaxBodyMB(t *testing.T) {
+	provider := "providers: [\n    {\n        name: p\n        type: codex_api\n    }\n]\n"
+	t.Setenv(ConfigFileEnv, writeKtav(t, "listen.max_body_mb: 64\n"+provider))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxBodyMB != 64 || cfg.MaxBodyBytes() != 64<<20 {
+		t.Errorf("MaxBodyMB = %d, bytes = %d; want 64 MiB", cfg.MaxBodyMB, cfg.MaxBodyBytes())
+	}
+
+	// Absent key (an older config) and zero both fall back to the default.
+	t.Setenv(ConfigFileEnv, writeKtav(t, provider))
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.MaxBodyBytes() != DefaultMaxBodyMB<<20 {
+		t.Errorf("default bytes = %d, want %d MiB", cfg.MaxBodyBytes(), DefaultMaxBodyMB)
+	}
+	if got := (&Config{}).MaxBodyBytes(); got != DefaultMaxBodyMB<<20 {
+		t.Errorf("zero Config bytes = %d, want default", got)
+	}
+
+	for _, bad := range []int64{-1, 2048} {
+		var fc fileConfig
+		fc.Listen.MaxBodyMB = bad
+		if err := fc.validate(); err == nil || !strings.Contains(err.Error(), "listen.max_body_mb") {
+			t.Errorf("max_body_mb %d: err = %v, want a max_body_mb error", bad, err)
+		}
+	}
+}
+
 func TestLoadFileMissing(t *testing.T) {
 	fc, err := loadFile(filepath.Join(t.TempDir(), "absent.ktav"))
 	if err != nil || fc != nil {

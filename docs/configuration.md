@@ -22,13 +22,14 @@ The config is **yours**: ccgp reads it and changes it only on your command.
 
 Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens) lives in the
 separate `creds` directory, owner-only (Windows: explicit DACL, Unix: `0600`).
-A running server picks up config edits without a restart; only a change of the listen address needs `ccgp stop`.
+A running server picks up config edits without a restart; only a change of the listen address or `max_body_mb` needs `ccgp stop`.
 
 ## Layout
 
 ```
 listen.host: 127.0.0.1
 listen.port: 60093
+listen.max_body_mb: 256
 
 providers: [
     {
@@ -72,6 +73,11 @@ profiles: [
 ### `listen`
 
 `host` / `port`, default `127.0.0.1:60093`. Keep it on loopback: the URL token is the only access control.
+
+`max_body_mb` is the largest request body in MiB, default `256` (an absent key means the default; `0` too). Claude Code resends the
+whole conversation on every call, and the reasoning signatures of a long session alone take megabytes, so a small cap
+cuts live sessions off with a connection reset. A larger body is answered with `413` and a `rejected` line in the log.
+Changing it needs `ccgp stop` (like the listen address).
 
 ### `providers[]`
 

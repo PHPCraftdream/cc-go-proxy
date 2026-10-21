@@ -14,6 +14,9 @@ func TestDefaultTemplateIsValid(t *testing.T) {
 	if len(fc.Providers) != 3 || len(fc.Profiles) != 3 {
 		t.Errorf("providers=%d profiles=%d", len(fc.Providers), len(fc.Profiles))
 	}
+	if fc.Listen.MaxBodyMB != DefaultMaxBodyMB {
+		t.Errorf("template listen.max_body_mb = %d, want %d", fc.Listen.MaxBodyMB, DefaultMaxBodyMB)
+	}
 	var zai *Provider
 	for i := range fc.Providers {
 		if fc.Providers[i].Name == "zai" {
