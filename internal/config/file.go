@@ -32,6 +32,7 @@ const legacyTypeOpenAI = "openai"
 var reservedProfiles = map[string]bool{
 	"serve": true, "start": true, "stop": true, "status": true,
 	"login": true, "help": true, "version": true, "models": true, "config": true,
+	"import": true, "export": true,
 }
 
 // ModelRule maps Claude model names matching a glob to a backend model and

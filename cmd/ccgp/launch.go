@@ -164,24 +164,34 @@ func prepareClaudeHome(profile string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	home, err := os.UserHomeDir()
+	src, srcState, err := officialClaudeDir(base)
 	if err != nil {
 		return "", err
 	}
-	env := func(k string) string {
-		v := os.Getenv(k)
-		// A nested launch inherits an isolated dir: mirror from the real one.
-		if k == "CLAUDE_CONFIG_DIR" && strings.HasPrefix(strings.ToLower(filepath.Clean(v)), strings.ToLower(base)) {
-			return ""
-		}
-		return v
-	}
-	src, srcState := claudehome.SourceDir(env, home)
 	dst := filepath.Join(base, profile)
 	if err := claudehome.Prepare(src, srcState, dst); err != nil {
 		return "", err
 	}
 	return dst, nil
+}
+
+// officialClaudeDir returns the user's own Claude Code config dir and its
+// state file. base is the root of the isolated profile dirs.
+func officialClaudeDir(base string) (dir, state string, err error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", err
+	}
+	env := func(k string) string {
+		v := os.Getenv(k)
+		// A nested launch inherits an isolated dir: use the real one.
+		if k == "CLAUDE_CONFIG_DIR" && strings.HasPrefix(strings.ToLower(filepath.Clean(v)), strings.ToLower(base)) {
+			return ""
+		}
+		return v
+	}
+	dir, state = claudehome.SourceDir(env, home)
+	return dir, state, nil
 }
 
 // mainModel returns the Claude model name the session's main conversation will

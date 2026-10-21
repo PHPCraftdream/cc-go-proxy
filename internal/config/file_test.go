@@ -74,6 +74,8 @@ func TestLoadFileErrors(t *testing.T) {
 		{"duplicate provider", "providers: [\n    {\n        name: p\n        type: codex_api\n    }\n    {\n        name: p\n        type: codex\n    }\n]\n", "duplicate"},
 		{"unknown provider", provider + "profiles: [\n    {\n        name: w\n        provider: nope\n    }\n]\n", "unknown provider"},
 		{"rule without model", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: *opus*\n            }\n        ]\n    }\n]\n", "required"},
+		{"import is a command", provider + "profiles: [\n    {\n        name: import\n        provider: p\n    }\n]\n", "ccgp command name"},
+		{"export is a command", provider + "profiles: [\n    {\n        name: export\n        provider: p\n    }\n]\n", "ccgp command name"},
 		{"bad pattern", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: op[us\n                model: x\n            }\n        ]\n    }\n]\n", "bad pattern"},
 	}
 	for _, tt := range tests {

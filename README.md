@@ -39,6 +39,8 @@ On first run for a profile `ccgp`:
 | `ccgp serve [-d] [-s]` | Run the server in the foreground (`-d` debug bodies, `-s` request log) |
 | `ccgp start` / `stop` / `status` | Manage the background server |
 | `ccgp login <provider> [--device]` | (Re)authenticate a provider. Codex: browser OAuth by default, `--device` for device code |
+| `ccgp import <profile> [count]` | Copy the `count` (default 10) most recently modified sessions from your own Claude Code into the profile |
+| `ccgp export <profile> [count]` | Copy the profile's `count` (default 10) most recent sessions into your own Claude Code |
 
 Background server log: `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log`
 (Linux: `~/.cache/cc-go-proxy/logs/ccgp.log`), rotated at 10 MB.
@@ -139,7 +141,8 @@ and Anthropic API keys are not available to it:
 - `.claude.json` is seeded once with onboarding state, theme and MCP servers only (no account data).
 
 To keep working conditions familiar, everything except credentials is copied from your own
-Claude Code config dir at every launch, one way (your own dir is only ever read):
+Claude Code config dir at every launch, one way (your own dir is only read here; the only
+command that writes into it is `ccgp export`, see below):
 
 - `CLAUDE.md`, `settings.json` and `keybindings.json` are overwritten from the source;
 - `agents`, `commands`, `skills`, `output-styles` and `plugins` are mirrored incrementally
@@ -147,7 +150,31 @@ Claude Code config dir at every launch, one way (your own dir is only ever read)
   files created inside the isolated dir are kept; credential files are never copied).
   Absolute paths in `plugins/*.json` are rewritten to point at the copy.
 
-History, sessions and projects stay separate.
+History, sessions and projects stay separate; `ccgp import` / `ccgp export` move chosen sessions across.
+
+## Moving sessions: `import` and `export`
+
+```
+ccgp import zai        # the 10 latest sessions of your Claude Code -> the zai profile
+ccgp export zai 3      # the 3 latest sessions of the zai profile -> your Claude Code
+```
+
+The count is taken over all projects, newest first (by the transcript's modification time).
+Afterwards run `claude` (or `ccgp <profile>`) in the same working directory and use `/resume`:
+Claude Code lists sessions per project directory.
+
+- Copied: `projects/<project>/<id>.jsonl` and the `<id>/` folder next to it (tool results, subagent
+  transcripts), with the original modification time. Nothing else crosses over: no credentials, no
+  prompt history, no `file-history` (so `/rewind` is not available for copied sessions).
+- Transcripts only grow, so an existing copy is extended when the source has more, left unchanged
+  when identical, and never overwritten otherwise (`ahead`: the destination has more, `diverged`:
+  both sides changed). You can run the same command again as often as you like.
+- A session that is still being written is copied up to its last complete line.
+- `export` removes `thinking` blocks: their signatures are valid only for the provider that wrote
+  them (Codex: `ccgp1:…`, z.ai: its own), and the official API rejects foreign ones. Lines that become
+  empty are dropped and the `parentUuid` chain is reconnected; every other line is copied byte for byte.
+  `import` keeps everything (Codex ignores foreign signatures, z.ai accepts them).
+- `export` writes into your own Claude Code directory, under `projects/` only, and only adds or extends files.
 
 ## Security model
 

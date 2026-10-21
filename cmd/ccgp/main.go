@@ -4,6 +4,7 @@
 //	ccgp serve [-d] [-s]              run server in foreground
 //	ccgp start|stop|status            manage background server
 //	ccgp login <provider> [--device] (re)authenticate a provider
+//	ccgp import|export <profile> [n]  copy the n latest sessions between Claude Code and a profile
 package main
 
 import (
@@ -85,6 +86,8 @@ func run(args []string) error {
 			return err
 		}
 		return models(cfg, args[1:])
+	case "import", "export":
+		return sessionsCmd(args[0], args[1:])
 	case "login":
 		device, rest := false, []string{}
 		for _, a := range args[1:] {
@@ -247,8 +250,10 @@ Usage:
   ccgp status                      Show background server status
   ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)
   ccgp models [apply] [-v] [profile] Show (or write into config) the newest Codex models per Claude tier
+  ccgp import <profile> [count]    Copy the latest sessions (default 10) from your Claude Code into the profile
+  ccgp export <profile> [count]    Copy the profile's latest sessions (default 10) into your Claude Code
   ccgp config reset                Back up the config and regenerate the default one
-  ccgp version                     Show version
+  ccgp version                    Show version
 
 Config (Ktav):
   Windows: %APPDATA%\cc-go-proxy\config.ktav   Linux: ~/.config/cc-go-proxy/config.ktav
