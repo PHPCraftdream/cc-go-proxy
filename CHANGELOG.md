@@ -9,6 +9,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Added
+- `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
+  permission prompts off), a second small binary that starts the `ccgp` next to it. It is built and packaged with every
+  release (archives, and `npm install -g ccgp` installs both commands).
+
 ### Changed
 - `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
   directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a

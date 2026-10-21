@@ -3,7 +3,7 @@
 //
 //   node scripts/npm/build.mjs --version 1.2.3 --bin <dir> --out <dir> [--name ccgp]
 //
-// <dir> holds one sub-directory per platform, "bin-<id>/ccgp[.exe]" (what
+// <dir> holds one sub-directory per platform, "bin-<id>/ccgp[.exe]" and "ccgpy[.exe]" (what
 // actions/download-artifact produces for the build matrix). Output:
 //
 //   <out>/<name>/            main package: launcher + optionalDependencies
@@ -17,12 +17,12 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 export const PLATFORMS = [
-  { id: 'linux-x64', os: 'linux', cpu: 'x64', exe: 'ccgp', label: 'Linux x64' },
-  { id: 'linux-arm64', os: 'linux', cpu: 'arm64', exe: 'ccgp', label: 'Linux arm64' },
-  { id: 'darwin-x64', os: 'darwin', cpu: 'x64', exe: 'ccgp', label: 'macOS x64' },
-  { id: 'darwin-arm64', os: 'darwin', cpu: 'arm64', exe: 'ccgp', label: 'macOS arm64' },
-  { id: 'win32-x64', os: 'win32', cpu: 'x64', exe: 'ccgp.exe', label: 'Windows x64' },
-  { id: 'win32-arm64', os: 'win32', cpu: 'arm64', exe: 'ccgp.exe', label: 'Windows arm64' },
+  { id: 'linux-x64', os: 'linux', cpu: 'x64', exe: 'ccgp', yexe: 'ccgpy', label: 'Linux x64' },
+  { id: 'linux-arm64', os: 'linux', cpu: 'arm64', exe: 'ccgp', yexe: 'ccgpy', label: 'Linux arm64' },
+  { id: 'darwin-x64', os: 'darwin', cpu: 'x64', exe: 'ccgp', yexe: 'ccgpy', label: 'macOS x64' },
+  { id: 'darwin-arm64', os: 'darwin', cpu: 'arm64', exe: 'ccgp', yexe: 'ccgpy', label: 'macOS arm64' },
+  { id: 'win32-x64', os: 'win32', cpu: 'x64', exe: 'ccgp.exe', yexe: 'ccgpy.exe', label: 'Windows x64' },
+  { id: 'win32-arm64', os: 'win32', cpu: 'arm64', exe: 'ccgp.exe', yexe: 'ccgpy.exe', label: 'Windows arm64' },
 ];
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,10 +56,13 @@ export function build({ version, bin, out, name = 'ccgp', repo = 'PHPCraftdream/
   for (const p of PLATFORMS) {
     const src = join(bin, `bin-${p.id}`, p.exe);
     if (!existsSync(src)) throw new Error(`missing binary for ${p.id}: ${src}`);
+    const ysrc = join(bin, `bin-${p.id}`, p.yexe);
+    if (!existsSync(ysrc)) throw new Error(`missing ccgpy binary for ${p.id}: ${ysrc}`);
     const pkgName = `${name}-${p.id}`;
     const dir = join(out, pkgName);
     mkdirSync(join(dir, 'bin'), { recursive: true });
     copyFileSync(src, join(dir, 'bin', p.exe));
+    copyFileSync(ysrc, join(dir, 'bin', p.yexe));
     copyLegal(dir);
     writeFileSync(
       join(dir, 'README.md'),
@@ -80,7 +83,9 @@ export function build({ version, bin, out, name = 'ccgp', repo = 'PHPCraftdream/
   const main = join(out, name);
   mkdirSync(join(main, 'bin'), { recursive: true });
   const launcher = readFileSync(join(HERE, 'launcher.js'), 'utf8').replaceAll('__PREFIX__', name);
+  // One launcher, two names: it starts the binary that matches its own file name.
   writeFileSync(join(main, 'bin', 'ccgp.js'), launcher, { mode: 0o755 });
+  writeFileSync(join(main, 'bin', 'ccgpy.js'), launcher, { mode: 0o755 });
   copyLegal(main);
   copyFileSync(join(root, 'README.md'), join(main, 'README.md'));
   write(main, {
@@ -88,7 +93,7 @@ export function build({ version, bin, out, name = 'ccgp', repo = 'PHPCraftdream/
     ...common,
     description: 'Run Claude Code on ChatGPT Codex, OpenAI-compatible APIs and z.ai GLM: a headless Go bridge with token-in-URL auth and per-profile model mapping',
     keywords: ['claude-code', 'anthropic', 'openai', 'codex', 'proxy', 'llm', 'gateway', 'glm', 'z.ai', 'oauth', 'cli'],
-    bin: { ccgp: 'bin/ccgp.js' },
+    bin: { ccgp: 'bin/ccgp.js', ccgpy: 'bin/ccgpy.js' },
     files: ['bin', ...LICENSE_FILES, 'THIRD_PARTY_LICENSES.md'],
     engines: { node: '>=18' },
     optionalDependencies: Object.fromEntries(PLATFORMS.map((p) => [`${name}-${p.id}`, version])),

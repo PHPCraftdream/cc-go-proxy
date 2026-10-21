@@ -14,6 +14,7 @@ Guidance for Claude Code when working in this repository.
 
 | Path | Role |
 | --- | --- |
+| `cmd/ccgpy` | `ccgpy <profile> …`: runs the sibling `ccgp <profile> --dangerously-skip-permissions …`, nothing else |
 | `cmd/ccgp` | CLI: `<profile>` launcher, `serve`, `start/stop/status`, `login`, `models`, `config`, `profile add/list/rm`, `send`/`import`/`export` |
 | `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`) with backup and loader validation |
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |

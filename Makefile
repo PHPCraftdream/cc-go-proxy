@@ -26,7 +26,8 @@ all: build
 build:
 	@echo "🔨 Building $(BINARY)..."
 	$(GOBUILD) $(LDFLAGS) -o $(BINARY) $(CMD_PATH)
-	@echo "✅ Build complete: ./$(BINARY)"
+	$(GOBUILD) $(LDFLAGS) -o $(BINARY)y ./cmd/$(BINARY)y
+	@echo "✅ Build complete: ./$(BINARY) ./$(BINARY)y"
 
 # Run the proxy
 run: build
@@ -37,7 +38,7 @@ run: build
 clean:
 	@echo "🧹 Cleaning..."
 	$(GOCLEAN)
-	rm -f $(BINARY)
+	rm -f $(BINARY) $(BINARY)y
 	rm -rf $(BUILD_DIR)
 	@echo "✅ Clean complete"
 

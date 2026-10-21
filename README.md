@@ -18,6 +18,7 @@ Claude's API to Claude Code and the backend's API to the other side, and a launc
 ccgp codex                     # Claude Code on your ChatGPT subscription (Codex)
 ccgp zai                       # Claude Code on z.ai GLM
 ccgp codex -p "explain this"   # headless: everything after the profile goes to claude
+ccgpy codex                    # same, with every permission prompt off (--dangerously-skip-permissions)
 ```
 
 ## Features
@@ -80,6 +81,7 @@ Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 | Command | Purpose |
 | --- | --- |
 | `ccgp <profile> [claude args…]` | Ensure server and credentials, run `claude` through the profile |
+| `ccgpy <profile> [claude args…]` | Same as `ccgp <profile> --dangerously-skip-permissions …`: Claude Code without permission prompts, so use it only where that is acceptable |
 | `ccgp login <provider> [--device]` | (Re)authenticate. Codex: browser OAuth, or `--device` for a device code. Others: API key |
 | `ccgp models [apply] [-v] [profile]` | Show, or write into the config, the newest models per Claude tier |
 | `ccgp send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |

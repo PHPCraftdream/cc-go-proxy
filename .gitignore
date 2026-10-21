@@ -46,6 +46,7 @@ session.jsonl
 
 # ccgp build and release artifacts
 /ccgp
+/ccgpy
 npm-dist/
 THIRD_PARTY_LICENSES.md
 

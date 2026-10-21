@@ -6,16 +6,19 @@
 
 const { spawn } = require('node:child_process');
 const { chmodSync } = require('node:fs');
+const { basename } = require('node:path');
 
 const key = `${process.platform}-${process.arch}`;
 const pkg = `__PREFIX__-${key}`;
-const exe = process.platform === 'win32' ? 'ccgp.exe' : 'ccgp';
+// bin/ccgpy.js starts the ccgpy binary (ccgp with permission prompts off), bin/ccgp.js starts ccgp.
+const name = basename(__filename, '.js') === 'ccgpy' ? 'ccgpy' : 'ccgp';
+const exe = process.platform === 'win32' ? `${name}.exe` : name;
 
 let bin;
 try {
   bin = require.resolve(`${pkg}/bin/${exe}`);
 } catch {
-  console.error(`ccgp: there is no prebuilt binary for ${key} (${pkg} is not installed).`);
+  console.error(`${name}: there is no prebuilt binary for ${key} (${pkg} is not installed).`);
   console.error('If npm skipped optional dependencies (--omit=optional), install again without that flag.');
   console.error('Otherwise use a release archive: https://github.com/PHPCraftdream/cc-go-proxy/releases');
   console.error('or: go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest');
@@ -45,7 +48,7 @@ for (const sig of ['SIGTERM', 'SIGHUP']) {
 }
 
 child.on('error', (err) => {
-  console.error(`ccgp: cannot start ${bin}: ${err.message}`);
+  console.error(`${name}: cannot start ${bin}: ${err.message}`);
   process.exit(1);
 });
 child.on('exit', (code, signal) => {

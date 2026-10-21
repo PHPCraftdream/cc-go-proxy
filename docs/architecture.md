@@ -17,6 +17,7 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 
 | Path | Role |
 | --- | --- |
+| `cmd/ccgpy` | `ccgpy <profile> …`: starts the `ccgp` next to it (or in `PATH`) as `ccgp <profile> --dangerously-skip-permissions …`; passes the terminal and exit code through |
 | `cmd/ccgp` | CLI: `<profile>` launcher, `serve`, `start` / `stop` / `status`, `login`, `models`, `config`, `profile add` / `list` / `rm`, `send`, `import` / `export` |
 | `internal/config` | Ktav config (`providers[]`, `profiles[]`), model rules (`ResolveModel`), managed blocks, surgical profile add/remove text editing with backup and validation, defaults |
 | `internal/creds` | Generated secrets: profile URL tokens, API keys, OAuth file paths; the token index |

@@ -166,11 +166,13 @@ jobs:
       run: |
         set -euo pipefail
         exe=ccgp
-        if [ "$GOOS" = windows ]; then exe=ccgp.exe; fi
+        yexe=ccgpy
+        if [ "$GOOS" = windows ]; then exe=ccgp.exe; yexe=ccgpy.exe; fi
         mkdir -p out
         go build -trimpath \
           -ldflags "-s -w -X ${MODULE}/internal/server.ProxyVersion=${VERSION}" \
           -o "out/$exe" ./cmd/ccgp
+        go build -trimpath -ldflags "-s -w" -o "out/$yexe" ./cmd/ccgpy
 
     - name: Smoke test
       if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
@@ -178,6 +180,7 @@ jobs:
         got="$(./out/ccgp version)"
         echo "$got"
         [ "$got" = "ccgp v${VERSION}" ]
+        ./out/ccgpy help | grep -q '^usage: ccgpy <profile>'
 
     - name: Package
       run: |
