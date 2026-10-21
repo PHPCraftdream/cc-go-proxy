@@ -104,3 +104,43 @@ jobs:
       with:
         version: v2.5.0
         args: --timeout=5m
+
+  # The release builds six platforms; type-check all of them on every push so a
+  # darwin or arm64 break shows up here and not on release day.
+  cross:
+    name: Vet ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ linux/arm64, darwin/amd64, darwin/arm64, windows/arm64 ]
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.24'
+
+    - name: go vet
+      env:
+        CGO_ENABLED: '0'
+      run: |
+        target='${{ matrix.target }}'
+        GOOS="${target%/*}" GOARCH="${target#*/}" go vet ./cmd/... ./internal/...
+
+  npm-scripts:
+    name: npm packaging scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+
+    - run: node --test "scripts/npm/*.test.mjs"

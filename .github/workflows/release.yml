@@ -1,120 +1,316 @@
 name: Release
 
+# Push a tag vMAJOR.MINOR.PATCH[-prerelease] to release. The tag must be on main.
+#
+#   tests -> binaries for 6 platforms -> GitHub Release (archives, SHA256SUMS,
+#   build-provenance attestations) -> npm packages
+#
+# Run it by hand (Actions -> Release -> Run workflow) for a dry run: everything
+# is built and packed, nothing is published.
+#
+# npm authentication, no workflow edit needed to switch:
+#   * the NPM_TOKEN secret exists  -> publish with that token;
+#   * the secret does not exist    -> publish with npm Trusted Publishing (OIDC).
+# See docs/releasing.md.
+
 on:
   push:
-    tags:
-      - 'v*'
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build for the dry run (X.Y.Z). Nothing is published.'
+        required: false
+        default: '0.0.0-dryrun'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: '1.24'
+  MODULE: github.com/PHPCraftdream/cc-go-proxy
+  # npm package name; the platform packages are <name>-<os>-<cpu>.
+  NPM_NAME: ccgp
 
 jobs:
-  release:
-    name: Create Release
+  meta:
+    name: Version
     runs-on: ubuntu-latest
-
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v7
+    - uses: actions/checkout@v7
       with:
         fetch-depth: 0
 
-    - name: Set up Go
-      uses: actions/setup-go@v7
-      with:
-        go-version: '1.24'
-
-    - name: Run tests
-      run: go test -v ./...
-
-    - name: Build all platforms
-      run: make build-all
-
-    - name: Create checksums
+    - name: Work out the version
+      id: v
+      env:
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
-        cd dist
-        sha256sum * > checksums.txt
-        cat checksums.txt
-
-    - name: Extract release notes
-      id: extract-release-notes
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/}
-        echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
-        # Extract changelog section for this version
-        if [ -f CHANGELOG.md ]; then
-          # Get content between this version and next version heading
-          CHANGELOG=$(sed -n "/## \[${VERSION#v}\]/,/## \[/p" CHANGELOG.md | sed '$d' | tail -n +2)
-
-          if [ -n "$CHANGELOG" ]; then
-            echo "Found changelog for ${VERSION}"
-            # Save to file for body_path
-            echo "$CHANGELOG" > /tmp/changelog_section.md
-            echo "" >> /tmp/changelog_section.md
-            echo "has_changelog=true" >> $GITHUB_OUTPUT
-          else
-            echo "No changelog section found for ${VERSION}"
-            echo "has_changelog=false" >> $GITHUB_OUTPUT
-          fi
+        set -euo pipefail
+        if [ "$REF_TYPE" = tag ]; then
+          tag="$REF_NAME"
+          publish=true
         else
-          echo "CHANGELOG.md not found"
-          echo "has_changelog=false" >> $GITHUB_OUTPUT
+          tag="v${INPUT_VERSION:-0.0.0-dryrun}"
+          publish=false
+        fi
+        if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::'$tag' is not a version tag (vMAJOR.MINOR.PATCH[-prerelease])"
+          exit 1
+        fi
+        version="${tag#v}"
+        prerelease=false
+        if [[ "$version" == *-* ]]; then prerelease=true; fi
+
+        if [ "$publish" = true ]; then
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $tag is not on main; release from main only"
+            exit 1
+          fi
         fi
 
-        # Always create installation instructions
-        cat >> /tmp/changelog_section.md << 'EOF'
-        ## Installation
+        {
+          echo "version=$version"
+          echo "tag=$tag"
+          echo "prerelease=$prerelease"
+          echo "publish=$publish"
+        } >> "$GITHUB_OUTPUT"
+        echo "Releasing $tag (publish=$publish, prerelease=$prerelease)"
 
-        Download the appropriate binary for your platform:
+  test:
+    name: Test (${{ matrix.os }})
+    needs: meta
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v7
 
-        ### macOS (Apple Silicon)
-        ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-darwin-arm64
-        chmod +x ccgp-darwin-arm64
-        sudo mv ccgp-darwin-arm64 /usr/local/bin/ccgp
-        ```
-
-        ### macOS (Intel)
-        ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-darwin-amd64
-        chmod +x ccgp-darwin-amd64
-        sudo mv ccgp-darwin-amd64 /usr/local/bin/ccgp
-        ```
-
-        ### Linux (x86_64)
-        ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-linux-amd64
-        chmod +x ccgp-linux-amd64
-        sudo mv ccgp-linux-amd64 /usr/local/bin/ccgp
-        ```
-
-        ### Linux (ARM64)
-        ```bash
-        wget https://github.com/${{ github.repository }}/releases/download/${VERSION}/ccgp-linux-arm64
-        chmod +x ccgp-linux-arm64
-        sudo mv ccgp-linux-arm64 /usr/local/bin/ccgp
-        ```
-
-        ### Windows
-        Download `ccgp-windows-amd64.exe` and add to your PATH.
-
-        ## Verify Installation
-        ```bash
-        ccgp help
-        ```
-
-        ## Quick Start
-        See [README.md](https://github.com/${{ github.repository }}#quick-start) for configuration instructions.
-        EOF
-
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
+    - uses: actions/setup-go@v7
       with:
-        files: |
-          dist/ccgp-*
-          dist/checksums.txt
-        body_path: /tmp/changelog_section.md
-        generate_release_notes: ${{ steps.extract-release-notes.outputs.has_changelog != 'true' }}
+        go-version: ${{ env.GO_VERSION }}
+
+    - run: go test ./...
+
+  licenses:
+    name: Third-party licenses
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - run: bash scripts/third-party-licenses.sh THIRD_PARTY_LICENSES.md
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: third-party-licenses
+        path: THIRD_PARTY_LICENSES.md
+        if-no-files-found: error
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: [ meta, test, licenses ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+        - { goos: linux,   goarch: amd64, npm: linux-x64,    ext: tar.gz }
+        - { goos: linux,   goarch: arm64, npm: linux-arm64,  ext: tar.gz }
+        - { goos: darwin,  goarch: amd64, npm: darwin-x64,   ext: tar.gz }
+        - { goos: darwin,  goarch: arm64, npm: darwin-arm64, ext: tar.gz }
+        - { goos: windows, goarch: amd64, npm: win32-x64,    ext: zip }
+        - { goos: windows, goarch: arm64, npm: win32-arm64,  ext: zip }
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: '0'
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - uses: actions/download-artifact@v8
+      with:
+        name: third-party-licenses
+
+    - name: Build
+      run: |
+        set -euo pipefail
+        exe=ccgp
+        if [ "$GOOS" = windows ]; then exe=ccgp.exe; fi
+        mkdir -p out
+        go build -trimpath \
+          -ldflags "-s -w -X ${MODULE}/internal/server.ProxyVersion=${VERSION}" \
+          -o "out/$exe" ./cmd/ccgp
+
+    - name: Smoke test
+      if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+      run: |
+        got="$(./out/ccgp version)"
+        echo "$got"
+        [ "$got" = "ccgp v${VERSION}" ]
+
+    - name: Package
+      run: |
+        set -euo pipefail
+        name="ccgp_${VERSION}_${GOOS}_${GOARCH}"
+        mkdir -p "stage/$name" dist
+        cp out/ccgp* LICENSE-MIT LICENSE-APACHE NOTICE README.md THIRD_PARTY_LICENSES.md "stage/$name/"
+        if [ "${{ matrix.ext }}" = zip ]; then
+          (cd stage && zip -qrX "../dist/$name.zip" "$name")
+        else
+          tar -C stage --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime='UTC 2020-01-01' -czf "dist/$name.tar.gz" "$name"
+        fi
+        ls -l dist
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: archive-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: dist/*
+        if-no-files-found: error
+
+    # The bare binary is what the npm platform package ships.
+    - uses: actions/upload-artifact@v7
+      with:
+        name: bin-${{ matrix.npm }}
+        path: out/ccgp*
+        if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: [ meta, build ]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write       # create the release
+      id-token: write       # sign the attestations
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: archive-*
+        merge-multiple: true
+        path: dist
+
+    - name: Checksums
+      working-directory: dist
+      run: |
+        sha256sum ccgp_* > SHA256SUMS
+        cat SHA256SUMS
+
+    - name: Attest build provenance
+      uses: actions/attest-build-provenance@v4
+      with:
+        subject-path: dist/*
+
+    - name: Release notes
+      run: bash scripts/release-notes.sh "$VERSION" "$GITHUB_REPOSITORY" > notes.md
+
+    - name: Create or update the release
+      run: |
+        set -euo pipefail
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          gh release upload "$TAG" dist/* --clobber
+          gh release edit "$TAG" --notes-file notes.md
+        else
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$TAG" dist/* --verify-tag --title "ccgp $TAG" \
+            --notes-file notes.md "${flags[@]}"
+        fi
+
+  npm:
+    name: npm packages
+    needs: [ meta, build, release ]
+    # Runs after the release, or alone in a dry run (release is skipped then).
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write       # npm provenance and Trusted Publishing
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PUBLISH: ${{ needs.meta.outputs.publish }}
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+        registry-url: https://registry.npmjs.org
+
+    # Trusted Publishing needs npm 11.5.1 or newer.
+    - name: Update npm
+      run: npm install -g "npm@^11.5.1" && npm --version
+
+    - uses: actions/download-artifact@v8
+      with:
+        pattern: bin-*
+        path: bin
+
+    - uses: actions/download-artifact@v8
+      with:
+        name: third-party-licenses
+
+    - name: Build packages
+      run: |
+        node --test "scripts/npm/*.test.mjs"
+        node scripts/npm/build.mjs --version "$VERSION" --bin bin --out npm-dist \
+          --name "$NPM_NAME" --repo "$GITHUB_REPOSITORY"
+
+    - name: Dry run (nothing is published)
+      if: env.PUBLISH != 'true'
+      run: node scripts/npm/publish.mjs npm-dist --dry-run
+
+    - name: Publish with NPM_TOKEN
+      if: env.PUBLISH == 'true' && env.HAS_NPM_TOKEN == 'true'
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      run: node scripts/npm/publish.mjs npm-dist
+
+    # Without the secret npm exchanges the job's OIDC identity for a short-lived
+    # publish credential. Each package needs a Trusted Publisher on npmjs.com.
+    - name: Publish with Trusted Publishing (OIDC)
+      if: env.PUBLISH == 'true' && env.HAS_NPM_TOKEN != 'true'
+      run: node scripts/npm/publish.mjs npm-dist

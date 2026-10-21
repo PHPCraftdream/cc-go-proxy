@@ -1,0 +1,60 @@
+name: Licenses
+
+# ccgp is MIT OR Apache-2.0. Every dependency linked into the binary must have a
+# permissive license that can be redistributed under either of them.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: licenses-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # SPDX identifiers accepted for dependencies. Copyleft (GPL, LGPL, AGPL, MPL, SSPL, ...)
+  # and unknown licenses fail the check on purpose: widen this list only deliberately.
+  ALLOWED_LICENSES: MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,0BSD
+
+jobs:
+  go-licenses:
+    name: Go dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-go@v7
+      with:
+        go-version: '1.24'
+
+    - name: Check licenses of linked libraries
+      run: |
+        go run github.com/google/go-licenses/v2@v2.0.1 check ./cmd/ccgp \
+          --ignore github.com/PHPCraftdream/cc-go-proxy \
+          --allowed_licenses="$ALLOWED_LICENSES"
+
+    - name: Third-party license file can be generated
+      run: bash scripts/third-party-licenses.sh "$RUNNER_TEMP/THIRD_PARTY_LICENSES.md"
+
+  # GitHub's own view of the dependency graph: also covers a new dependency
+  # that is added in a pull request before it is imported anywhere.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/dependency-review-action@v5
+      with:
+        allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD
+        fail-on-severity: high

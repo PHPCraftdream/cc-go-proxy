@@ -43,3 +43,8 @@ session.jsonl
 
 # Daemon files
 *.pid
+
+# ccgp build and release artifacts
+/ccgp
+npm-dist/
+THIRD_PARTY_LICENSES.md
