@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/pkg/models"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/pkg/models"
 )
 
 // TestProviderSpecificRequestConversion tests that requests are converted correctly per provider

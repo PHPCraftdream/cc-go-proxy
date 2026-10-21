@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/securefile"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
 // A profile may contain one block rewritten by `ccgp models apply`:

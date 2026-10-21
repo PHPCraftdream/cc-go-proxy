@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claude-code-proxy/proxy/internal/codex"
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/oauth"
-	"github.com/claude-code-proxy/proxy/internal/preset"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 )
 
 // models implements `ccgp models [apply] [-v] [profile]`.

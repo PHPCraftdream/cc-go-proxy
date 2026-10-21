@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/pkg/models"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/pkg/models"
 )
 
 // TestExtractSystemText tests system message extraction from various formats

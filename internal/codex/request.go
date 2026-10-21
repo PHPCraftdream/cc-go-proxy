@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/identity"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/identity"
 )
 
 // SignaturePrefix marks thinking-block signatures that carry Responses

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claude-code-proxy/proxy/internal/securefile"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
 // ErrNotLoggedIn: no stored tokens for this provider.

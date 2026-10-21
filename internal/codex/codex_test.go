@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/claude-code-proxy/proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
 func mustJSON(t *testing.T, v any) string {

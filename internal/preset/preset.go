@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 )
 
 // Preset is a named, ordered mapping of Claude tiers to backend models.

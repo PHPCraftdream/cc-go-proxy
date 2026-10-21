@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/converter"
-	"github.com/claude-code-proxy/proxy/internal/identity"
-	"github.com/claude-code-proxy/proxy/internal/preset"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/identity"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 	"github.com/gofiber/fiber/v2"
 )
 

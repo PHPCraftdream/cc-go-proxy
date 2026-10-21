@@ -9,10 +9,10 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/claude-code-proxy/proxy/internal/codex"
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/converter"
-	"github.com/claude-code-proxy/proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/gofiber/fiber/v2"
 )
 

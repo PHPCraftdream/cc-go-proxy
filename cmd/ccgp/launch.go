@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/claudehome"
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/daemon"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 )
 
 func sortStrings(s []string) { sort.Strings(s) }

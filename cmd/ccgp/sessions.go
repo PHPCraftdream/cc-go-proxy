@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/sessions"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions"
 )
 
 const defaultSessionCount = 10

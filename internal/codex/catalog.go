@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
 // catalogClientVersion selects the model catalog revision (Codex CLI version).

@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 )
 
 // TestServerSetup tests that the server can be initialized

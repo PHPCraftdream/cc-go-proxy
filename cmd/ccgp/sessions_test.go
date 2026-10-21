@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/claude-code-proxy/proxy/internal/sessions"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions"
 )
 
 func TestParseSessionArgs(t *testing.T) {

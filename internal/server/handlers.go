@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/converter"
-	"github.com/claude-code-proxy/proxy/pkg/models"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
+	"github.com/PHPCraftdream/cc-go-proxy/pkg/models"
 	"github.com/gofiber/fiber/v2"
 )
 

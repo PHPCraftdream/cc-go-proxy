@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/creds"
-	"github.com/claude-code-proxy/proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"golang.org/x/term"
 )
 

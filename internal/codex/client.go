@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
 // DefaultBaseURL is the ChatGPT Codex backend (Responses API at /responses).

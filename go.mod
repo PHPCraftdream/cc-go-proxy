@@ -1,4 +1,4 @@
-module github.com/claude-code-proxy/proxy
+module github.com/PHPCraftdream/cc-go-proxy
 
 go 1.24.0
 

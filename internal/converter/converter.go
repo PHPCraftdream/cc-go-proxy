@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
-	"github.com/claude-code-proxy/proxy/internal/identity"
-	"github.com/claude-code-proxy/proxy/pkg/models"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/identity"
+	"github.com/PHPCraftdream/cc-go-proxy/pkg/models"
 )
 
 // Default model mappings when env overrides are not set

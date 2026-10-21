@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/claude-code-proxy/proxy/internal/securefile"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
 //go:embed config.example.ktav

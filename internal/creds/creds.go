@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/claude-code-proxy/proxy/internal/securefile"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
 // Store is rooted at a creds directory.

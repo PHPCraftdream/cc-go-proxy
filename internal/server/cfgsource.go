@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/claude-code-proxy/proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 )
 
 // cfgSource reloads config.ktav when it changes, so profiles and mappings
