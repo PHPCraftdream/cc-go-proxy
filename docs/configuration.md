@@ -96,6 +96,9 @@ has to trigger early enough. Claude Code accepts **one** window per process, the
 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to the `context_window` of the rule that serves the session's **main
 model** (`--model`, `ANTHROPIC_MODEL`, `model` in `settings.json`, else `sonnet`).
 
+Claude Code accepts 100k to 1M for this variable and prints a warning for anything else, so ccgp clamps the value
+into that range. A backend model with a window below 100k therefore cannot be protected by compaction.
+
 A smaller window on another rule (say the Haiku model's 272000) does not shrink the main session, but
 it is not covered either. A profile-level `context_window` overrides the choice, `compact_percent: 70`
 compacts earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), and variables you set yourself are never overridden.

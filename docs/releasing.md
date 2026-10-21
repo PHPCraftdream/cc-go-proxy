@@ -16,7 +16,7 @@ no version file to edit. Versions are never bumped automatically.
 
 1. In [`CHANGELOG.md`](../CHANGELOG.md) rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (keep a fresh empty
    `## [Unreleased]` above it). The section becomes the release notes.
-2. Merge to `main` and wait for CI (tests on Linux and Windows, lint, license check, cross-compile vet).
+2. First release only: delete the "Pre-release" note from the README install section. Then merge to `main` and wait for CI (tests on Linux and Windows, lint, license check, cross-compile vet).
 3. Optional dry run: **Actions → Release → Run workflow**. It builds and packs everything and runs
    `npm publish --dry-run`; it creates no release and publishes nothing.
 4. Tag and push:

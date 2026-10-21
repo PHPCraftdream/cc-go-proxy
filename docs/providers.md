@@ -11,6 +11,10 @@ to a provider and to model-mapping rules ([configuration.md](configuration.md)).
 
 `ccgp login <provider>` authenticates; every `ccgp <profile>` run also does it when credentials are missing.
 
+Claude Code asks for token counts all the time (`/v1/messages/count_tokens`). `anthropic_compat` forwards the call to
+the endpoint; `codex` and `codex_api` have no counting endpoint, so ccgp answers with a length-based estimate
+(about four bytes of request per token).
+
 ## `codex` — ChatGPT subscription
 
 ```sh

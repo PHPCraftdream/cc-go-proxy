@@ -37,6 +37,8 @@ ccgp codex -p "explain this"   # headless: everything after the profile goes to 
 
 ## Install
 
+> **Pre-release.** The first release, 0.1.0, is being prepared. Until it is published, only `go install` and building from source work; the npm package and the release archives appear with the `v0.1.0` tag.
+
 ```sh
 npm install -g ccgp                                              # any platform, no Go needed
 go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest  # from source (Go 1.24+)

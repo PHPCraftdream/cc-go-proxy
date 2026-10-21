@@ -26,7 +26,8 @@ First release of ccgp as an independent project.
 - `ccgp models` / `ccgp models apply`: newest Codex models per Claude tier from the account catalog, per-rule
   `context_window`, built-in z.ai preset; `ccgp login zai`.
 - Per-model context windows and compaction: the launcher sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the rule of the
-  session's main model; `compact_percent`.
+  session's main model, clamped to the 100k-1M range Claude Code accepts; `compact_percent`.
+- `count_tokens` for `codex` and `codex_api` answers with a length-based estimate instead of a constant.
 - Isolated Claude Code configuration per profile: official credentials never reach a ccgp session; agents, skills,
   commands, plugins and settings are mirrored one way.
 - The model-identity sentence in Claude Code's prompt is replaced with the real backend model.
