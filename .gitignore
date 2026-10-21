@@ -48,3 +48,6 @@ session.jsonl
 /ccgp
 npm-dist/
 THIRD_PARTY_LICENSES.md
+
+# /wrush task worktrees — always created here, in-tree
+/worktrees/
