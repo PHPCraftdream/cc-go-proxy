@@ -61,7 +61,8 @@ type Options struct {
 	// it is copied, at most once per ProgressEvery. Short transcripts finish
 	// before the first report.
 	OnProgress func(s Session, done, total int64)
-	// ProgressEvery spaces OnProgress calls; 0 means 2 seconds.
+	// ProgressEvery spaces OnProgress calls; 0 means 2 seconds, a negative value
+	// reports after every read.
 	ProgressEvery time.Duration
 	// OnResult, when set, is called as soon as each session is done, so a
 	// caller can report progress on large transcripts.

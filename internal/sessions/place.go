@@ -50,7 +50,7 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 	var in io.Reader = io.NewSectionReader(f, 0, size)
 	if prog != nil {
 		every := opt.ProgressEvery
-		if every <= 0 {
+		if every == 0 {
 			every = defaultProgressEvery
 		}
 		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
@@ -87,9 +87,11 @@ type progressReader struct {
 func (p *progressReader) Read(b []byte) (int, error) {
 	n, err := p.r.Read(b)
 	p.done += int64(n)
-	if now := time.Now(); n > 0 && now.Sub(p.last) >= p.every {
-		p.last = now
-		p.fn(p.done, p.total)
+	if n > 0 {
+		if now := time.Now(); p.every < 0 || now.Sub(p.last) >= p.every {
+			p.last = now
+			p.fn(p.done, p.total)
+		}
 	}
 	return n, err
 }

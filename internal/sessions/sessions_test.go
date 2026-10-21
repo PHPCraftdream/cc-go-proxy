@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -306,18 +307,16 @@ func TestCopyReportsStartAndProgress(t *testing.T) {
 	put(t, filepath.Join(src, "projects", "a", "2.jsonl"), big, t0.Add(time.Hour))
 
 	var starts []string
-	var last, calls, total int64
+	reports := map[string][]int64{} // session id -> bytes reported, in order
+	totals := map[string]int64{}
 	opt := Options{
-		ProgressEvery: time.Nanosecond, // report on every chunk
+		ProgressEvery: -1, // after every read, independent of the clock
 		OnStart: func(i, n int, s Session) {
-			starts = append(starts, s.ID+":"+string(rune('0'+i))+"/"+string(rune('0'+n)))
+			starts = append(starts, fmt.Sprintf("%s:%d/%d", s.ID, i, n))
 		},
-		OnProgress: func(_ Session, done, tot int64) {
-			if done < last && done != 0 && last != total { // restarts with the next session
-				t.Errorf("progress went back: %d after %d", done, last)
-			}
-			last, total = done, tot
-			calls++
+		OnProgress: func(s Session, done, total int64) {
+			reports[s.ID] = append(reports[s.ID], done)
+			totals[s.ID] = total
 		},
 	}
 	if _, err := Copy(src, dst, 2, opt); err != nil {
@@ -326,8 +325,20 @@ func TestCopyReportsStartAndProgress(t *testing.T) {
 	if strings.Join(starts, " ") != "2:1/2 1:2/2" {
 		t.Errorf("starts = %v", starts)
 	}
-	if calls == 0 || last != total || total != int64(len(big)) {
-		t.Errorf("progress calls=%d last=%d total=%d, want the final report to reach %d", calls, last, total, len(big))
+	for _, id := range []string{"1", "2"} {
+		got := reports[id]
+		if len(got) < 2 {
+			t.Fatalf("session %s: %d progress reports, want one per chunk", id, len(got))
+		}
+		for i := 1; i < len(got); i++ {
+			if got[i] <= got[i-1] {
+				t.Errorf("session %s: progress %v is not increasing", id, got)
+				break
+			}
+		}
+		if last := got[len(got)-1]; last != int64(len(big)) || totals[id] != int64(len(big)) {
+			t.Errorf("session %s: last report %d of %d, want %d", id, last, totals[id], len(big))
+		}
 	}
 }
 
@@ -353,7 +364,7 @@ func TestProgressWhileStrippingThinking(t *testing.T) {
 	put(t, filepath.Join(src, "projects", "a", "1.jsonl"), strings.Repeat(line, 3500)+think, t0)
 
 	var last, total int64
-	opt := Options{StripThinking: true, ProgressEvery: time.Nanosecond, OnProgress: func(_ Session, done, tot int64) { last, total = done, tot }}
+	opt := Options{StripThinking: true, ProgressEvery: -1, OnProgress: func(_ Session, done, tot int64) { last, total = done, tot }}
 	res, err := Copy(src, dst, 1, opt)
 	if err != nil || len(res) != 1 || res[0].Err != nil {
 		t.Fatalf("Copy = %+v, %v", res, err)
