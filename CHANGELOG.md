@@ -10,6 +10,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Added
+- For the GPT-6 generation `ccgp models` / `apply` write a context window of 922000 (OpenAI's documented input limit)
+  when the catalog's `max_context_window` is lower (872000), so Claude Code compacts later; a larger catalog value wins.
 - `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
   permission prompts off), a second small binary that starts the `ccgp` next to it. It is built and packaged with every
   release (archives, and `npm install -g ccgp` installs both commands).

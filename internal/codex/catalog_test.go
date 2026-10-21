@@ -140,8 +140,9 @@ func mm(slug string, window, max int64, hidden bool) Model {
 }
 
 // The catalog's context_window is only the default of Codex clients; the GPT-6
-// generation really takes up to max_context_window, earlier releases stay at
-// the default (same max_context_window in the catalog, but not usable).
+// generation really takes up to its documented input limit (922000, above the
+// catalog's 872000), earlier releases stay at the default (same max_context_window
+// in the catalog, but not usable).
 func TestPickWindowsFollowGenerations(t *testing.T) {
 	sel, err := Pick([]Model{
 		mm("gpt-6-astra", 272_000, 872_000, false),
@@ -156,8 +157,31 @@ func TestPickWindowsFollowGenerations(t *testing.T) {
 	if sel.Fable != "gpt-6-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6-luna" || sel.Haiku != "gpt-5.6-luna" {
 		t.Fatalf("selection = %+v", sel)
 	}
-	if sel.FableWindow != 872_000 || sel.OpusWindow != 872_000 || sel.SonnetWindow != 872_000 {
-		t.Errorf("GPT-6 windows = %d %d %d, want max_context_window", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow)
+	if sel.FableWindow != Gpt6InputLimit || sel.OpusWindow != Gpt6InputLimit || sel.SonnetWindow != Gpt6InputLimit || Gpt6InputLimit != 922_000 {
+		t.Errorf("GPT-6 windows = %d %d %d, want %d", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow, Gpt6InputLimit)
+	}
+	if sel.HaikuWindow != 272_000 {
+		t.Errorf("previous-generation window = %d, want the 272000 default", sel.HaikuWindow)
+	}
+}
+
+// A catalog that later advertises more than the documented limit is trusted.
+func TestPickKeepsALargerCatalogMax(t *testing.T) {
+	sel, err := Pick([]Model{
+		mm("gpt-6.1-sol", 500_000, 1_050_000, false),
+		mm("gpt-6-astra", 272_000, 1_050_000, false),
+		mm("gpt-6-luna", 272_000, 700_000, false),
+		mm("gpt-5.6-luna", 272_000, 1_050_000, false),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.OpusWindow != 1_050_000 || sel.FableWindow != 1_050_000 {
+		t.Errorf("windows = %d %d, want the catalog's 1050000", sel.OpusWindow, sel.FableWindow)
+	}
+	// A catalog max below the documented input limit is raised to it.
+	if sel.SonnetWindow != Gpt6InputLimit {
+		t.Errorf("sonnet window = %d, want %d", sel.SonnetWindow, Gpt6InputLimit)
 	}
 	if sel.HaikuWindow != 272_000 {
 		t.Errorf("previous-generation window = %d, want the 272000 default", sel.HaikuWindow)

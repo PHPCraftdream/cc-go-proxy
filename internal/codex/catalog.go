@@ -163,6 +163,13 @@ type Selection struct {
 // (the Codex catalog default).
 const DefaultContextWindow = 272_000
 
+// Gpt6InputLimit is the largest input OpenAI documents for the GPT-6 models: a
+// 1,050,000-token window less 128,000 reserved for output. The Codex catalog's
+// max_context_window (872,000) sits 50,000 below it; the backend takes more than
+// that (895,000 input was seen) and starts to fail near this limit, so the larger
+// of the two is used.
+const Gpt6InputLimit = 922_000
+
 var gpt6Re = regexp.MustCompile(`^gpt-(\d+(?:\.\d+)*)-(astra|sol|luna)$`)
 
 type release struct {
@@ -217,12 +224,12 @@ func Pick(models []Model) (Selection, error) {
 		return release{}, false
 	}
 	// windowOf is the input size the model really takes: the GPT-6 generation
-	// (and newer) runs up to the catalog's max_context_window, while the catalog's
-	// context_window is only a default of Codex clients; earlier releases are
-	// held to that default.
+	// (and newer) runs up to its max_context_window, at least Gpt6InputLimit, while
+	// the catalog's context_window is only a default of Codex clients; earlier
+	// releases are held to that default.
 	windowOf := func(r release) int64 {
 		if r.version[0] >= 6 && r.max > 0 {
-			return r.max
+			return max(r.max, Gpt6InputLimit)
 		}
 		if r.window > 0 {
 			return r.window

@@ -58,12 +58,12 @@ profiles: [
             {
                 match: *opus*
                 model: gpt-6-sol
-                context_window: 872000
+                context_window: 922000
             }
             {
                 match: *
                 model: gpt-6-luna
-                context_window: 872000
+                context_window: 922000
             }
         ]
     }

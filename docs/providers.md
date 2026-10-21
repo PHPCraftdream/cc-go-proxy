@@ -50,7 +50,9 @@ ccgp login codex --device   # device code instead, for machines without a browse
 
 The catalog has two numbers: `context_window` is only the default of Codex clients and
 `max_context_window` is the largest input the backend takes. For the GPT-6 generation and newer, ccgp
-writes `max_context_window` (872000); for earlier releases such as `gpt-5.6-luna`, the default (272000).
+writes `max_context_window` or, when that is lower, OpenAI's documented input limit of 922000 (a 1,050,000 window
+less 128,000 for output; the catalog's 872000 is conservative); for earlier releases such as `gpt-5.6-luna`, the
+default (272000).
 A model with no window at all is written as 272000 and noted.
 
 > **Terms.** This path uses the private ChatGPT Codex backend that OpenAI's own clients use. Using a
