@@ -14,6 +14,7 @@ if [ -f CHANGELOG.md ]; then
   section="$(awk -v v="$version" '
     index($0, "## [" v "]") == 1 { found = 1; next }
     found && /^## \[/ { exit }
+    found && /^\[[^]]+\]: / { next }
     found { print }
   ' CHANGELOG.md | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')"
 fi
