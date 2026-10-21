@@ -1,6 +1,7 @@
 package creds
 
 import (
+	"os"
 	"testing"
 )
 
@@ -67,5 +68,54 @@ func TestStaticIndex(t *testing.T) {
 	}
 	if _, ok := idx.Lookup("other"); ok {
 		t.Error("static index matched wrong token")
+	}
+}
+
+func TestDeleteProfileToken(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	tok, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProfileToken("other"); err != nil {
+		t.Errorf("missing entry: %v", err)
+	}
+	if err := s.DeleteProfileToken("work"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.ProfileTokens()
+	if err != nil || m["work"] != "" {
+		t.Fatalf("tokens after delete = %v, %v", m, err)
+	}
+	if err := s.DeleteProfileToken("work"); err != nil {
+		t.Errorf("second delete is not idempotent: %v", err)
+	}
+	if tok == "" {
+		t.Error("sanity")
+	}
+}
+
+func TestDeleteProviderCreds(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if err := s.DeleteProviderCreds("gone"); err != nil {
+		t.Fatalf("missing files: %v", err)
+	}
+	if err := s.SaveAPIKey("oai", "sk-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(s.OAuthPath("oai"), map[string]string{"k": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteProviderCreds("oai"); err != nil {
+		t.Fatal(err)
+	}
+	if k, err := s.APIKey("oai"); err != nil || k != "" {
+		t.Fatalf("key after delete = %q, %v", k, err)
+	}
+	if _, err := os.Stat(s.OAuthPath("oai")); !os.IsNotExist(err) {
+		t.Errorf("oauth file survived: %v", err)
+	}
+	if err := s.DeleteProviderCreds("oai"); err != nil {
+		t.Errorf("second delete is not idempotent: %v", err)
 	}
 }

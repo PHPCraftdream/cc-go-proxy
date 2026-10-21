@@ -73,6 +73,20 @@ func (s Store) EnsureProfileToken(profile string) (string, error) {
 	return t, nil
 }
 
+// DeleteProfileToken drops a profile's URL token. A missing entry or file is
+// not an error: removal is idempotent.
+func (s Store) DeleteProfileToken(profile string) error {
+	m, err := s.ProfileTokens()
+	if err != nil {
+		return err
+	}
+	if _, ok := m[profile]; !ok {
+		return nil
+	}
+	delete(m, profile)
+	return writeJSON(s.tokensPath(), m)
+}
+
 // APIKey returns the stored key for a provider; "" if absent.
 func (s Store) APIKey(provider string) (string, error) {
 	var v struct {
@@ -83,6 +97,17 @@ func (s Store) APIKey(provider string) (string, error) {
 		return "", nil
 	}
 	return v.APIKey, err
+}
+
+// DeleteProviderCreds removes a provider's OAuth and API-key files. Missing
+// files are fine: removal is idempotent.
+func (s Store) DeleteProviderCreds(provider string) error {
+	for _, p := range []string{s.OAuthPath(provider), s.apiKeyPath(provider)} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // SaveAPIKey stores a provider key owner-only.

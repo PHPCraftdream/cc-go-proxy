@@ -13,18 +13,28 @@ import (
 
 const defaultSessionCount = 10
 
-// sessionsCmd implements `ccgp import|export <profile> [count]`.
+// endpoint is one side of a send: a profile's isolated Claude dir or the
+// user's own one. An empty provider marks the user's own Claude Code dir,
+// which is a provider of its own for the thinking rule.
+type endpoint struct {
+	dir      string
+	provider string
+	label    string // profile name or "claude"
+}
+
+// claudeEndpointLabel names the user's own Claude Code dir in `ccgp send`.
+const claudeEndpointLabel = "claude"
+
+// sessionsCmd implements `ccgp send <from> <to> [count]` and its aliases
+// `ccgp import|export <profile> [count]`, all through the same code path.
 func sessionsCmd(kind string, args []string) error {
-	profile, count, err := parseSessionArgs(kind, args)
+	from, to, count, err := parseSendCommand(kind, args)
 	if err != nil {
 		return err
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
-	}
-	if _, ok := cfg.Profiles[profile]; !ok {
-		return fmt.Errorf("unknown profile %q (configured: %s)", profile, names(cfg.Profiles))
 	}
 	base, err := claudeHomeBase()
 	if err != nil {
@@ -34,13 +44,55 @@ func sessionsCmd(kind string, args []string) error {
 	if err != nil {
 		return err
 	}
-	isolated := filepath.Join(base, profile)
-
-	src, dst, opt := official, isolated, sessions.Options{}
-	if kind == "export" {
-		src, dst, opt = isolated, official, sessions.Options{StripThinking: true}
+	src, err := resolveEndpoint(cfg, base, official, from)
+	if err != nil {
+		return err
 	}
-	return copySessions(os.Stdout, kind, profile, src, dst, count, opt)
+	dst, err := resolveEndpoint(cfg, base, official, to)
+	if err != nil {
+		return err
+	}
+	if src.dir == dst.dir {
+		return fmt.Errorf("send: from and to are the same (%s)", src.label)
+	}
+	label := "send " + from + " -> " + to
+	if kind != "send" {
+		// Aliases keep the command the user typed in the report.
+		label = kind + " " + to
+		if kind == "export" {
+			label = kind + " " + from
+		}
+	}
+	opt := sessions.Options{StripThinking: stripThinkingBetween(src, dst)}
+	return copySessions(os.Stdout, label, src, dst, count, opt)
+}
+
+// parseSendCommand adapts the aliases to the send arguments.
+func parseSendCommand(kind string, args []string) (from, to string, count int, err error) {
+	switch kind {
+	case "import":
+		profile, n, e := parseSessionArgs("import", args)
+		return "claude", profile, n, e
+	case "export":
+		profile, n, e := parseSessionArgs("export", args)
+		return profile, "claude", n, e
+	}
+	return parseSendArgs(args)
+}
+
+func parseSendArgs(args []string) (from, to string, count int, err error) {
+	if len(args) < 2 || len(args) > 3 {
+		return "", "", 0, fmt.Errorf("usage: ccgp send <from> <to> [count]   (from/to: \"claude\" or a profile; count: how many latest sessions, default %d)", defaultSessionCount)
+	}
+	count = defaultSessionCount
+	if len(args) == 3 {
+		n, convErr := strconv.Atoi(args[2])
+		if convErr != nil || n < 1 {
+			return "", "", 0, fmt.Errorf("count must be a positive number, got %q", args[2])
+		}
+		count = n
+	}
+	return args[0], args[1], count, nil
 }
 
 func parseSessionArgs(kind string, args []string) (profile string, count int, err error) {
@@ -58,17 +110,40 @@ func parseSessionArgs(kind string, args []string) (profile string, count int, er
 	return args[0], count, nil
 }
 
-// copySessions copies and reports; it is the testable core of import/export.
-func copySessions(w io.Writer, kind, profile, src, dst string, count int, opt sessions.Options) error {
-	results, err := sessions.Copy(src, dst, count, opt)
+// resolveEndpoint maps "claude" or a configured profile name to its dir.
+func resolveEndpoint(cfg *config.Config, claudeBase, officialDir, name string) (endpoint, error) {
+	if name == claudeEndpointLabel {
+		return endpoint{dir: officialDir, label: claudeEndpointLabel}, nil
+	}
+	pf, ok := cfg.Profiles[name]
+	if !ok {
+		return endpoint{}, fmt.Errorf("unknown profile %q (send between: %s, %s)", name, names(cfg.Profiles), claudeEndpointLabel)
+	}
+	dir, err := claudeProfileDir(claudeBase, name)
+	if err != nil {
+		return endpoint{}, err
+	}
+	return endpoint{dir: dir, provider: pf.Provider, label: name}, nil
+}
+
+// stripThinkingBetween keeps thinking blocks only when both endpoints are
+// profiles on the same provider: their signatures are only valid there.
+func stripThinkingBetween(from, to endpoint) bool {
+	return from.provider == "" || to.provider == "" || from.provider != to.provider
+}
+
+// copySessions copies and reports; it is the testable core of send. label
+// opens the first output line.
+func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt sessions.Options) error {
+	results, err := sessions.Copy(src.dir, dst.dir, count, opt)
 	if err != nil {
 		return err
 	}
 	if len(results) == 0 {
-		_, _ = fmt.Fprintf(w, "no sessions found in %s\n", filepath.Join(src, "projects"))
+		_, _ = fmt.Fprintf(w, "no sessions found in %s\n", filepath.Join(src.dir, "projects"))
 		return nil
 	}
-	_, _ = fmt.Fprintf(w, "%s: %s -> %s\n", kind, src, dst)
+	_, _ = fmt.Fprintf(w, "%s: %s -> %s\n", label, src.dir, dst.dir)
 
 	var done, same, skipped, failed, stripped int
 	for _, r := range results {
@@ -95,8 +170,8 @@ func copySessions(w io.Writer, kind, profile, src, dst string, count int, opt se
 	if opt.StripThinking && stripped > 0 {
 		_, _ = fmt.Fprintf(w, "removed %d thinking blocks (their signatures are only valid for the provider that wrote them)\n", stripped)
 	}
-	if kind == "import" && done > 0 {
-		_, _ = fmt.Fprintf(w, "next: ccgp %s, then /resume (sessions are listed per project directory)\n", profile)
+	if dst.provider != "" && done > 0 {
+		_, _ = fmt.Fprintf(w, "next: ccgp %s, then /resume (sessions are listed per project directory)\n", dst.label)
 	}
 	if failed > 0 {
 		return exitError(1)
