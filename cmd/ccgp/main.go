@@ -19,7 +19,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
-const version = "ccgp v" + server.ProxyVersion
+var version = "ccgp v" + server.ProxyVersion
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {

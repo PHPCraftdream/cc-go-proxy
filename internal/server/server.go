@@ -21,10 +21,9 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
-const (
-	// ProxyVersion is the current version of the proxy
-	ProxyVersion = "1.0.0"
-)
+// ProxyVersion is the version of the proxy. Release builds set it from the
+// tag: -ldflags "-X github.com/PHPCraftdream/cc-go-proxy/internal/server.ProxyVersion=1.2.3".
+var ProxyVersion = "0.1.0"
 
 // sessions caches one OAuth session per codex provider.
 type sessions struct {
