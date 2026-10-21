@@ -33,8 +33,8 @@ ccgp codex -p "explain this"   # headless: everything after the profile goes to 
 - **Locked down.** Every request needs `/call/<token>/…`; the server listens on loopback; secrets are owner-only on disk.
 - **Your Claude credentials stay out.** Each profile runs Claude Code in its own config directory with your agents,
   skills, commands and plugins copied in, but never an official login or API key.
-- **Sessions travel.** `ccgp send` (aliases `ccgp import` / `ccgp export`) copy your latest sessions between
-  Claude Code and a profile, or between two profiles.
+- **Sessions travel.** `ccgp send` (aliases `ccgp import` / `ccgp export`) copy the latest sessions of the
+  current directory between Claude Code and a profile, or between two profiles.
 - **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command, and
   `ccgp profile add` / `rm` validate the result and keep a backup first ([details](docs/configuration.md)).
 - **Windows first**, also Linux and macOS; Windows is tested in CI.
@@ -82,7 +82,7 @@ Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 | `ccgp <profile> [claude args…]` | Ensure server and credentials, run `claude` through the profile |
 | `ccgp login <provider> [--device]` | (Re)authenticate. Codex: browser OAuth, or `--device` for a device code. Others: API key |
 | `ccgp models [apply] [-v] [profile]` | Show, or write into the config, the newest models per Claude tier |
-| `ccgp send <from> <to> [count]` | Copy the latest sessions (default 10) between two profiles or `claude` (your own Claude Code) |
+| `ccgp send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |
 | `ccgp import <profile> [count]` | Alias of `ccgp send claude <profile>` |
 | `ccgp export <profile> [count]` | Alias of `ccgp send <profile> claude` |
 | `ccgp profile add\|list\|rm` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type`) |
@@ -101,7 +101,7 @@ Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 | Config | `.env` and environment | Ktav `providers[]` / `profiles[]`, per-rule model mapping, generated mappings (`ccgp models`), hot reload |
 | Context | — | Per-model context windows; compaction window set for the session's main model |
 | Claude credentials | Not addressed | Never reach a ccgp session: isolated config directory per profile |
-| Sessions | — | `ccgp send` copies the latest sessions between profiles (and your own Claude Code via `import` / `export`) |
+| Sessions | — | `ccgp send` copies the current directory's latest sessions between profiles (and your own Claude Code via `import` / `export`) |
 | Secrets | `.env` | Separate owner-only credentials directory; OAuth refresh tokens rotate safely |
 | Platforms | Builds for macOS, Linux and Windows | Windows first (owner-only ACLs, detached background process, tested in CI), also Linux and macOS |
 | Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, npm, `go install` |

@@ -274,3 +274,90 @@ func TestSendStripsBetweenProfilesOfDifferentProviders(t *testing.T) {
 		t.Errorf("the source was modified: %q, %v", orig, err)
 	}
 }
+
+// sendEnv points the config dir, the user's home and Claude Code's own dir at
+// temp dirs, and moves into a fresh working directory. It returns Claude
+// Code's own dir, the profiles' base dir and the working directory's project
+// folder name.
+func sendEnv(t *testing.T) (official, base, project string) {
+	t.Helper()
+	sendTestConfig(t)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	cfgRoot := filepath.Join(root, "config")
+	official = filepath.Join(root, "official")
+	for _, d := range []string{home, cfgRoot, official} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("APPDATA", cfgRoot)
+	t.Setenv("XDG_CONFIG_HOME", cfgRoot)
+	t.Setenv("CLAUDE_CONFIG_DIR", official)
+
+	work := filepath.Join(root, "work", "my-proj")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	cwd, err := os.Getwd() // the canonical path Claude Code would see
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err = claudeHomeBase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return official, base, projectDirName(cwd)
+}
+
+func TestSendCmdCopiesOnlyTheWorkingDirectory(t *testing.T) {
+	official, base, project := sendEnv(t)
+	writeSession(t, official, project, "aaaaaaaa-here", `{"type":"user","uuid":"a"}`+"\n")
+	writeSession(t, official, "D--dev-elsewhere", "bbbbbbbb-other", `{"type":"user","uuid":"b"}`+"\n")
+
+	if err := sessionsCmd("send", []string{"claude", "codex"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	dst := filepath.Join(base, "codex", "projects")
+	if _, err := os.Stat(filepath.Join(dst, project, "aaaaaaaa-here.jsonl")); err != nil {
+		t.Errorf("session of the working directory not copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "D--dev-elsewhere")); err == nil {
+		t.Error("a session of another directory was copied")
+	}
+}
+
+func TestImportExportRoundTripKeepsToTheWorkingDirectory(t *testing.T) {
+	official, base, project := sendEnv(t)
+	writeSession(t, official, project, "cccccccc-here", `{"type":"user","uuid":"c"}`+"\n")
+	writeSession(t, official, "D--dev-elsewhere", "dddddddd-other", `{"type":"user","uuid":"d"}`+"\n")
+
+	if err := sessionsCmd("import", []string{"codex"}); err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	// A session made in the profile for this directory, and one for another.
+	prof := filepath.Join(base, "codex")
+	writeSession(t, prof, project, "eeeeeeee-new", `{"type":"user","uuid":"e"}`+"\n")
+	writeSession(t, prof, "D--dev-elsewhere", "ffffffff-new", `{"type":"user","uuid":"f"}`+"\n")
+
+	if err := sessionsCmd("export", []string{"codex"}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(official, "projects", project, "eeeeeeee-new.jsonl")); err != nil {
+		t.Errorf("export did not bring the directory's session back: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(official, "projects", "D--dev-elsewhere", "ffffffff-new.jsonl")); err == nil {
+		t.Error("export copied a session of another directory into Claude Code")
+	}
+}
+
+func TestSendCmdWithoutSessionsHere(t *testing.T) {
+	official, _, _ := sendEnv(t)
+	writeSession(t, official, "D--dev-elsewhere", "gggggggg-other", `{"type":"user","uuid":"g"}`+"\n")
+	if err := sessionsCmd("send", []string{"claude", "codex"}); err != nil {
+		t.Fatalf("send with nothing to copy here: %v", err)
+	}
+}

@@ -1,20 +1,28 @@
 # Moving sessions between profiles and Claude Code
 
 A profile runs Claude Code with its own config directory, so its sessions are separate from yours and from
-other profiles'. `ccgp send` moves chosen sessions across; `import` and `export` are aliases:
+other profiles'. `ccgp send` moves the sessions of **the directory you run it in** across; `import` and `export`
+are aliases:
 
 ```sh
-ccgp send codex codex2 3   # the 3 latest sessions of profile codex -> profile codex2
-ccgp send zai claude       # the 10 latest sessions of the zai profile -> your Claude Code
-ccgp send claude zai       # your latest sessions -> the zai profile
+cd D:devmyproject
+ccgp send codex codex2 3   # the 3 latest sessions of this directory in profile codex -> profile codex2
+ccgp send zai claude       # the 10 latest sessions of this directory in the zai profile -> your Claude Code
+ccgp send claude zai       # this directory's latest sessions in your Claude Code -> the zai profile
 ccgp import zai            # alias of: ccgp send claude zai
 ccgp export zai 3          # alias of: ccgp send zai claude
 ```
 
 `from` and `to` are a configured profile name or the word `claude` (your own Claude Code directory); they must
-differ. `count` defaults to 10, must be a positive integer, and is taken over **all projects**, newest first (by the transcript's modification
-time). Afterwards run `claude` (or `ccgp <profile>`) in the same working directory and use `/resume`:
-Claude Code lists sessions per project directory.
+differ. Only sessions of the current working directory are copied (Claude Code keeps them in
+`projects/<directory name>/`, where every character outside `A-Za-z0-9` of the path becomes `-`, so
+`D:devmyproject` is `D--dev-myproject`); other directories and subdirectories are not touched. `count` defaults to 10,
+must be a positive integer and counts that directory's sessions, newest first (by the transcript's modification
+time). Afterwards run `ccgp <profile> -c` (continue the latest) or `ccgp <profile>` and `/resume` in the same
+directory: Claude Code lists sessions per project directory.
+
+Every session is announced as `[k/N] project/id  size ...`; one that takes longer than a couple of seconds also
+prints a percentage line every two seconds, so gigabyte transcripts show that they are moving.
 
 ## What is copied
 

@@ -22,8 +22,9 @@ var errDiverged = errors.New("sessions: destination differs from the source")
 // syncFile writes src to dst under the append-only rule described at Copy,
 // streaming: nothing is held in memory but one chunk. jsonl files are cut to
 // their last complete line (the source may be a live session) and optionally
-// stripped of thinking blocks.
-func syncFile(src, dst string, jsonl bool, opt Options) (Status, int, error) {
+// stripped of thinking blocks. prog, when set, receives the bytes of src
+// consumed so far (throttled by opt.ProgressEvery).
+func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (Status, int, error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return 0, 0, err
@@ -46,7 +47,14 @@ func syncFile(src, dst string, jsonl bool, opt Options) (Status, int, error) {
 	}
 	defer p.close()
 
-	in := io.NewSectionReader(f, 0, size)
+	var in io.Reader = io.NewSectionReader(f, 0, size)
+	if prog != nil {
+		every := opt.ProgressEvery
+		if every <= 0 {
+			every = defaultProgressEvery
+		}
+		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
+	}
 	removed := 0
 	if jsonl && opt.StripThinking {
 		bw := bufio.NewWriterSize(p, copyBuf)
@@ -64,6 +72,26 @@ func syncFile(src, dst string, jsonl bool, opt Options) (Status, int, error) {
 	}
 	st, err := p.finish()
 	return st, removed, err
+}
+
+// progressReader reports how much of a stream was read, at most once per interval.
+type progressReader struct {
+	r     io.Reader
+	total int64
+	done  int64
+	every time.Duration
+	last  time.Time
+	fn    func(done, total int64)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	if now := time.Now(); n > 0 && now.Sub(p.last) >= p.every {
+		p.last = now
+		p.fn(p.done, p.total)
+	}
+	return n, err
 }
 
 // completeLen returns the length of the file's prefix that ends at its last

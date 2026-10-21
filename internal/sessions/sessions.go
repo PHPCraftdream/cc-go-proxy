@@ -52,10 +52,23 @@ type Options struct {
 	// StripThinking removes thinking blocks, whose signatures are only valid
 	// for the provider that produced them.
 	StripThinking bool
+	// Project, when set, limits the copy to that projects/ folder (the sessions
+	// of one working directory); the count then applies within it.
+	Project string
+	// OnStart, when set, is called before each session; i counts from 1 up to n.
+	OnStart func(i, n int, s Session)
+	// OnProgress, when set, reports how much of a transcript is processed while
+	// it is copied, at most once per ProgressEvery. Short transcripts finish
+	// before the first report.
+	OnProgress func(s Session, done, total int64)
+	// ProgressEvery spaces OnProgress calls; 0 means 2 seconds.
+	ProgressEvery time.Duration
 	// OnResult, when set, is called as soon as each session is done, so a
 	// caller can report progress on large transcripts.
 	OnResult func(Result)
 }
+
+const defaultProgressEvery = 2 * time.Second
 
 // Result is the outcome for one session.
 type Result struct {
@@ -126,11 +139,17 @@ func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	if opt.Project != "" {
+		list = inProject(list, opt.Project)
+	}
 	if len(list) > count {
 		list = list[:count]
 	}
 	results := make([]Result, 0, len(list))
-	for _, s := range list {
+	for i, s := range list {
+		if opt.OnStart != nil {
+			opt.OnStart(i+1, len(list), s)
+		}
 		res := copySession(dstDir, s, opt)
 		if opt.OnResult != nil {
 			opt.OnResult(res)
@@ -140,10 +159,25 @@ func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 	return results, nil
 }
 
+// inProject keeps the sessions of one project folder, in order.
+func inProject(list []Session, project string) []Session {
+	var out []Session
+	for _, s := range list {
+		if strings.EqualFold(s.Project, project) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func copySession(dstDir string, s Session, opt Options) Result {
 	res := Result{Session: s}
 	dst := filepath.Join(dstDir, projectsDir, s.Project, s.ID+".jsonl")
-	st, removed, err := syncFile(s.Path, dst, true, opt)
+	var prog func(done, total int64)
+	if opt.OnProgress != nil {
+		prog = func(done, total int64) { opt.OnProgress(s, done, total) }
+	}
+	st, removed, err := syncFile(s.Path, dst, true, opt, prog)
 	if err != nil {
 		res.Err = err
 		return res
@@ -170,7 +204,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		if err != nil {
 			return err
 		}
-		st, n, err := syncFile(p, filepath.Join(dstSide, rel), strings.HasSuffix(p, ".jsonl"), opt)
+		st, n, err := syncFile(p, filepath.Join(dstSide, rel), strings.HasSuffix(p, ".jsonl"), opt, nil)
 		if err != nil {
 			return err
 		}

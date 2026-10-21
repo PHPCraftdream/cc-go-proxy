@@ -4,7 +4,7 @@
 //	ccgp serve [-d] [-s]              run server in foreground
 //	ccgp start|stop|status            manage background server
 //	ccgp login <provider> [--device] (re)authenticate a provider
-//	ccgp send <from> <to> [n]         copy the n latest sessions between "claude" and profiles
+//	ccgp send <from> <to> [n]         copy the n latest sessions of the current directory between "claude" and profiles
 //	ccgp import|export <profile> [n]  aliases of send: claude -> profile / profile -> claude
 //	ccgp profile add|list|rm          manage profiles (and their providers) in config.ktav
 package main
@@ -258,7 +258,7 @@ Usage:
   ccgp status                      Show background server status
   ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)
   ccgp models [apply] [-v] [profile] Show (or write into config) the newest Codex models per Claude tier
-  ccgp send <from> <to> [count]    Copy the latest sessions (default 10) between "claude" and a profile
+  ccgp send <from> <to> [count]    Copy the latest sessions (default 10) of the current directory between "claude" and a profile
   ccgp import <profile> [count]    Same as: ccgp send claude <profile>
   ccgp export <profile> [count]    Same as: ccgp send <profile> claude
   ccgp profile add [name] --like <profile>      New profile with its OWN login (e.g. a second Codex account: ccgp codex2)

@@ -9,6 +9,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Changed
+- `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
+  directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a
+  percentage line every two seconds on large transcripts.
+
 ### Fixed
 - Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
   with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default

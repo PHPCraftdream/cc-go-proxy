@@ -273,3 +273,98 @@ func TestCopyEmptyTranscript(t *testing.T) {
 		t.Errorf("empty transcript not created: %v", err)
 	}
 }
+
+func TestCopyProjectOnly(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	p := filepath.Join(src, "projects")
+	put(t, filepath.Join(p, "D--dev-here", "1.jsonl"), "one\n", t0)
+	put(t, filepath.Join(p, "D--dev-here", "2.jsonl"), "two\n", t0.Add(time.Hour))
+	put(t, filepath.Join(p, "D--dev-here", "3.jsonl"), "three\n", t0.Add(2*time.Hour))
+	put(t, filepath.Join(p, "D--dev-other", "9.jsonl"), "other\n", t0.Add(5*time.Hour)) // newer, but another project
+
+	res, err := Copy(src, dst, 2, Options{Project: "d--dev-here"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 2 || res[0].Session.ID != "3" || res[1].Session.ID != "2" {
+		t.Fatalf("copied %+v, want the 2 newest sessions of D--dev-here", res)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "projects", "D--dev-other")); err == nil {
+		t.Error("another project was copied")
+	}
+
+	res, err = Copy(src, dst, 5, Options{Project: "D--dev-missing"})
+	if err != nil || len(res) != 0 {
+		t.Errorf("unknown project: %+v, %v; want nothing", res, err)
+	}
+}
+
+func TestCopyReportsStartAndProgress(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	big := strings.Repeat(strings.Repeat("x", 999)+"\n", 3500) // several I/O chunks
+	put(t, filepath.Join(src, "projects", "a", "1.jsonl"), big, t0)
+	put(t, filepath.Join(src, "projects", "a", "2.jsonl"), big, t0.Add(time.Hour))
+
+	var starts []string
+	var last, calls, total int64
+	opt := Options{
+		ProgressEvery: time.Nanosecond, // report on every chunk
+		OnStart: func(i, n int, s Session) {
+			starts = append(starts, s.ID+":"+string(rune('0'+i))+"/"+string(rune('0'+n)))
+		},
+		OnProgress: func(_ Session, done, tot int64) {
+			if done < last && done != 0 && last != total { // restarts with the next session
+				t.Errorf("progress went back: %d after %d", done, last)
+			}
+			last, total = done, tot
+			calls++
+		},
+	}
+	if _, err := Copy(src, dst, 2, opt); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(starts, " ") != "2:1/2 1:2/2" {
+		t.Errorf("starts = %v", starts)
+	}
+	if calls == 0 || last != total || total != int64(len(big)) {
+		t.Errorf("progress calls=%d last=%d total=%d, want the final report to reach %d", calls, last, total, len(big))
+	}
+}
+
+func TestProgressIsThrottled(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	big := strings.Repeat(strings.Repeat("x", 999)+"\n", 3500)
+	put(t, filepath.Join(src, "projects", "a", "1.jsonl"), big, t0)
+
+	calls := 0
+	opt := Options{ProgressEvery: time.Hour, OnProgress: func(Session, int64, int64) { calls++ }}
+	if _, err := Copy(src, dst, 1, opt); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Errorf("OnProgress called %d times within the interval, want 0", calls)
+	}
+}
+
+func TestProgressWhileStrippingThinking(t *testing.T) {
+	src, dst := t.TempDir(), t.TempDir()
+	line := `{"type":"assistant","uuid":"u","message":{"role":"assistant","content":[{"type":"text","text":"` + strings.Repeat("y", 900) + `"}]}}` + "\n"
+	think := `{"type":"assistant","uuid":"t","parentUuid":"u","message":{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":"sig"}]}}` + "\n"
+	put(t, filepath.Join(src, "projects", "a", "1.jsonl"), strings.Repeat(line, 3500)+think, t0)
+
+	var last, total int64
+	opt := Options{StripThinking: true, ProgressEvery: time.Nanosecond, OnProgress: func(_ Session, done, tot int64) { last, total = done, tot }}
+	res, err := Copy(src, dst, 1, opt)
+	if err != nil || len(res) != 1 || res[0].Err != nil {
+		t.Fatalf("Copy = %+v, %v", res, err)
+	}
+	if res[0].Removed != 1 {
+		t.Errorf("removed %d thinking blocks, want 1", res[0].Removed)
+	}
+	if total == 0 || last != total {
+		t.Errorf("progress ended at %d of %d, want the whole transcript", last, total)
+	}
+	if got := read(t, filepath.Join(dst, "projects", "a", "1.jsonl")); strings.Contains(got, `"thinking"`) {
+		t.Error("thinking block survived")
+	}
+}

@@ -113,3 +113,42 @@ func TestCopySessionsEmptyAndFailure(t *testing.T) {
 		t.Errorf("err=%v out=%q", err, out.String())
 	}
 }
+
+func TestProjectDirName(t *testing.T) {
+	for in, want := range map[string]string{
+		`D:\dev\ktav-lang`:             "D--dev-ktav-lang",
+		`C:\Users\Computer\Desktop\pc`: "C--Users-Computer-Desktop-pc",
+		"/home/me/my_proj.v2":          "-home-me-my-proj-v2",
+		`D:\dev\проект`:                "D--dev-------",
+	} {
+		if got := projectDirName(in); got != want {
+			t.Errorf("projectDirName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestCopySessionsOnlyTheGivenDirectory(t *testing.T) {
+	src, dst := endpoint{dir: t.TempDir(), label: "claude"}, endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
+	writeSession(t, src.dir, "D--dev-here", "aaaaaaaa1", `{"type":"user","uuid":"u"}`+"\n")
+	writeSession(t, src.dir, "D--dev-other", "bbbbbbbb2", `{"type":"user","uuid":"v"}`+"\n")
+
+	var out bytes.Buffer
+	if err := copySessions(&out, "send claude -> codex", src, dst, 10, sessions.Options{Project: "D--dev-here"}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{"directory: D--dev-here", "[1/1] D--dev-here/aaaaaaaa", "1 written", "next: ccgp codex"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "D--dev-other") {
+		t.Errorf("another directory was copied:\n%s", got)
+	}
+
+	out.Reset()
+	if err := copySessions(&out, "send claude -> codex", src, dst, 10, sessions.Options{Project: "D--dev-none"}); err != nil ||
+		!strings.Contains(out.String(), "no sessions found in") || !strings.Contains(out.String(), "D--dev-none") {
+		t.Errorf("empty directory: %v %q", err, out.String())
+	}
+}
