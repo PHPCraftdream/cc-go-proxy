@@ -1,0 +1,19 @@
+ccgp (cc-go-proxy)
+Copyright (c) 2026 PHPCraftdream and ccgp contributors
+
+ccgp is licensed under either of
+
+  * the Apache License, Version 2.0 (LICENSE-APACHE), or
+  * the MIT license (LICENSE-MIT),
+
+at your option.
+
+This work is derived from claude-code-proxy by nielspeter
+(https://github.com/nielspeter/claude-code-proxy),
+Copyright (c) 2025 Claude Code Proxy Contributors, which is licensed under the
+MIT license. The portions that originate there remain available under the MIT
+license (LICENSE-MIT) with the original copyright notice preserved.
+
+Third-party libraries linked into the ccgp binary are listed, with their
+licenses, in THIRD_PARTY_LICENSES.md, which is shipped inside every release
+archive and npm package.
