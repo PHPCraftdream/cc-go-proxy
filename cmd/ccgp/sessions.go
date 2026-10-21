@@ -65,10 +65,10 @@ func copySessions(w io.Writer, kind, profile, src, dst string, count int, opt se
 		return err
 	}
 	if len(results) == 0 {
-		fmt.Fprintf(w, "no sessions found in %s\n", filepath.Join(src, "projects"))
+		_, _ = fmt.Fprintf(w, "no sessions found in %s\n", filepath.Join(src, "projects"))
 		return nil
 	}
-	fmt.Fprintf(w, "%s: %s -> %s\n", kind, src, dst)
+	_, _ = fmt.Fprintf(w, "%s: %s -> %s\n", kind, src, dst)
 
 	var done, same, skipped, failed, stripped int
 	for _, r := range results {
@@ -88,15 +88,15 @@ func copySessions(w io.Writer, kind, profile, src, dst string, count int, opt se
 			skipped++
 			line += "  (" + skipReason(r.Status) + ")"
 		}
-		fmt.Fprintln(w, line)
+		_, _ = fmt.Fprintln(w, line)
 	}
 
-	fmt.Fprintf(w, "%d written, %d unchanged, %d skipped, %d failed\n", done, same, skipped, failed)
+	_, _ = fmt.Fprintf(w, "%d written, %d unchanged, %d skipped, %d failed\n", done, same, skipped, failed)
 	if opt.StripThinking && stripped > 0 {
-		fmt.Fprintf(w, "removed %d thinking blocks (their signatures are only valid for the provider that wrote them)\n", stripped)
+		_, _ = fmt.Fprintf(w, "removed %d thinking blocks (their signatures are only valid for the provider that wrote them)\n", stripped)
 	}
 	if kind == "import" && done > 0 {
-		fmt.Fprintf(w, "next: ccgp %s, then /resume (sessions are listed per project directory)\n", profile)
+		_, _ = fmt.Fprintf(w, "next: ccgp %s, then /resume (sessions are listed per project directory)\n", profile)
 	}
 	if failed > 0 {
 		return exitError(1)
