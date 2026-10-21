@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as documented
+labels: [ bug ]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste tokens, API keys or `creds` files. Request logs mask profile tokens, but check before posting.
+        Security problems go to a private advisory, see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: ccgp version
+      description: Output of `ccgp version`, and how you installed it (npm, release archive, go install).
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [ Windows, Linux, macOS ]
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider type
+      options: [ codex, codex_api, anthropic_compat, not provider related ]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The command you ran and the relevant part of `config.ktav` (no secrets).
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log
+      description: The relevant lines of the server log (`ccgp status` shows its path).
+      render: text

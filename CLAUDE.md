@@ -35,6 +35,16 @@ Guidance for Claude Code when working in this repository.
   files under `projects/` (append-only rule in `sessions.syncFile`; never overwrites diverged data).
   Credentials, `history.jsonl`, `sessions/` are never copied in either direction.
 
+## Releases and licensing
+
+- Licensed `MIT OR Apache-2.0` (`LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`); the fork origin
+  nielspeter/claude-code-proxy stays credited. Dependencies must be permissive (allowlist in
+  `.github/workflows/licenses.yml`).
+- A release is a tag `vX.Y.Z` on main; `.github/workflows/release.yml` builds, publishes and
+  sets the version via ldflags. Do not tag or bump versions unless the user asks. Process and npm
+  token / Trusted Publishing setup: `docs/releasing.md`.
+- Keep the README's first line (fork notice) and `CHANGELOG.md` `## [Unreleased]` up to date.
+
 ## Commands
 
 ```sh

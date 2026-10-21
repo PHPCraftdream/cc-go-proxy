@@ -1,216 +1,144 @@
-# ccgp — Claude Code bridge for OpenAI and ChatGPT Codex
+> **ccgp is a fork of [nielspeter/claude-code-proxy](https://github.com/nielspeter/claude-code-proxy)** (MIT). Upstream is a general proxy that puts OpenAI-compatible APIs behind Claude Code; ccgp keeps that translation core and turns it into a headless launcher + proxy for daily use: `ccgp <profile>` runs Claude Code on your ChatGPT Codex subscription, an OpenAI-compatible API or z.ai GLM, with token-protected URLs, per-profile model mapping and context windows, and Claude credentials kept out of the session. [How it differs](#how-ccgp-differs-from-upstream)
 
-`ccgp` runs Claude Code against non-Anthropic backends:
+# ccgp
 
-- **OpenAI-compatible** Chat Completions (OpenAI, OpenRouter, Ollama, …) with an API key;
-- **ChatGPT Codex** (subscription) via OAuth (browser sign-in or device code), with refresh-token rotation.
+[![CI](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/ci.yml)
+[![Licenses](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/licenses.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/licenses.yml)
+[![Release](https://img.shields.io/github/v/release/PHPCraftdream/cc-go-proxy?display_name=tag&sort=semver)](https://github.com/PHPCraftdream/cc-go-proxy/releases)
+[![npm](https://img.shields.io/npm/v/ccgp)](https://www.npmjs.com/package/ccgp)
+[![Go version](https://img.shields.io/github/go-mod/go-version/PHPCraftdream/cc-go-proxy)](go.mod)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#install)
+[![Go Report Card](https://goreportcard.com/badge/github.com/PHPCraftdream/cc-go-proxy)](https://goreportcard.com/report/github.com/PHPCraftdream/cc-go-proxy)
 
-It is a fork of [nielspeter/claude-code-proxy](https://github.com/nielspeter/claude-code-proxy)
-(MIT), reworked for headless use: profiles, Ktav config, per-profile URL tokens,
-background server management.
+Run [Claude Code](https://claude.com/claude-code) on other models. ccgp is one small Go binary: a local proxy that speaks
+Claude's API to Claude Code and the backend's API to the other side, and a launcher that wires the two together.
+
+```sh
+ccgp codex                     # Claude Code on your ChatGPT subscription (Codex)
+ccgp zai                       # Claude Code on z.ai GLM
+ccgp codex -p "explain this"   # headless: everything after the profile goes to claude
+```
+
+## Features
+
+- **Launcher and proxy in one.** `ccgp <profile>` starts the background server if needed, makes sure you are signed in,
+  then runs `claude` through it. No service to install, no env files to juggle.
+- **Backends.** ChatGPT Codex with a subscription (OAuth, refresh-token rotation, browser or device-code sign-in),
+  OpenAI-compatible APIs with a key (OpenAI, OpenRouter, Ollama, …), and Anthropic-compatible endpoints such as z.ai.
+- **Named profiles.** Each profile has its own URL token and its own provider; Claude's `fable` / `opus` / `sonnet` /
+  `haiku` map to the models you choose, with the real context window of each, so compaction fires at the right time.
+- **Locked down.** Every request needs `/call/<token>/…`; the server listens on loopback; secrets are owner-only on disk.
+- **Your Claude credentials stay out.** Each profile runs Claude Code in its own config directory with your agents,
+  skills, commands and plugins copied in, but never an official login or API key.
+- **Sessions travel.** `ccgp import` / `ccgp export` copy your latest sessions between Claude Code and a profile.
+- **Plain Ktav config**, created on first run, hot-reloaded, never rewritten behind your back.
+- **Windows first**, also Linux and macOS; Windows is tested in CI.
+
+## Install
+
+```sh
+npm install -g ccgp                                              # any platform, no Go needed
+go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest  # from source (Go 1.24+)
+```
+
+Or download the archive for your platform from [Releases](https://github.com/PHPCraftdream/cc-go-proxy/releases), unpack it
+and put `ccgp` on your `PATH`. Archives are checksummed and carry build-provenance attestations
+([verify](docs/releasing.md#what-a-release-contains)).
+
+You also need Claude Code (`claude` on `PATH`). On first use ccgp downloads a small native library for the
+[Ktav](https://github.com/ktav-lang/golang) config parser from GitHub Releases (set `KTAV_LIB_PATH` to use a local copy).
 
 ## Quick start
 
-1. Run `ccgp codex` (or any profile/`serve`/`start`/`login`): on first
-   run it creates a default
-   [`config.ktav`](internal/config/config.example.ktav) in
-   `%APPDATA%\cc-go-proxy\` (Linux: `~/.config/cc-go-proxy/`) with a `codex` and a
-   `codex_api` provider/profile. Edit model names to what your account can use.
-2. Run Claude Code through a profile:
+```sh
+ccgp codex
+```
 
-   ```sh
-   ccgp codex                # interactive
-   ccgp codex -p "hello"     # headless; everything after the profile goes to claude
-   ```
+On the first run ccgp:
 
-On first run for a profile `ccgp`:
+1. creates a default [`config.ktav`](internal/config/config.example.ktav) with `codex`, `codex_api` and `zai` profiles
+   (`%APPDATA%\cc-go-proxy\` on Windows, `~/.config/cc-go-proxy/` elsewhere);
+2. starts the proxy in the background (`127.0.0.1:60093`);
+3. prints a sign-in link for Codex (the browser is never opened for you) or asks for an API key;
+4. generates the profile's URL token;
+5. runs `claude` with `ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/<token>`.
 
-1. starts the proxy in the background if it is not running;
-2. ensures provider credentials — prints a sign-in link for `codex`
-   (the browser is never opened automatically), or prompts for an API key;
-3. generates the profile's URL token;
-4. runs `claude` with `ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/<token>`.
+For z.ai: `ccgp login zai` once (asks for your API key), then `ccgp zai`.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `ccgp <profile> [claude args…]` | Ensure server + credentials, run `claude` |
-| `ccgp serve [-d] [-s]` | Run the server in the foreground (`-d` debug bodies, `-s` request log) |
-| `ccgp start` / `stop` / `status` | Manage the background server |
-| `ccgp login <provider> [--device]` | (Re)authenticate a provider. Codex: browser OAuth by default, `--device` for device code |
-| `ccgp import <profile> [count]` | Copy the `count` (default 10) most recently modified sessions from your own Claude Code into the profile |
-| `ccgp export <profile> [count]` | Copy the profile's `count` (default 10) most recent sessions into your own Claude Code |
+| `ccgp <profile> [claude args…]` | Ensure server and credentials, run `claude` through the profile |
+| `ccgp login <provider> [--device]` | (Re)authenticate. Codex: browser OAuth, or `--device` for a device code. Others: API key |
+| `ccgp models [apply] [-v] [profile]` | Show, or write into the config, the newest models per Claude tier |
+| `ccgp import <profile> [count]` | Copy your latest sessions (default 10) into the profile |
+| `ccgp export <profile> [count]` | Copy the profile's latest sessions (default 10) into your Claude Code |
+| `ccgp start` / `stop` / `status` | Manage the background server and show paths and login state |
+| `ccgp serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
+| `ccgp config reset` | Back up the config and write the default one |
+| `ccgp version` | Print the version |
 
-Background server log: `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log`
-(Linux: `~/.cache/cc-go-proxy/logs/ccgp.log`), rotated at 10 MB.
+## How ccgp differs from upstream
 
-## Configuration
-
-See the generated file (template: [`config.example.ktav`](internal/config/config.example.ktav)). Summary:
-
-- `listen.host` / `listen.port` — default `127.0.0.1:60093` (loopback only).
-- `providers[]` — `name`, `type` (`codex` — ChatGPT subscription via OAuth; `codex_api` — API key, pay per token, `openai` is the old name; `anthropic_compat` — an Anthropic-compatible endpoint such as z.ai, forwarded unconverted), `base_url`, optional `api_key_env`, optional `effort_map`.
-- `profiles[]` — `name`, `provider`, ordered `models[]` rules (`match` glob → `model`),
-  `default_model` (legacy; prefer a final `match: *` rule). Each rule can carry `context_window`.
-  Without rules or default, tier names map to `gpt-5` / `gpt-5-mini`.
-
-`config.ktav` is created once and afterwards only read, never rewritten by ccgp (your comments are safe). All machine-managed state — profile tokens, API keys and the rotating OAuth tokens — lives in the separate `creds` directory (`ccgp status` shows both paths). Config edits apply to a running server
-without restart (listen address changes need `ccgp stop`).
-
-## Codex models and context
-
-`ccgp models` reads your account's Codex model catalog and maps Claude tiers to the
-newest releases (read-only preview); `ccgp models apply [profile]` writes the mapping:
-
-| Claude tier | Codex model |
-| --- | --- |
-| Fable | newest `astra` |
-| Opus | newest `sol` |
-| Sonnet | newest `luna` |
-| Haiku | `luna` of the release before the newest one (e.g. `gpt-5.6-luna`) |
-| anything else | the Sonnet model (final `match: *` rule) |
-
-Every rule states its own context window:
-
-```
-models: [
-    {
-        match: *opus*
-        model: gpt-6.1-sol
-        context_window: 872000
-    }
-    ...
-]
-```
-
-It rewrites only the block between the `ccgp:managed-models begin/end <profile>` marker
-lines of a profile (added automatically if missing; the profile's old `default_model`,
-`context_window` and `models` entries are then replaced). The mapping is also refreshed
-after every fresh `ccgp login <codex provider>`.
-
-Windows come from the account catalog (`ccgp models -v` shows every field). The catalog has two
-numbers: `context_window` is only the default of Codex clients, `max_context_window` is the
-largest input the backend takes. For the GPT-6 generation and newer ccgp writes
-`max_context_window` (872000), for earlier releases such as `gpt-5.6-luna` the default
-(272000). A model without any window is written as 272000 and noted.
-
-Claude Code accepts one window per process, so the launcher passes
-`CLAUDE_CODE_AUTO_COMPACT_WINDOW` = the `context_window` of the rule that serves the
-session's **main model** (`--model`, `ANTHROPIC_MODEL`, `model` in settings.json, default
-`sonnet`). A smaller window on another rule (the Haiku model's 272000) does not shrink the
-main session but is not covered either. A profile-level `context_window: N` overrides this,
-`compact_percent: 70` compacts earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), and
-variables you set yourself are never overridden.
-
-## z.ai (GLM)
-
-```
-ccgp login zai     # asks for your z.ai API key once (hidden input), saves it owner-only
-ccgp zai           # runs Claude Code through z.ai; extra arguments go to claude
-```
-
-The `zai` provider (type `anthropic_compat`) talks to z.ai's Anthropic-compatible endpoint
-`https://api.z.ai/api/anthropic`: requests are forwarded unconverted, only the model is
-mapped and the model identity in the system prompt is corrected. Built-in mapping
-(`ccgp models apply zai` rewrites it; saving the key does it automatically):
-
-| Claude tier | z.ai model | context |
+| | [claude-code-proxy](https://github.com/nielspeter/claude-code-proxy) (upstream) | ccgp |
 | --- | --- | --- |
-| Fable | `glm-5.3` | 1M |
-| Opus, Sonnet, Haiku, anything else | `glm-5.3-flash` | 1M |
+| Shape | A proxy you configure with env vars and point Claude Code at | A launcher + proxy: `ccgp <profile>` does the whole run |
+| Backends | OpenAI-compatible Chat Completions (OpenRouter, OpenAI, Ollama) | Those, plus ChatGPT Codex via subscription OAuth (Responses API) and Anthropic-compatible endpoints (z.ai) |
+| Routing and access | One backend (`OPENAI_BASE_URL`) per proxy | Several providers; named profiles, each with its own URL token and its own provider |
+| Config | `.env` and environment | Ktav `providers[]` / `profiles[]`, per-rule model mapping, generated mappings (`ccgp models`), hot reload |
+| Context | — | Per-model context windows; compaction window set for the session's main model |
+| Claude credentials | Not addressed | Never reach a ccgp session: isolated config directory per profile |
+| Sessions | — | `ccgp import` / `export` |
+| Secrets | `.env` | Separate owner-only credentials directory; OAuth refresh tokens rotate safely |
+| Platforms | Builds for macOS, Linux and Windows | Windows first (owner-only ACLs, detached background process, tested in CI), also Linux and macOS |
+| Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, npm, `go install` |
 
-z.ai accepts only three effort levels, so Claude Code's five are converted (the provider's
-`effort_map`): `low` → `low`, `medium` → `high`, `high` / `xhigh` / `max` → `max`. Any
-provider of type `anthropic_compat` can set its own `effort_map`.
+The Anthropic ↔ OpenAI Chat Completions translation, streaming and adaptive per-model capability detection are
+upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg and contributors.
 
-Endpoint and model data come from [docs.z.ai](https://docs.z.ai/devpack/tool/claude).
-`ccgp config reset` backs up your config and writes the current default one.
+## Documentation
 
-## Official credentials never reach a ccgp session
+| | |
+| --- | --- |
+| [Configuration](docs/configuration.md) | Config file, providers, profiles, model rules, context windows |
+| [Providers](docs/providers.md) | Codex, API keys, z.ai: sign-in, model mapping, effort levels |
+| [Sessions](docs/sessions.md) | `ccgp import` / `export` |
+| [Security](docs/security.md) | Token URLs, secrets at rest, why official credentials never reach a session |
+| [Architecture](docs/architecture.md) | Layout, request flow, invariants |
+| [Releasing](docs/releasing.md) | How releases, npm (token and Trusted Publishing) and license checks work |
+| [Changelog](CHANGELOG.md) | What changed |
 
-`ccgp <profile>` runs `claude` with its own config directory,
-`%APPDATA%\cc-go-proxy\claude\<profile>` (`CLAUDE_CONFIG_DIR`), so your claude.ai login
-and Anthropic API keys are not available to it:
+## Terms and disclaimer
 
-- no `.credentials.json` there; one left behind (e.g. by `/login`) is deleted at the next launch;
-- parent environment variables that select an official endpoint or credential
-  (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
-  `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK/VERTEX/FOUNDRY`) are dropped;
-- `settings.json` is mirrored without `apiKeyHelper`, `forceLogin*` and those variables in `env`;
-- `.claude.json` is seeded once with onboarding state, theme and MCP servers only (no account data).
-
-To keep working conditions familiar, everything except credentials is copied from your own
-Claude Code config dir at every launch, one way (your own dir is only read here; the only
-command that writes into it is `ccgp export`, see below):
-
-- `CLAUDE.md`, `settings.json` and `keybindings.json` are overwritten from the source;
-- `agents`, `commands`, `skills`, `output-styles` and `plugins` are mirrored incrementally
-  (only changed files are copied; files you delete at the source are removed from the copy;
-  files created inside the isolated dir are kept; credential files are never copied).
-  Absolute paths in `plugins/*.json` are rewritten to point at the copy.
-
-History, sessions and projects stay separate; `ccgp import` / `ccgp export` move chosen sessions across.
-
-## Moving sessions: `import` and `export`
-
-```
-ccgp import zai        # the 10 latest sessions of your Claude Code -> the zai profile
-ccgp export zai 3      # the 3 latest sessions of the zai profile -> your Claude Code
-```
-
-The count is taken over all projects, newest first (by the transcript's modification time).
-Afterwards run `claude` (or `ccgp <profile>`) in the same working directory and use `/resume`:
-Claude Code lists sessions per project directory.
-
-- Copied: `projects/<project>/<id>.jsonl` and the `<id>/` folder next to it (tool results, subagent
-  transcripts), with the original modification time. Nothing else crosses over: no credentials, no
-  prompt history, no `file-history` (so `/rewind` is not available for copied sessions).
-- Transcripts only grow, so an existing copy is extended when the source has more, left unchanged
-  when identical, and never overwritten otherwise (`ahead`: the destination has more, `diverged`:
-  both sides changed). You can run the same command again as often as you like.
-- A session that is still being written is copied up to its last complete line.
-- `export` removes `thinking` blocks: their signatures are valid only for the provider that wrote
-  them (Codex: `ccgp1:…`, z.ai: its own), and the official API rejects foreign ones. Lines that become
-  empty are dropped and the `parentUuid` chain is reconnected; every other line is copied byte for byte.
-  `import` keeps everything (Codex ignores foreign signatures, z.ai accepts them).
-- `export` writes into your own Claude Code directory, under `projects/` only, and only adds or extends files.
-
-## Security model
-
-- Every request must carry a profile token in the path: `/call/<token>/v1/messages`.
-  Unknown tokens get `404`. Only `/health` is open. Tokens are masked in logs.
-- No CORS: browsers cannot call the proxy.
-- Secrets live in `<config dir>/cc-go-proxy/creds/`, written atomically and readable
-  only by the current user (Windows: explicit owner-only DACL; Unix: `0600`).
-- The Codex OAuth session is separate from the Codex CLI's own login, so the two
-  never invalidate each other's rotating refresh tokens.
-
-## Codex backend notes
-
-Requests are translated from Anthropic Messages to the Responses API
-(`https://chatgpt.com/backend-api/codex/responses`): text, images, tools,
-tool results and reasoning. Reasoning `encrypted_content` is carried in
-thinking-block signatures (`ccgp1:` prefix) so it round-trips across turns.
-Using a ChatGPT subscription through a third-party client is subject to
-OpenAI's terms; that decision is yours.
-
-## Env-only mode
-
-Without `config.ktav`, one implicit profile `default` is built from env:
-`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `PROXY_TOKEN` (min 32 chars),
-`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `HOST`, `PORT`.
+ccgp is an independent project, not affiliated with or endorsed by Anthropic, OpenAI or z.ai; product names belong to
+their owners. The Codex sign-in uses the private backend of OpenAI's own clients, and using a ChatGPT subscription
+through a third-party client is subject to OpenAI's terms and may stop working at any time. ccgp never reads, forwards
+or stores a Claude subscription's credentials. You are responsible for complying with the terms of every service you
+connect. The software is provided as is, without warranty (see the licenses).
 
 ## Development
 
 ```sh
-make build      # ./ccgp
-make test
+make build        # ./ccgp
+go vet ./...
+go test ./...
+node --test "scripts/npm/*.test.mjs"   # npm packaging
 ```
 
-Ktav parsing uses [`ktav-lang/golang`](https://github.com/ktav-lang/golang), which
-downloads its native library from GitHub Releases on first use (or set `KTAV_LIB_PATH`).
+CI runs tests on Linux and Windows, golangci-lint, a license allowlist, and a type-check of all six release targets.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Parts derived from [nielspeter/claude-code-proxy](https://github.com/nielspeter/claude-code-proxy)
+remain available under the MIT license with their copyright notice ([NOTICE](NOTICE)).
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in ccgp by you, as defined
+in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
