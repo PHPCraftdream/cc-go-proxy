@@ -1,15 +1,19 @@
-# Moving sessions between Claude Code and a profile
+# Moving sessions between profiles and Claude Code
 
-A profile runs Claude Code with its own config directory, so its sessions are separate from yours.
-Two commands move chosen sessions across:
+A profile runs Claude Code with its own config directory, so its sessions are separate from yours and from
+other profiles'. `ccgp send` moves chosen sessions across; `import` and `export` are aliases:
 
 ```sh
-ccgp import zai        # the 10 latest sessions of your Claude Code -> the zai profile
-ccgp export zai 3      # the 3 latest sessions of the zai profile -> your Claude Code
+ccgp send codex codex2 3   # the 3 latest sessions of profile codex -> profile codex2
+ccgp send zai claude       # the 10 latest sessions of the zai profile -> your Claude Code
+ccgp send claude zai       # your latest sessions -> the zai profile
+ccgp import zai            # alias of: ccgp send claude zai
+ccgp export zai 3          # alias of: ccgp send zai claude
 ```
 
-`count` defaults to 10 and is taken over **all projects**, newest first (by the transcript's modification time).
-Afterwards run `claude` (or `ccgp <profile>`) in the same working directory and use `/resume`:
+`from` and `to` are a configured profile name or the word `claude` (your own Claude Code directory); they must
+differ. `count` defaults to 10, must be a positive integer, and is taken over **all projects**, newest first (by the transcript's modification
+time). Afterwards run `claude` (or `ccgp <profile>`) in the same working directory and use `/resume`:
 Claude Code lists sessions per project directory.
 
 ## What is copied
@@ -34,15 +38,18 @@ Nothing is ever overwritten. A session still being written is copied up to its l
 
 ## Thinking blocks
 
-Thinking-block signatures are valid only for the provider that produced them (Codex: `ccgp1:…`, z.ai: its
-own format), and the official API rejects foreign ones. Therefore:
+Thinking-block signatures are valid only for the provider/account that produced them (a Codex `ccgp1:…`
+signature carries encrypted reasoning another account may not decrypt), and the official API rejects foreign
+ones. Therefore thinking and `redacted_thinking` blocks are removed whenever the source and destination
+**providers** differ — `claude` counts as a provider of its own — and kept only between two profiles on the
+same provider. This applies to `import` too, which used to keep the blocks.
 
-- **`export`** removes `thinking` and `redacted_thinking` blocks. Claude Code writes one line per content block,
-  chained by `parentUuid`; a line left empty is dropped and its children are re-attached to its parent, so the
-  conversation stays connected. Every other line is copied byte for byte.
-- **`import`** keeps everything: Codex ignores signatures that are not its own, z.ai accepts them.
+Claude Code writes one line per content block, chained by `parentUuid`; a line left empty is dropped and its
+children are re-attached to its parent, so the conversation stays connected. Every other line is copied byte
+for byte.
 
 ## Boundaries
 
-`import` only reads your Claude Code directory. `export` is the one command that writes into it, under
-`projects/` only, and only adds or extends files. The directory is `$CLAUDE_CONFIG_DIR` if set, else `~/.claude`.
+`claude` as the **source** only reads your Claude Code directory. `claude` as the **destination** is the only
+way ccgp writes into it, under `projects/` only, and only adds or extends files. The directory is
+`$CLAUDE_CONFIG_DIR` if set, else `~/.claude`.

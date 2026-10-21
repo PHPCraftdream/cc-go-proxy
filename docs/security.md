@@ -16,7 +16,9 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - Everything secret lives in `<config dir>/cc-go-proxy/creds/`: profile tokens, API keys, rotating OAuth
   tokens. Files are written atomically and are readable only by the current user (Windows: an explicit
   owner-only DACL; Unix: mode `0600`).
-- `config.ktav` holds no secrets and is never rewritten by ccgp, apart from the marked model-mapping blocks.
+- `config.ktav` holds no secrets. It is written only on your command (`ccgp profile add` / `rm`,
+  `ccgp models apply`, `ccgp config reset`); the profile commands validate the edited text with the real loader
+  and keep a `config.ktav.bak-<timestamp>` backup first.
 - A rotated OAuth refresh token is persisted **before** it is used.
 
 ## Official Claude credentials never reach a ccgp session
@@ -43,8 +45,9 @@ directory at every launch, one way:
   directory are kept, credential files are never copied. Absolute paths in `plugins/*.json` are rewritten to
   point at the copy. Links and junctions are never followed, so a session cannot write into your own directory.
 
-History, sessions and projects stay separate; move chosen ones with [`ccgp import` / `export`](sessions.md).
-The only command that writes into your own Claude Code directory is `ccgp export`, under `projects/`.
+History, sessions and projects stay separate; move chosen ones with [`ccgp send`](sessions.md).
+The only way ccgp writes into your own Claude Code directory is `ccgp send ... claude` (or its alias
+`ccgp export`), under `projects/`.
 
 ## Third-party terms
 

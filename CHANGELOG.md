@@ -14,11 +14,21 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 First release of ccgp as an independent project.
 
 ### Added
+- `ccgp profile add` / `list` / `rm`: several logins side by side. `add --like` clones a profile with its own
+  provider (a second ChatGPT account), `--provider` adds a profile to an existing login, `--type` wires up a
+  new backend; `list` shows profiles, providers, login state and Claude dirs; `rm` removes a profile and its
+  provider when unused (`--purge` also deletes the isolated Claude dir and credentials).
+- `ccgp send <from> <to> [count]`: copy the latest sessions between profiles and `claude`; `import` / `export`
+  are aliases. Thinking blocks are now stripped whenever the two sides belong to different providers (including
+  `import`, which used to keep them), since their signatures are only valid for the provider that wrote them.
+- Safe config editing: `ccgp profile add` / `rm` edit `config.ktav` surgically (comments, key order and line
+  endings stay), validate the result with the real loader before replacing the file, and keep a
+  `config.ktav.bak-<timestamp>` backup whose name is never overwritten.
 - `ccgp <profile>` launcher: starts the background server, makes sure credentials exist, runs Claude Code through
   the profile. Named profiles, each with its own URL token and its own provider.
 - Token-in-URL access: every model request is `/call/<token>/...`; unknown tokens get `404`.
-- Ktav configuration with `providers[]` and `profiles[]`, created on first run, hot-reloaded, never rewritten
-  (except marked model-mapping blocks). Secrets live in a separate owner-only `creds` directory.
+- Ktav configuration with `providers[]` and `profiles[]`, created on first run, hot-reloaded, changed only
+  by explicit commands. Secrets live in a separate owner-only `creds` directory.
 - `codex` provider: ChatGPT subscription through OAuth (browser PKCE by default, device code with `--device`),
   refresh-token rotation, Anthropic Messages translated to the Responses API with reasoning round-trip.
 - `codex_api` provider (OpenAI-compatible API key) and `anthropic_compat` provider (unconverted passthrough, used for

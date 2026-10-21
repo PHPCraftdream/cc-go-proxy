@@ -57,6 +57,16 @@ A model with no window at all is written as 272000 and noted.
 > ChatGPT subscription through a third-party client is subject to OpenAI's terms and may stop working
 > or be restricted at any time. That decision is yours.
 
+## Several accounts
+
+`ccgp profile add codex2 --like codex` creates a second `codex`-type provider (its own login, `oauth-codex2.json`)
+and a profile named `codex2`; `ccgp codex2` signs in on first start. Use this for separate personal and work
+accounts. Pooling accounts to get around subscription limits is against OpenAI's terms.
+
+The browser sign-in link opens in a browser where another account may already be signed in: use a private window
+or another browser profile, or `ccgp login codex2 --device`. Any provider type can be cloned with `--like`
+(not only `codex`). Details: [configuration.md](configuration.md#creating-and-removing-profiles).
+
 ## `codex_api` — API key
 
 Any OpenAI-compatible Chat Completions endpoint. `base_url` defaults to OpenAI; OpenRouter and

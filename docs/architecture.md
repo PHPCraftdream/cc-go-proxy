@@ -17,8 +17,8 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 
 | Path | Role |
 | --- | --- |
-| `cmd/ccgp` | CLI: `<profile>` launcher, `serve`, `start` / `stop` / `status`, `login`, `models`, `config`, `import` / `export` |
-| `internal/config` | Ktav config (`providers[]`, `profiles[]`), model rules (`ResolveModel`), managed blocks, defaults |
+| `cmd/ccgp` | CLI: `<profile>` launcher, `serve`, `start` / `stop` / `status`, `login`, `models`, `config`, `profile add` / `list` / `rm`, `send`, `import` / `export` |
+| `internal/config` | Ktav config (`providers[]`, `profiles[]`), model rules (`ResolveModel`), managed blocks, surgical profile add/remove text editing with backup and validation, defaults |
 | `internal/creds` | Generated secrets: profile URL tokens, API keys, OAuth file paths; the token index |
 | `internal/securefile` | Atomic owner-only writes (Windows DACL / Unix `0600`) |
 | `internal/oauth` | Codex browser (PKCE) and device-code login, refresh rotation, `Session` |
@@ -26,7 +26,7 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 | `internal/converter` | Messages ↔ Chat Completions for `codex_api` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload, handlers |
 | `internal/claudehome` | The isolated Claude Code config directory and its one-way mirror |
-| `internal/sessions` | `import` / `export`: streaming, append-only session copy and thinking-block removal |
+| `internal/sessions` | `send` (aliases `import` / `export`): streaming, append-only session copy and thinking-block removal |
 | `internal/identity` | Model-identity sentence rewrite |
 | `internal/preset` | Built-in mappings and effort maps for known providers (z.ai) |
 | `internal/daemon` | Detached background process, `/health`-based control |
@@ -34,11 +34,15 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 ## Invariants
 
 - Every model endpoint lives under `/call/:token/`; an unknown token is `404`. Tokens are never logged.
-- `config.ktav` is never written by code, apart from the `ccgp:managed-models` blocks; secrets go through `securefile`.
+- `config.ktav` is written only on the user's command: `ccgp profile add` / `rm` (surgical text edit, validated
+  with the real loader before the file is replaced, `config.ktav.bak-<timestamp>` backup), `ccgp models apply` and
+  the refresh after a fresh `ccgp login` (only the marked block), `ccgp config reset` (default template, old file
+  backed up). Secrets go through `securefile`.
 - A rotated OAuth refresh token is persisted before it is used.
 - Codex backend calls happen before streaming starts, so the upstream HTTP status reaches the client.
-- The user's own Claude Code directory is only read, except `ccgp export` (adds or extends files under
-  `projects/`, append-only). Credentials, prompt history and the process registry are never copied.
+- The user's own Claude Code directory is only read, except `ccgp send ... claude` / `ccgp export` (adds or
+  extends files under `projects/`, append-only). Credentials, prompt history and the process registry are
+  never copied.
 
 ## Dependencies
 
