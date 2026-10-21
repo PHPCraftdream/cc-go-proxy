@@ -76,6 +76,13 @@ func launch(profile string, claudeArgs []string) error {
 	return nil
 }
 
+// The range of CLAUDE_CODE_AUTO_COMPACT_WINDOW that Claude Code takes as is.
+// A backend window below the minimum cannot be protected by compaction.
+const (
+	minCompactWindow = 100_000
+	maxCompactWindow = 1_000_000
+)
+
 // compactEnv tells Claude Code the real context size of the backend model that
 // serves the session's main Claude model (mainModel), so it compacts before
 // that limit instead of at its own model window. Claude Code takes one window
@@ -95,6 +102,8 @@ func compactEnv(env []string, pf *config.Profile, mainModel string) []string {
 		return false
 	}
 	if !has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") {
+		// Claude Code accepts 100k-1M and warns on anything else.
+		window = min(max(window, minCompactWindow), maxCompactWindow)
 		env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.FormatInt(window, 10))
 	}
 	if pf.CompactPercent > 0 && !has("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE") {

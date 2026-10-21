@@ -72,9 +72,27 @@ func TestCompactEnv(t *testing.T) {
 		t.Errorf("nil profile: %q", got)
 	}
 	// Percent alone (window known) only sets the percent when asked.
-	got = compactEnv(nil, &config.Profile{ContextWindow: 100}, "sonnet")
-	if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=100"}) {
+	got = compactEnv(nil, &config.Profile{ContextWindow: 300000}, "sonnet")
+	if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000"}) {
 		t.Errorf("window only: %q", got)
+	}
+}
+
+// Claude Code takes 100k-1M and prints a warning for any other value, so
+// the window is clamped into that range.
+func TestCompactEnvClampsToWhatClaudeCodeAccepts(t *testing.T) {
+	for window, want := range map[int64]string{
+		8_000:     "100000",
+		60_000:    "100000",
+		100_000:   "100000",
+		872_000:   "872000",
+		1_000_000: "1000000",
+		2_000_000: "1000000",
+	} {
+		got := compactEnv(nil, &config.Profile{ContextWindow: window}, "sonnet")
+		if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=" + want}) {
+			t.Errorf("window %d: %q, want %s", window, got, want)
+		}
 	}
 }
 

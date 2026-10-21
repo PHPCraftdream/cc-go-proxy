@@ -1020,9 +1020,10 @@ func callOpenAIInternal(req *models.OpenAIRequest, cfg *config.Config) (*models.
 	return &openaiResp, nil
 }
 
+// handleCountTokens answers with a length-based estimate: neither the Codex
+// backend nor Chat Completions has a counting endpoint.
 func handleCountTokens(c *fiber.Ctx, cfg *config.Config) error {
-	// Simple token counting endpoint
 	return c.JSON(fiber.Map{
-		"input_tokens": 100,
+		"input_tokens": estimateTokens(c.Body()),
 	})
 }

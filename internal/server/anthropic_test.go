@@ -218,3 +218,33 @@ func TestAnthropicCountTokensFallsBackToEstimate(t *testing.T) {
 		t.Errorf("status=%d body=%s err=%v", resp.StatusCode, b, err)
 	}
 }
+
+// Codex and Chat Completions have no counting endpoint: the answer scales with
+// the request instead of being a constant.
+func TestCountTokensEstimatesFromTheRequest(t *testing.T) {
+	app := fiber.New()
+	app.Post("/v1/messages/count_tokens", func(c *fiber.Ctx) error { return handleCountTokens(c, &config.Config{}) })
+
+	count := func(body string) int {
+		t.Helper()
+		resp, err := app.Test(httptest.NewRequest("POST", "/v1/messages/count_tokens", strings.NewReader(body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]int
+		b, _ := io.ReadAll(resp.Body)
+		if err := json.Unmarshal(b, &out); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("status=%d body=%s err=%v", resp.StatusCode, b, err)
+		}
+		return out["input_tokens"]
+	}
+
+	short := `{"messages":[{"role":"user","content":"hi"}]}`
+	long := `{"messages":[{"role":"user","content":"` + strings.Repeat("word ", 4000) + `"}]}`
+	if got := count(short); got != len(short)/4 {
+		t.Errorf("short = %d, want %d", got, len(short)/4)
+	}
+	if got := count(long); got != len(long)/4 || got <= 100 {
+		t.Errorf("long = %d, want %d", got, len(long)/4)
+	}
+}
