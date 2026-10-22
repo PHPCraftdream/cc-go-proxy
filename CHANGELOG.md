@@ -9,6 +9,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Added
+- `install.sh` (Linux, macOS) and `install.ps1` (Windows): install `ccgp` and `ccgpy` from the GitHub release for the OS and
+  CPU, checked against `SHA256SUMS`. CI runs both against the published release.
+
 ## [0.1.1] - 2026-10-22
 
 ### Fixed

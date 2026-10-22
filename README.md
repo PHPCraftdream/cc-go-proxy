@@ -5,7 +5,6 @@
 [![CI](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/ci.yml)
 [![Licenses](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/licenses.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/licenses.yml)
 [![Release](https://img.shields.io/github/v/release/PHPCraftdream/cc-go-proxy?display_name=tag&sort=semver)](https://github.com/PHPCraftdream/cc-go-proxy/releases)
-[![npm](https://img.shields.io/npm/v/cc-go-proxy)](https://www.npmjs.com/package/cc-go-proxy)
 [![Go version](https://img.shields.io/github/go-mod/go-version/PHPCraftdream/cc-go-proxy)](go.mod)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#install)
@@ -42,14 +41,31 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 
 ## Install
 
+Linux and macOS:
+
 ```sh
-npm install -g cc-go-proxy                                       # any platform, no Go needed; commands ccgp, ccgpy
-go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest  # from source (Go 1.26+)
+curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/cc-go-proxy/main/install.sh | sh
 ```
 
-Or download the archive for your platform from [Releases](https://github.com/PHPCraftdream/cc-go-proxy/releases), unpack it
-and put `ccgp` on your `PATH`. Archives are checksummed and carry build-provenance attestations
-([verify](docs/releasing.md#what-a-release-contains)).
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/PHPCraftdream/cc-go-proxy/main/install.ps1 | iex
+```
+
+The scripts download the archive of the latest [release](https://github.com/PHPCraftdream/cc-go-proxy/releases) for your
+OS and CPU, check it against `SHA256SUMS` and install `ccgp` and `ccgpy` (Linux and macOS: `~/.local/bin`; Windows:
+`%LOCALAPPDATA%\Programs\ccgp`, added to your user `PATH`). Set `CCGP_VERSION` to pick a version and
+`CCGP_INSTALL_DIR` to pick the directory; the scripts are short, read them first if you like:
+[install.sh](install.sh), [install.ps1](install.ps1).
+
+Other ways:
+
+- Download the archive for your platform from [Releases](https://github.com/PHPCraftdream/cc-go-proxy/releases), unpack it
+  and put `ccgp` on your `PATH`. Archives are checksummed and carry build-provenance attestations
+  ([verify](docs/releasing.md#what-a-release-contains)).
+- `go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest` (from source, Go 1.26+).
+- npm (`npm install -g cc-go-proxy`, commands `ccgp` and `ccgpy`) is being published and is not available yet.
 
 You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the
 [Ktav](https://github.com/ktav-lang/golang) config parser is pure Go, nothing is downloaded on first use.
