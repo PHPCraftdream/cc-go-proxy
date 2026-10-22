@@ -59,14 +59,6 @@ OS and CPU, check it against `SHA256SUMS` and install `ccgp` and `ccgpy` (Linux 
 `CCGP_INSTALL_DIR` to pick the directory; the scripts are short, read them first if you like:
 [install.sh](install.sh), [install.ps1](install.ps1).
 
-Other ways:
-
-- Download the archive for your platform from [Releases](https://github.com/PHPCraftdream/cc-go-proxy/releases), unpack it
-  and put `ccgp` on your `PATH`. Archives are checksummed and carry build-provenance attestations
-  ([verify](docs/releasing.md#what-a-release-contains)).
-- `go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest` (from source, Go 1.26+).
-- npm (`npm install -g cc-go-proxy`, commands `ccgp` and `ccgpy`) is being published and is not available yet.
-
 You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the
 [Ktav](https://github.com/ktav-lang/golang) config parser is pure Go, nothing is downloaded on first use.
 
@@ -120,7 +112,7 @@ Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 | Sessions | — | `ccgp send` copies the current directory's latest sessions between profiles (and your own Claude Code via `import` / `export`) |
 | Secrets | `.env` | Separate owner-only credentials directory; OAuth refresh tokens rotate safely |
 | Platforms | Builds for macOS, Linux and Windows | Windows first (owner-only ACLs, detached background process, tested in CI), also Linux and macOS |
-| Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, npm, `go install` |
+| Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, install scripts |
 
 The Anthropic ↔ OpenAI Chat Completions translation, streaming and adaptive per-model capability detection are
 upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg and contributors.
