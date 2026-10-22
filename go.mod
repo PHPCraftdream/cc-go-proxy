@@ -1,13 +1,13 @@
 module github.com/PHPCraftdream/cc-go-proxy
 
-go 1.24.0
+go 1.26.0
 
 require (
-	github.com/gofiber/fiber/v2 v2.52.9
+	github.com/gofiber/fiber/v2 v2.52.15
 	github.com/joho/godotenv v1.5.1
 	github.com/ktav-lang/golang v0.8.1
-	golang.org/x/sys v0.37.0
-	golang.org/x/term v0.36.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/term v0.47.0
 )
 
 require (
