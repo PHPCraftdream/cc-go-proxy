@@ -152,3 +152,33 @@ func TestCopySessionsOnlyTheGivenDirectory(t *testing.T) {
 		t.Errorf("empty directory: %v %q", err, out.String())
 	}
 }
+
+func TestHumanSize(t *testing.T) {
+	tests := map[int64]string{
+		0: "0 B", 1023: "1023 B", 1024: "1 KB", 1536: "2 KB",
+		1<<20 - 1: "1024 KB", 1 << 20: "1.0 MB", 800 << 20: "800.0 MB", 1900 << 20: "1900.0 MB",
+	}
+	for n, want := range tests {
+		if got := humanSize(n); got != want {
+			t.Errorf("humanSize(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestShortID(t *testing.T) {
+	if got := shortID("82a9eed1-d61a-48f4-b89b-fa0c60e07356"); got != "82a9eed1" {
+		t.Errorf("long id = %q", got)
+	}
+	if got := shortID("abc"); got != "abc" {
+		t.Errorf("short id = %q", got)
+	}
+}
+
+func TestSkipReasonNamesTheCause(t *testing.T) {
+	if got := skipReason(sessions.Ahead); !strings.Contains(got, "already has more") {
+		t.Errorf("Ahead: %q", got)
+	}
+	if got := skipReason(sessions.Diverged); !strings.Contains(got, "not overwritten") {
+		t.Errorf("Diverged: %q", got)
+	}
+}

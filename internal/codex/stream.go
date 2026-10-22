@@ -57,6 +57,8 @@ type block struct {
 type Translator struct {
 	Model string
 	Emit  Emit
+	// Failed is the message of the error event sent to the client, if any.
+	Failed string
 
 	started bool
 	next    int
@@ -268,6 +270,7 @@ func (t *Translator) fail(msg string) {
 		return
 	}
 	t.done = true
+	t.Failed = msg
 	t.Emit("error", map[string]any{
 		"type":  "error",
 		"error": map[string]any{"type": "api_error", "message": fmt.Sprintf("codex: %s", msg)},

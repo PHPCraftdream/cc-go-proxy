@@ -8,8 +8,10 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -48,10 +50,45 @@ func errorHandler(c *fiber.Ctx, err error) error {
 		if fe.Code == fiber.StatusRequestEntityTooLarge {
 			hint = "; raise listen.max_body_mb"
 		}
-		fmt.Printf("[%s] %d - rejected %s %s: %s (content-length %d%s)\n", time.Now().Format("15:04:05"),
+		_, _ = fmt.Fprintf(logOut, "[%s] %d - rejected %s %s: %s (content-length %d%s)\n", time.Now().Format("15:04:05"),
 			fe.Code, c.Method(), maskToken(c.Path()), fe.Message, c.Request().Header.ContentLength(), hint)
 	}
 	return fiber.DefaultErrorHandler(c, err)
+}
+
+// maxLogErr caps the error text of a log line.
+const maxLogErr = 300
+
+// oneLine flattens s to a single line of at most n bytes.
+func oneLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		s = strings.ToValidUTF8(s[:n], "") + "…"
+	}
+	return s
+}
+
+// accessLog prints one line per request: start time, status, duration, route,
+// and for failures (status >= 400) the error message.
+func accessLog(w io.Writer) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		profile := ""
+		if rc := requestConfig(c); rc != nil {
+			profile = " [" + rc.Profile + "]"
+		}
+		if m, _ := c.Locals(localsModel).(string); m != "" {
+			profile += " " + m
+		}
+		status := c.Response().StatusCode()
+		if m, _ := c.Locals(localsErr).(string); m != "" && status >= 400 {
+			profile += ": " + oneLine(m, maxLogErr)
+		}
+		_, _ = fmt.Fprintf(w, "[%s] %d - %s %s %s%s\n", start.Format("15:04:05"),
+			status, time.Since(start), c.Method(), maskToken(c.Path()), profile)
+		return err
+	}
 }
 
 // sessions caches one OAuth session per codex provider.
@@ -91,20 +128,7 @@ func Start(cfg *config.Config) error {
 
 	// Enable HTTP logging only when simple log mode is enabled
 	if cfg.SimpleLog {
-		app.Use(func(c *fiber.Ctx) error {
-			start := time.Now()
-			err := c.Next()
-			profile := ""
-			if rc := requestConfig(c); rc != nil {
-				profile = " [" + rc.Profile + "]"
-			}
-			if m, _ := c.Locals(localsModel).(string); m != "" {
-				profile += " " + m
-			}
-			fmt.Printf("[%s] %d - %s %s %s%s\n", start.Format("15:04:05"),
-				c.Response().StatusCode(), time.Since(start), c.Method(), maskToken(c.Path()), profile)
-			return err
-		})
+		app.Use(accessLog(os.Stdout))
 	}
 
 	// Health check endpoint; pid lets `ccgp stop` verify the process.

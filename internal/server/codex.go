@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
@@ -17,10 +19,20 @@ import (
 )
 
 func anthropicError(c *fiber.Ctx, status int, typ, msg string) error {
+	c.Locals(localsErr, msg)
 	return c.Status(status).JSON(fiber.Map{
 		"type":  "error",
 		"error": fiber.Map{"type": typ, "message": msg},
 	})
+}
+
+// logOut receives the non-access log lines (rejected bodies, broken streams).
+var logOut io.Writer = os.Stdout
+
+// logStreamFailure prints the line for a stream that broke after its reply started.
+func logStreamFailure(w io.Writer, started time.Time, profile, model, msg string) {
+	_, _ = fmt.Fprintf(w, "[%s] stream failed after %s [%s] %s: %s\n", started.Format("15:04:05"),
+		time.Since(started).Round(time.Millisecond), profile, model, oneLine(msg, maxLogErr))
 }
 
 // handleCodexMessages serves /v1/messages via the ChatGPT Codex backend.
@@ -91,6 +103,9 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
+	// The access line is printed when the handler returns, before the stream
+	// ends; a failure inside the stream gets its own line.
+	profile, mapped, started := cfg.Profile, probe.Model+" -> "+model, time.Now()
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer cancel()
 		defer func() { _ = resp.Body.Close() }()
@@ -101,6 +116,9 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			}
 		}}
 		_ = tr.Run(resp.Body)
+		if tr.Failed != "" {
+			logStreamFailure(logOut, started, profile, mapped, tr.Failed)
+		}
 	})
 	return nil
 }

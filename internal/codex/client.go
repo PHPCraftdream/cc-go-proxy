@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
@@ -16,8 +17,19 @@ const DefaultBaseURL = "https://chatgpt.com/backend-api/codex"
 
 const originator = "codex_cli_rs"
 
+// ResponseHeaderTimeout bounds the wait for the backend's reply headers. A
+// request the backend stalls on fails after this instead of minutes later, and
+// Claude Code retries it.
+const ResponseHeaderTimeout = 90 * time.Second
+
 // HTTPClient has no overall timeout: responses stream for minutes.
-var HTTPClient = &http.Client{}
+var HTTPClient = newClient(ResponseHeaderTimeout)
+
+func newClient(headerTimeout time.Duration) *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = headerTimeout
+	return &http.Client{Transport: t}
+}
 
 // Call POSTs req to baseURL/responses with OAuth headers. On 401 it forces a
 // token refresh and retries once. Caller closes the body.

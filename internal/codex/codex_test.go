@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -194,6 +195,105 @@ func TestTranslatorTruncatedStream(t *testing.T) {
 	_ = tr.Run(strings.NewReader(sseBody(`{"type":"response.created","response":{"id":"r"}}`)))
 	if !gotErr {
 		t.Error("no error event for truncated stream")
+	}
+	if !strings.Contains(tr.Failed, "ended before completion") {
+		t.Errorf("Failed = %q", tr.Failed)
+	}
+}
+
+// Every way a stream can fail sends the client an error event and records why.
+func TestTranslatorFailureReasons(t *testing.T) {
+	created := `{"type":"response.created","response":{"id":"r"}}`
+	tests := []struct {
+		name, body, want string
+	}{
+		{"response.failed", sseBody(created, `{"type":"response.failed","response":{"error":{"message":"model overloaded"}}}`), "model overloaded"},
+		{"response.failed without text", sseBody(created, `{"type":"response.failed","response":{}}`), "response failed"},
+		{"error event", sseBody(created, `{"type":"error","message":"rate limited"}`), "rate limited"},
+		{"error event with code only", sseBody(created, `{"type":"error","code":"E42"}`), "upstream error E42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotErr bool
+			tr := &Translator{Model: "m", Emit: func(ev string, _ any) { gotErr = gotErr || ev == "error" }}
+			_ = tr.Run(strings.NewReader(tt.body))
+			if !gotErr || tr.Failed != tt.want {
+				t.Errorf("error event %v, Failed = %q; want %q", gotErr, tr.Failed, tt.want)
+			}
+		})
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+
+func TestTranslatorReadErrorIsRecorded(t *testing.T) {
+	var gotErr bool
+	tr := &Translator{Model: "m", Emit: func(ev string, _ any) { gotErr = gotErr || ev == "error" }}
+	if err := tr.Run(failingReader{}); err == nil {
+		t.Error("Run swallowed the read error")
+	}
+	if !gotErr || !strings.Contains(tr.Failed, "stream read error") {
+		t.Errorf("error event %v, Failed = %q", gotErr, tr.Failed)
+	}
+}
+
+func TestTranslatorSuccessLeavesFailedEmpty(t *testing.T) {
+	tr := &Translator{Model: "m", Emit: func(string, any) {}}
+	_ = tr.Run(strings.NewReader(upstreamStream))
+	if tr.Failed != "" {
+		t.Errorf("Failed = %q after a complete stream", tr.Failed)
+	}
+}
+
+func TestErrorType(t *testing.T) {
+	tests := map[int]string{
+		400: "invalid_request_error", 422: "invalid_request_error", 401: "authentication_error",
+		403: "permission_error", 404: "not_found_error", 413: "request_too_large",
+		429: "rate_limit_error", 500: "api_error", 503: "api_error", 418: "api_error",
+	}
+	for status, want := range tests {
+		if got := ErrorType(status); got != want {
+			t.Errorf("ErrorType(%d) = %q, want %q", status, got, want)
+		}
+	}
+}
+
+// A backend that never answers is cut off at the header timeout, not minutes later.
+func TestStalledBackendFailsAtHeaderTimeout(t *testing.T) {
+	release := make(chan struct{})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer backend.Close()
+	defer close(release)
+
+	old := HTTPClient
+	HTTPClient = newClient(100 * time.Millisecond)
+	defer func() { HTTPClient = old }()
+
+	start := time.Now()
+	resp, err := post(context.Background(), backend.URL, []byte("{}"), &oauth.Tokens{AccessToken: "t"})
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("stalled backend: no error")
+	}
+	if !strings.Contains(err.Error(), "timeout awaiting response headers") {
+		t.Errorf("err = %v", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("took %s", d)
+	}
+}
+
+func TestDefaultClientHasHeaderTimeout(t *testing.T) {
+	tr, ok := HTTPClient.Transport.(*http.Transport)
+	if !ok || tr.ResponseHeaderTimeout != ResponseHeaderTimeout {
+		t.Errorf("transport = %#v", HTTPClient.Transport)
 	}
 }
 

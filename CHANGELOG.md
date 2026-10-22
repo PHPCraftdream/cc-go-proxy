@@ -20,6 +20,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
   directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a
   percentage line every two seconds on large transcripts.
+- The request log now says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
+  that breaks after the reply started gets a `stream failed` line; before, both were silent.
+- Codex backend: the wait for the reply headers is limited to 90 seconds. A request the backend stalled on used to hang
+  for several minutes before failing with 502; now it fails sooner and Claude Code retries it.
 
 ### Fixed
 - Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
