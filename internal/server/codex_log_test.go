@@ -76,13 +76,11 @@ func codexCall(t *testing.T, backend http.Handler, headerTimeout time.Duration) 
 }
 
 func TestStalledBackendIs502WithReasonInLog(t *testing.T) {
-	release := make(chan struct{})
-	defer close(release)
 	status, _, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
+		// Reading the body lets the server notice the client hanging up; without
+		// it the handler, and so httptest.Server.Close, would block forever.
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
 	}), 100*time.Millisecond)
 	if status != fiber.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", status)
