@@ -12,7 +12,7 @@ Thanks for helping. Bug reports, fixes, provider presets and documentation are a
 
 ## Development
 
-You need Go 1.24 or newer (and Node 24 for the npm packaging scripts).
+You need Go 1.26 or newer (and Node 24 for the npm packaging scripts).
 
 ```sh
 git clone https://github.com/PHPCraftdream/cc-go-proxy

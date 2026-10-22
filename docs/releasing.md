@@ -67,8 +67,14 @@ new package name needs a token.
 1. [npmjs.com](https://www.npmjs.com) → *Access Tokens* → *Generate New Token* → **Granular access token**:
    permission *Read and write*, packages *All packages* (none exists yet), the shortest expiry that suits you.
    Publishing from CI needs a token that may bypass 2FA.
-2. GitHub → *Settings → Secrets and variables → Actions* → new secret **`NPM_TOKEN`**. (Putting it into the
-   `npm` *environment* instead limits it to this job and lets you require a reviewer for every publish.)
+2. Store it as the secret **`NPM_TOKEN`**; `gh` asks for the value without echoing it or keeping it in the shell
+   history:
+   ```sh
+   gh secret set NPM_TOKEN -R PHPCraftdream/cc-go-proxy             # repository secret
+   gh secret set NPM_TOKEN -R PHPCraftdream/cc-go-proxy --env npm   # or: only the npm job sees it
+   ```
+   The environment variant needs the `npm` environment to exist (*Settings → Environments*); there you can also
+   require a reviewer for every publish.
 3. Push the tag. Seven packages appear: `ccgp` and `ccgp-linux-x64`, `ccgp-linux-arm64`, `ccgp-darwin-x64`,
    `ccgp-darwin-arm64`, `ccgp-win32-x64`, `ccgp-win32-arm64`.
 
@@ -77,7 +83,17 @@ To publish under another name or a scope, change `NPM_NAME` at the top of `relea
 
 ### 2. Switch to Trusted Publishing
 
-For **each of the seven packages**: npmjs.com → the package → *Settings* → *Trusted Publisher* → *GitHub Actions*:
+One command does it for all seven packages (npm 11.10 or newer, logged in as the owner; npm asks for 2FA):
+
+```sh
+npm login
+node scripts/npm/trust.mjs --dry-run   # what would be set
+node scripts/npm/trust.mjs             # set it: npm trust github <package> --file release.yml --repo … --env npm
+node scripts/npm/trust.mjs --list      # check
+```
+
+Or by hand, for **each of the seven packages**: npmjs.com → the package → *Settings* → *Trusted Publisher* →
+*GitHub Actions*:
 
 | Field | Value |
 | --- | --- |
@@ -86,7 +102,12 @@ For **each of the seven packages**: npmjs.com → the package → *Settings* →
 | Workflow filename | `release.yml` |
 | Environment | `npm` (the job runs in it; leave empty only if you also remove `environment: npm`) |
 
-Then delete the `NPM_TOKEN` secret (repository and environment) and revoke the token on npmjs.com. The next tag
+Then delete the `NPM_TOKEN` secret (repository and environment) and revoke the token on npmjs.com:
+
+```sh
+gh secret delete NPM_TOKEN -R PHPCraftdream/cc-go-proxy
+gh secret delete NPM_TOKEN -R PHPCraftdream/cc-go-proxy --env npm   # if it was put there
+``` The next tag
 publishes through OIDC. Optionally set each package to *Require two-factor authentication and disallow tokens*,
 so a leaked token can no longer publish.
 

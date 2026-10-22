@@ -9,34 +9,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
-### Added
-- For the GPT-6 generation `ccgp models` / `apply` write a context window of 922000 (OpenAI's documented input limit)
-  when the catalog's `max_context_window` is lower (872000), so Claude Code compacts later; a larger catalog value wins.
-- `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
-  permission prompts off), a second small binary that starts the `ccgp` next to it. It is built and packaged with every
-  release (archives, and `npm install -g ccgp` installs both commands).
-
-### Changed
-- ccgp's own files are Ktav now, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
-  `creds` directory and `.ccgp-mirror.ktav` in a profile's Claude directory. The JSON files of earlier versions are read
-  once, converted and removed, so existing logins and URL tokens keep working. A file is checked to read back as the same
-  value before it is written. (Claude Code's own JSON files, such as `settings.json`, are untouched.)
-- The config parser is now the pure-Go package of ktav-lang/golang 0.8.1: no native library is downloaded on first
-  use, `KTAV_LIB_PATH` is no longer needed, and the binary works offline from the first run.
-- `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
-  directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a
-  percentage line every two seconds on large transcripts.
-- The request log now says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
-  that breaks after the reply started gets a `stream failed` line; before, both were silent.
-- Codex backend: the wait for the reply headers is limited to 90 seconds. A request the backend stalled on used to hang
-  for several minutes before failing with 502; now it fails sooner and Claude Code retries it.
-
-### Fixed
-- Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
-  with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
-  config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
-
-## [0.1.0] - 2026-10-21
+## [0.1.0] - 2026-10-22
 
 First release of ccgp as an independent project.
 
@@ -73,11 +46,36 @@ First release of ccgp as an independent project.
 - `ccgp config reset`, `ccgp status`, `ccgp start` / `stop`; Windows, Linux and macOS.
 - Releases: binaries for six platforms with checksums and build-provenance attestations, npm packages (token or
   Trusted Publishing), third-party license notices; dual license check in CI.
+- For the GPT-6 generation `ccgp models` / `apply` write a context window of 922000 (OpenAI's documented input limit)
+  when the catalog's `max_context_window` is lower (872000), so Claude Code compacts later; a larger catalog value wins.
+- `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
+  permission prompts off), a second small binary that starts the `ccgp` next to it. It is built and packaged with every
+  release (archives, and `npm install -g ccgp` installs both commands).
 
 ### Changed
 - The Go module is now `github.com/PHPCraftdream/cc-go-proxy`.
 - Licensed under `MIT OR Apache-2.0` (the MIT-licensed upstream parts keep their notice, see `NOTICE`).
 - The version is set from the release tag at build time.
+- ccgp's own files are Ktav now, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
+  `creds` directory and `.ccgp-mirror.ktav` in a profile's Claude directory. The JSON files of earlier versions are read
+  once, converted and removed, so existing logins and URL tokens keep working. A file is checked to read back as the same
+  value before it is written. (Claude Code's own JSON files, such as `settings.json`, are untouched.)
+- The config parser is now the pure-Go package of ktav-lang/golang 0.8.1: no native library is downloaded on first
+  use, `KTAV_LIB_PATH` is no longer needed, and the binary works offline from the first run.
+- `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
+  directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a
+  percentage line every two seconds on large transcripts.
+- The request log now says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
+  that breaks after the reply started gets a `stream failed` line; before, both were silent.
+- Codex backend: the wait for the reply headers is limited to 90 seconds. A request the backend stalled on used to hang
+  for several minutes before failing with 502; now it fails sooner and Claude Code retries it.
+- Building from source needs Go 1.26 (the current x/sys, x/term and fasthttp require it); dependencies updated:
+  fiber 2.52.15, fasthttp 1.76.0, x/sys 0.49.0, x/term 0.47.0 and others.
+
+### Fixed
+- Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
+  with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
+  config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
 
 [Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0

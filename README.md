@@ -42,11 +42,9 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 
 ## Install
 
-> **Pre-release.** The first release, 0.1.0, is being prepared. Until it is published, only `go install` and building from source work; the npm package and the release archives appear with the `v0.1.0` tag.
-
 ```sh
 npm install -g ccgp                                              # any platform, no Go needed
-go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest  # from source (Go 1.24+)
+go install github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp@latest  # from source (Go 1.26+)
 ```
 
 Or download the archive for your platform from [Releases](https://github.com/PHPCraftdream/cc-go-proxy/releases), unpack it
