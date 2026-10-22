@@ -36,7 +36,7 @@ The workflow refuses a tag that is not on `main` or is not a semantic version.
 | `ccgp_<version>_<os>_<arch>.tar.gz` / `.zip` | linux, darwin, windows × amd64, arm64: the binary, `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`, `README.md`, `THIRD_PARTY_LICENSES.md` |
 | `SHA256SUMS` | checksums of all archives |
 | attestations | signed SLSA build provenance for every file, from GitHub Actions |
-| npm `ccgp` + `ccgp-<os>-<cpu>` | the launcher package and six platform packages (the esbuild layout: no install scripts), published with provenance |
+| npm `cc-go-proxy` + `cc-go-proxy-<os>-<cpu>` | the launcher package and six platform packages (the esbuild layout: no install scripts), published with provenance |
 
 Verify a download:
 
@@ -75,11 +75,12 @@ new package name needs a token.
    ```
    The environment variant needs the `npm` environment to exist (*Settings → Environments*); there you can also
    require a reviewer for every publish.
-3. Push the tag. Seven packages appear: `ccgp` and `ccgp-linux-x64`, `ccgp-linux-arm64`, `ccgp-darwin-x64`,
-   `ccgp-darwin-arm64`, `ccgp-win32-x64`, `ccgp-win32-arm64`.
+3. Push the tag. Seven packages appear: `cc-go-proxy` and `cc-go-proxy-linux-x64`, `-linux-arm64`, `-darwin-x64`,
+   `-darwin-arm64`, `-win32-x64`, `-win32-arm64`. (npm refuses the name `ccgp` itself as too similar to `ncp`; the
+   commands are still `ccgp` and `ccgpy`.)
 
 To publish under another name or a scope, change `NPM_NAME` at the top of `release.yml` (for example
-`@yourscope/ccgp`; the platform packages follow as `@yourscope/ccgp-<os>-<cpu>`).
+`@yourscope/cc-go-proxy`; the platform packages follow as `@yourscope/cc-go-proxy-<os>-<cpu>`).
 
 ### 2. Switch to Trusted Publishing
 

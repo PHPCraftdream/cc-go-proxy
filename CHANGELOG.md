@@ -9,6 +9,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-22
+
+### Fixed
+- The npm package is `cc-go-proxy` (`npm install -g cc-go-proxy`; the commands stay `ccgp` and `ccgpy`): npm refused
+  the name `ccgp` as too similar to `ncp`, so 0.1.0 reached GitHub Releases but not npm.
+
 ## [0.1.0] - 2026-10-22
 
 First release of ccgp as an independent project.
@@ -50,7 +56,7 @@ First release of ccgp as an independent project.
   when the catalog's `max_context_window` is lower (872000), so Claude Code compacts later; a larger catalog value wins.
 - `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
   permission prompts off), a second small binary that starts the `ccgp` next to it. It is built and packaged with every
-  release (archives, and `npm install -g ccgp` installs both commands).
+  release (archives, and the npm package installs both commands).
 
 ### Changed
 - The Go module is now `github.com/PHPCraftdream/cc-go-proxy`.
@@ -77,5 +83,6 @@ First release of ccgp as an independent project.
   with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
   config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
 
-[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0

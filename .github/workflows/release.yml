@@ -34,7 +34,7 @@ env:
   GO_VERSION: '1.26'
   MODULE: github.com/PHPCraftdream/cc-go-proxy
   # npm package name; the platform packages are <name>-<os>-<cpu>.
-  NPM_NAME: ccgp
+  NPM_NAME: cc-go-proxy   # "ccgp" is refused by npm (too similar to "ncp")
 
 jobs:
   meta:
