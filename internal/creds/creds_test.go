@@ -2,7 +2,10 @@ package creds
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
 
 func TestEnsureProfileTokenStable(t *testing.T) {
@@ -103,7 +106,11 @@ func TestDeleteProviderCreds(t *testing.T) {
 	if err := s.SaveAPIKey("oai", "sk-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeJSON(s.OAuthPath("oai"), map[string]string{"k": "v"}); err != nil {
+	if err := os.WriteFile(s.OAuthPath("oai"), []byte("k: v\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := ktavfile.LegacyPath(s.OAuthPath("oai"))
+	if err := os.WriteFile(legacy, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteProviderCreds("oai"); err != nil {
@@ -115,7 +122,94 @@ func TestDeleteProviderCreds(t *testing.T) {
 	if _, err := os.Stat(s.OAuthPath("oai")); !os.IsNotExist(err) {
 		t.Errorf("oauth file survived: %v", err)
 	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("legacy json survived: %v", err)
+	}
 	if err := s.DeleteProviderCreds("oai"); err != nil {
 		t.Errorf("second delete is not idempotent: %v", err)
+	}
+}
+
+// The files of earlier versions were JSON; they are converted on first read and removed.
+func TestLegacyJSONIsMigrated(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	oldTokens := filepath.Join(s.Dir, "profile-tokens.json")
+	if err := os.WriteFile(oldTokens, []byte(`{"codex": "tok-1", "my.profile": "1234", "zai": "tok-3"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldKey := filepath.Join(s.Dir, "apikey-zai.json")
+	if err := os.WriteFile(oldKey, []byte(`{"api_key": "sk-old"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := s.ProfileTokens()
+	if err != nil || len(m) != 3 || m["codex"] != "tok-1" || m["my.profile"] != "1234" || m["zai"] != "tok-3" {
+		t.Fatalf("tokens = %v, %v", m, err)
+	}
+	if k, err := s.APIKey("zai"); err != nil || k != "sk-old" {
+		t.Fatalf("key = %q, %v", k, err)
+	}
+	for _, old := range []string{oldTokens, oldKey} {
+		if _, err := os.Stat(old); !os.IsNotExist(err) {
+			t.Errorf("%s was not removed: %v", filepath.Base(old), err)
+		}
+	}
+	// Now the Ktav files are the only source.
+	m2, err := s.ProfileTokens()
+	if err != nil || len(m2) != 3 || m2["my.profile"] != "1234" {
+		t.Errorf("tokens after migration = %v, %v", m2, err)
+	}
+}
+
+func TestTokensSurviveOddProfileNames(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	names := []string{"codex", "my.profile", "123", "a b", "ключ", "x: y", "#hash"}
+	want := map[string]string{}
+	for _, n := range names {
+		tok, err := s.EnsureProfileToken(n)
+		if err != nil {
+			t.Fatalf("%q: %v", n, err)
+		}
+		want[n] = tok
+	}
+	got, err := s.ProfileTokens()
+	if err != nil || len(got) != len(names) {
+		t.Fatalf("tokens = %v, %v", got, err)
+	}
+	for n, tok := range want {
+		if got[n] != tok {
+			t.Errorf("%q: got %q, want %q", n, got[n], tok)
+		}
+	}
+	// Deleting the last ones leaves a readable, empty store.
+	for _, n := range names {
+		if err := s.DeleteProfileToken(n); err != nil {
+			t.Fatalf("delete %q: %v", n, err)
+		}
+	}
+	if got, err := s.ProfileTokens(); err != nil || len(got) != 0 {
+		t.Errorf("tokens after deleting all = %v, %v", got, err)
+	}
+}
+
+func TestAPIKeyRoundTripsNastyValues(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	for _, key := range []string{"sk-proj-abc_DEF-123", "123456", "1e5", "true", "null", "  padded  ", "a: b", "# not a comment", "line1\nline2", "ключ"} {
+		if err := s.SaveAPIKey("p", key); err != nil {
+			t.Fatalf("save %q: %v", key, err)
+		}
+		if got, err := s.APIKey("p"); err != nil || got != key {
+			t.Errorf("key %q read back as %q, %v", key, got, err)
+		}
+	}
+}
+
+func TestCorruptCredsFileIsAnError(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(s.Dir, "apikey-p.ktav"), []byte("api_key: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.APIKey("p"); err == nil {
+		t.Error("corrupt key file read as empty")
 	}
 }

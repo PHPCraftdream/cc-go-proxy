@@ -17,6 +17,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   release (archives, and `npm install -g ccgp` installs both commands).
 
 ### Changed
+- ccgp's own files are Ktav now, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
+  `creds` directory and `.ccgp-mirror.ktav` in a profile's Claude directory. The JSON files of earlier versions are read
+  once, converted and removed, so existing logins and URL tokens keep working. A file is checked to read back as the same
+  value before it is written. (Claude Code's own JSON files, such as `settings.json`, are untouched.)
+- The config parser is now the pure-Go package of ktav-lang/golang 0.8.1: no native library is downloaded on first
+  use, `KTAV_LIB_PATH` is no longer needed, and the binary works offline from the first run.
 - `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
   directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a
   percentage line every two seconds on large transcripts.

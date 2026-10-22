@@ -420,7 +420,7 @@ func TestProfileRemoveSharedAndUnusedProvider(t *testing.T) {
 	if !strings.Contains(out.String(), `left behind: the credentials of provider "codex"`) {
 		t.Errorf("output:\n%s", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(store.Dir, "apikey-codex.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(store.Dir, "apikey-codex.ktav")); err != nil {
 		t.Errorf("credentials were deleted without --purge: %v", err)
 	}
 	cfg3 := loadTestConfig(t)
@@ -487,7 +487,7 @@ func TestProfileRemovePurge(t *testing.T) {
 		t.Errorf("a sibling directory was touched: %v", err)
 	}
 	// Provider zai stays (zai still uses it), so its credentials stay too.
-	if _, err := os.Stat(filepath.Join(store.Dir, "apikey-zai.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(store.Dir, "apikey-zai.ktav")); err != nil {
 		t.Errorf("credentials of the kept provider were deleted: %v", err)
 	}
 
@@ -504,7 +504,7 @@ func TestProfileRemovePurge(t *testing.T) {
 	if err := profileRemove(&bytes.Buffer{}, profileRmOpts{Name: "zai", Yes: true, Purge: true}, path, loadTestConfig(t), store, t.TempDir(), strings.NewReader("")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(store.Dir, "apikey-zai.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(store.Dir, "apikey-zai.ktav")); !os.IsNotExist(err) {
 		t.Errorf("credentials of the removed provider survived: %v", err)
 	}
 }

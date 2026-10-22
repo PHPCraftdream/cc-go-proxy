@@ -10,28 +10,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
 
 // ErrNotLoggedIn: no stored tokens for this provider.
 var ErrNotLoggedIn = errors.New("oauth: not logged in, run `login` first")
 
-// Store persists Tokens as JSON readable only by the current user.
+// Store persists Tokens as Ktav readable only by the current user.
 type Store struct {
 	Path string
 }
 
 func (s Store) Load() (*Tokens, error) {
-	b, err := os.ReadFile(s.Path)
+	var t Tokens
+	err := ktavfile.Read(s.Path, &t, json.Unmarshal) // also picks up the oauth-*.json of earlier versions
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrNotLoggedIn
 	}
 	if err != nil {
-		return nil, err
-	}
-	var t Tokens
-	if err := json.Unmarshal(b, &t); err != nil {
-		return nil, fmt.Errorf("oauth: corrupt token file %s: %w", s.Path, err)
+		return nil, fmt.Errorf("oauth: %w", err)
 	}
 	if t.RefreshToken == "" {
 		return nil, ErrNotLoggedIn
@@ -41,11 +38,7 @@ func (s Store) Load() (*Tokens, error) {
 
 // Save writes atomically, owner-only.
 func (s Store) Save(t *Tokens) error {
-	b, err := json.MarshalIndent(t, "", "  ")
-	if err != nil {
-		return err
-	}
-	return securefile.WriteFile(s.Path, b)
+	return ktavfile.Write(s.Path, t)
 }
 
 // Session serves fresh access tokens, refreshing and persisting rotation.
@@ -90,7 +83,11 @@ func (s *Session) ForceRefresh(ctx context.Context, staleAccessToken string) (*T
 func (s *Session) reloadLocked() error {
 	st, err := os.Stat(s.Store.Path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return ErrNotLoggedIn
+		// Maybe still the JSON file of an earlier version: Load converts it.
+		if _, lerr := s.Store.Load(); lerr != nil {
+			return lerr
+		}
+		st, err = os.Stat(s.Store.Path)
 	}
 	if err != nil {
 		return err

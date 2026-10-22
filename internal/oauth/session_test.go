@@ -95,3 +95,40 @@ func TestSessionPicksUpNewLogin(t *testing.T) {
 		t.Errorf("after login = %+v, %v; want rt-2", tok, err)
 	}
 }
+
+// The token file of an earlier version was JSON: it is converted when first used.
+func TestStoreMigratesLegacyJSON(t *testing.T) {
+	store := Store{Path: filepath.Join(t.TempDir(), "oauth-codex.ktav")}
+	old := filepath.Join(filepath.Dir(store.Path), "oauth-codex.json")
+	refreshed := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	legacy := `{"id_token":"","access_token":"` + accessToken(time.Now().Add(time.Hour)) + `","refresh_token":"rt-old","account_id":"acc","last_refresh":"` + refreshed.Format(time.RFC3339) + `"}`
+	if err := os.WriteFile(old, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Session.Token starts from a missing .ktav, as the running server does.
+	s := &Session{Store: store, Client: &Client{}}
+	tok, err := s.Token(context.Background())
+	if err != nil || tok.RefreshToken != "rt-old" || tok.AccountID != "acc" {
+		t.Fatalf("token = %+v, %v", tok, err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("legacy file kept: %v", err)
+	}
+	saved, err := store.Load()
+	if err != nil || saved.RefreshToken != "rt-old" || !saved.LastRefresh.Equal(refreshed) {
+		t.Errorf("stored = %+v, %v", saved, err)
+	}
+}
+
+func TestStoreRoundTripWithEmptyIDToken(t *testing.T) {
+	store := Store{Path: filepath.Join(t.TempDir(), "o.ktav")}
+	in := &Tokens{AccessToken: "a.b.c", RefreshToken: "rt", LastRefresh: time.Now()}
+	if err := store.Save(in); err != nil {
+		t.Fatal(err)
+	}
+	out, err := store.Load()
+	if err != nil || out.AccessToken != "a.b.c" || out.RefreshToken != "rt" || out.IDToken != "" || out.AccountID != "" || !out.LastRefresh.Equal(in.LastRefresh) {
+		t.Errorf("loaded = %+v, %v", out, err)
+	}
+}

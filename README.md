@@ -53,8 +53,8 @@ Or download the archive for your platform from [Releases](https://github.com/PHP
 and put `ccgp` on your `PATH`. Archives are checksummed and carry build-provenance attestations
 ([verify](docs/releasing.md#what-a-release-contains)).
 
-You also need Claude Code (`claude` on `PATH`). On first use ccgp downloads a small native library for the
-[Ktav](https://github.com/ktav-lang/golang) config parser from GitHub Releases (set `KTAV_LIB_PATH` to use a local copy).
+You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the
+[Ktav](https://github.com/ktav-lang/golang) config parser is pure Go, nothing is downloaded on first use.
 
 ## Quick start
 

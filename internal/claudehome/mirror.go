@@ -8,11 +8,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
 
-const manifestFile = ".ccgp-mirror.json"
+const manifestFile = ".ccgp-mirror" + ktavfile.Ext
 
 // mirrored is the one-way copy state: slash-separated path relative to the
 // destination root -> source size and modification time at copy time.
@@ -23,23 +26,55 @@ type stamp struct {
 	ModTime int64 `json:"mtime"`
 }
 
+// manifestData is the manifest file: a list, since the keys are file paths
+// and a Ktav key with a dot would read back as nesting.
+type manifestData struct {
+	Files []manifestEntry `json:"files"`
+}
+
+type manifestEntry struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"mtime"`
+}
+
+// legacyManifest reads the .ccgp-mirror.json of earlier versions (path -> stamp).
+func legacyManifest(data []byte, v any) error {
+	var m mirrored
+	if err := json.Unmarshal(data, &m); err != nil {
+		return err
+	}
+	*v.(*manifestData) = m.data()
+	return nil
+}
+
+func (m mirrored) data() manifestData {
+	d := manifestData{Files: make([]manifestEntry, 0, len(m))}
+	for p, st := range m {
+		d.Files = append(d.Files, manifestEntry{Path: p, Size: st.Size, ModTime: st.ModTime})
+	}
+	sort.Slice(d.Files, func(i, j int) bool { return d.Files[i].Path < d.Files[j].Path })
+	return d
+}
+
 func loadManifest(dst string) mirrored {
 	m := mirrored{}
-	if b, err := os.ReadFile(filepath.Join(dst, manifestFile)); err == nil {
-		_ = json.Unmarshal(b, &m) // a damaged manifest only costs a full re-copy
-	}
-	if m == nil {
-		m = mirrored{}
+	var d manifestData
+	// A damaged manifest only costs a full re-copy.
+	if err := ktavfile.Read(filepath.Join(dst, manifestFile), &d, legacyManifest); err == nil {
+		for _, e := range d.Files {
+			m[e.Path] = stamp{Size: e.Size, ModTime: e.ModTime}
+		}
 	}
 	return m
 }
 
 func (m mirrored) save(dst string) error {
-	b, err := json.MarshalIndent(m, "", "  ")
+	s, err := ktavfile.Encode(m.data())
 	if err != nil {
 		return err
 	}
-	return writeIfChanged(filepath.Join(dst, manifestFile), b)
+	return writeIfChanged(filepath.Join(dst, manifestFile), []byte(s))
 }
 
 // isCredential reports files that must never be copied, anywhere in a tree.

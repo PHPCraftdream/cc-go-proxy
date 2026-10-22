@@ -36,7 +36,7 @@ var ErrReloginRequired = errors.New("oauth: refresh token rejected, run `login` 
 
 // Tokens is the persisted OAuth state.
 type Tokens struct {
-	IDToken      string    `json:"id_token"`
+	IDToken      string    `json:"id_token,omitempty"`
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
 	AccountID    string    `json:"account_id,omitempty"`

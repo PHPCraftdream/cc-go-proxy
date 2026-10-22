@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	ktav "github.com/ktav-lang/golang"
+	ktav "github.com/ktav-lang/golang/pure"
 )
 
 // ConfigFileEnv overrides the Ktav config file location.

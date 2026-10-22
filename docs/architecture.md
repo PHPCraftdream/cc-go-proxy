@@ -48,6 +48,5 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 ## Dependencies
 
 [fiber](https://github.com/gofiber/fiber) for HTTP, [ktav-lang/golang](https://github.com/ktav-lang/golang) for the
-config (it loads a small native library, downloaded from GitHub Releases on first use; set `KTAV_LIB_PATH` to
-use a local copy), `golang.org/x/sys` and `x/term`. All are permissively licensed; CI enforces an allowlist
+config (its pure-Go package, no native library), `golang.org/x/sys` and `x/term`. All are permissively licensed; CI enforces an allowlist
 (see [releasing.md](releasing.md)).

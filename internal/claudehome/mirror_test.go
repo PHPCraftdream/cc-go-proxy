@@ -172,3 +172,53 @@ func TestMirrorUnchangedFilesAreNotRecopied(t *testing.T) {
 		t.Error("unchanged file was copied again")
 	}
 }
+
+func TestManifestIsKtavAndKeepsOddPaths(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	write(t, filepath.Join(src, "agents", "a.b.md"), "dotted")
+	write(t, filepath.Join(src, "commands", "my cmd #1.md"), "spaced")
+	write(t, filepath.Join(src, "skills", "ключ", "SKILL.md"), "unicode")
+	prepare(t, src, dst)
+
+	if !exists(filepath.Join(dst, ".ccgp-mirror.ktav")) || exists(filepath.Join(dst, ".ccgp-mirror.json")) {
+		t.Fatal("the manifest is not a .ktav file")
+	}
+	m := loadManifest(dst)
+	for _, p := range []string{"agents/a.b.md", "commands/my cmd #1.md", "skills/ключ/SKILL.md"} {
+		if _, ok := m[p]; !ok {
+			t.Errorf("%q missing from the manifest: %v", p, m)
+		}
+	}
+	// A second run finds the manifest and copies nothing again.
+	before := read(t, filepath.Join(dst, ".ccgp-mirror.ktav"))
+	prepare(t, src, dst)
+	if after := read(t, filepath.Join(dst, ".ccgp-mirror.ktav")); after != before {
+		t.Error("the manifest changed without a change in the source")
+	}
+}
+
+func TestLegacyJSONManifestIsMigrated(t *testing.T) {
+	dst := t.TempDir()
+	old := filepath.Join(dst, ".ccgp-mirror.json")
+	write(t, old, `{"agents/a.md": {"size": 2, "mtime": 1700000000123456789}, "commands/x.y.md": {"size": 5, "mtime": 42}}`)
+
+	m := loadManifest(dst)
+	if len(m) != 2 || m["agents/a.md"] != (stamp{Size: 2, ModTime: 1700000000123456789}) || m["commands/x.y.md"] != (stamp{Size: 5, ModTime: 42}) {
+		t.Fatalf("migrated manifest = %v", m)
+	}
+	if exists(old) || !exists(filepath.Join(dst, ".ccgp-mirror.ktav")) {
+		t.Error("legacy file kept or Ktav file missing")
+	}
+	if m2 := loadManifest(dst); len(m2) != 2 || m2["commands/x.y.md"].Size != 5 {
+		t.Errorf("manifest after migration = %v", m2)
+	}
+}
+
+func TestDamagedManifestCostsOnlyARecopy(t *testing.T) {
+	dst := t.TempDir()
+	write(t, filepath.Join(dst, ".ccgp-mirror.ktav"), "files: [\n")
+	if m := loadManifest(dst); len(m) != 0 {
+		t.Errorf("damaged manifest read as %v", m)
+	}
+}

@@ -115,7 +115,7 @@ ccgp profile list
 ccgp profile rm codex2 [--yes] [--purge]
 ```
 
-- A **login belongs to a provider** (its `oauth-<provider>.json` / `apikey-<provider>.json` in the `creds`
+- A **login belongs to a provider** (its `oauth-<provider>.ktav` / `apikey-<provider>.ktav` in the `creds`
   directory); a **profile** has its URL token, model rules and an isolated Claude Code dir. A second ChatGPT
   account is a new provider + new profile; another mapping for the same account is a new profile on the
   existing provider.
