@@ -99,6 +99,12 @@ Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 | `ccgp config reset` | Back up the config and write the default one |
 | `ccgp version` | Print the version |
 
+## Model label metadata
+
+`GET /call/<token>/model?requested=<model-id>` resolves a request alias with the same `MapModel` used for inference. The normal profile-token authentication and hot-reloaded profile configuration apply; no upstream inference or login request is made by this handler.
+
+The response contains only `kind: "ccgp:model-route:v1"`, `requestedModel`, and `backendModel`, with `Cache-Control: no-store`. It reports the configured route, not the model ultimately selected behind an upstream alias. Clients must fall back to their original labels when the endpoint is unavailable. This also supports `ccgpy`, which uses the same launcher and proxy.
+
 ## How ccgp differs from upstream
 
 | | [claude-code-proxy](https://github.com/nielspeter/claude-code-proxy) (upstream) | ccgp |

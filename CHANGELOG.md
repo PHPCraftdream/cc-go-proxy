@@ -10,6 +10,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Added
+- Authenticated model-label metadata at `/call/<token>/model?requested=<model-id>`, resolved with the inference routing rules without exposing tokens or invoking upstream inference.
 - `install.sh` (Linux, macOS) and `install.ps1` (Windows): install `ccgp` and `ccgpy` from the GitHub release for the OS and
   CPU, checked against `SHA256SUMS`. CI runs both against the published release.
 

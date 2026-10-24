@@ -156,6 +156,8 @@ func Start(cfg *config.Config) error {
 		})
 	})
 
+	app.Get(callPrefix+":token/model", auth, modelRoute)
+
 	// Claude API endpoints
 	setupClaudeEndpoints(app, auth, &sessions{store: store})
 
