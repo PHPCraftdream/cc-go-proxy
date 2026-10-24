@@ -149,3 +149,22 @@ func TestModelRouteConfigErrorIs503(t *testing.T) {
 		t.Fatalf("status %d body %s", status, body)
 	}
 }
+
+// The route must be mounted by the same function Start uses, behind auth.
+func TestRegisterCallRoutesMountsModelRoute(t *testing.T) {
+	app := fiber.New()
+	registerCallRoutes(app, requireProfile(creds.StaticIndex("work", authTestToken),
+		func(string) (*config.Config, error) { return &config.Config{Profile: "work", DefaultModel: "mapped"}, nil }),
+		&sessions{store: creds.Store{Dir: t.TempDir()}})
+
+	status, body := routeGet(t, app, "/call/"+authTestToken+"/model?requested=claude-opus-5-5")
+	if status != fiber.StatusOK || !strings.Contains(body, `"backendModel":"mapped"`) {
+		t.Fatalf("mounted route: status %d body %s", status, body)
+	}
+	if status, _ := routeGet(t, app, "/call/wrong/model?requested=claude-opus-5-5"); status != fiber.StatusNotFound {
+		t.Fatalf("unknown token: status %d, want 404", status)
+	}
+	if status, body := routeGet(t, app, "/call/"+authTestToken+"/"); status != fiber.StatusOK || !strings.Contains(body, `"profile":"work"`) {
+		t.Fatalf("info route: status %d body %s", status, body)
+	}
+}

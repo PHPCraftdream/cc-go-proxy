@@ -112,6 +112,27 @@ func (s *sessions) get(provider string) *oauth.Session {
 	return ss
 }
 
+// registerCallRoutes mounts every token-protected endpoint under /call/:token/.
+func registerCallRoutes(app *fiber.App, auth fiber.Handler, s *sessions) {
+	// Proxy info (token-protected: exposes routing config)
+	app.Get(callPrefix+":token/", auth, func(c *fiber.Ctx) error {
+		rc := requestConfig(c)
+		return c.JSON(fiber.Map{
+			"version":  ProxyVersion,
+			"profile":  rc.Profile,
+			"provider": rc.ProviderName,
+			"type":     rc.ProviderType,
+			"models":   rc.ModelRules,
+			"default":  rc.DefaultModel,
+		})
+	})
+
+	app.Get(callPrefix+":token/model", auth, modelRoute)
+
+	// Claude API endpoints
+	setupClaudeEndpoints(app, auth, s)
+}
+
 // Start initializes and starts the HTTP server (blocks).
 func Start(cfg *config.Config) error {
 	dir, err := creds.DefaultDir()
@@ -141,25 +162,7 @@ func Start(cfg *config.Config) error {
 		})
 	})
 
-	auth := requireProfile(index, build)
-
-	// Proxy info (token-protected: exposes routing config)
-	app.Get(callPrefix+":token/", auth, func(c *fiber.Ctx) error {
-		rc := requestConfig(c)
-		return c.JSON(fiber.Map{
-			"version":  ProxyVersion,
-			"profile":  rc.Profile,
-			"provider": rc.ProviderName,
-			"type":     rc.ProviderType,
-			"models":   rc.ModelRules,
-			"default":  rc.DefaultModel,
-		})
-	})
-
-	app.Get(callPrefix+":token/model", auth, modelRoute)
-
-	// Claude API endpoints
-	setupClaudeEndpoints(app, auth, &sessions{store: store})
+	registerCallRoutes(app, requireProfile(index, build), &sessions{store: store})
 
 	// Graceful shutdown
 	go func() {
