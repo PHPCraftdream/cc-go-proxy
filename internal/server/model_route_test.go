@@ -154,7 +154,9 @@ func TestModelRouteConfigErrorIs503(t *testing.T) {
 func TestRegisterCallRoutesMountsModelRoute(t *testing.T) {
 	app := fiber.New()
 	registerCallRoutes(app, requireProfile(creds.StaticIndex("work", authTestToken),
-		func(string) (*config.Config, error) { return &config.Config{Profile: "work", DefaultModel: "mapped"}, nil }),
+		func(string) (*config.Config, error) {
+			return &config.Config{Profile: "work", DefaultModel: "mapped"}, nil
+		}),
 		&sessions{store: creds.Store{Dir: t.TempDir()}})
 
 	status, body := routeGet(t, app, "/call/"+authTestToken+"/model?requested=claude-opus-5-5")
