@@ -9,6 +9,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
 ### Changed
 - **Breaking:** CLI commands start with `--`: `ccgp --status`, `--login`, `--models`, `--profile`, `--send`, `--import`,
   `--export`, `--start`, `--stop`, `--serve`, `--config`, `--version`, `--help` (the bare words are gone). A word
@@ -17,6 +19,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - `ccgp <profile>` restarts a background server that was started from an older binary when it is idle, and warns
   when requests are in flight. `/health` now also reports the server binary's path, its mtime and the number of
   in-flight model requests.
+
+- The release workflow publishes to npm only when the repository variable `NPM_PUBLISH` is `true` (the job still
+  builds and dry-runs the packages); the installer scripts and the CI check that they install the newest release.
 
 ### Added
 - `ccgp --restart`, `--logs [-f] [-n N]`, `--doctor [--offline] [--json]`, `--which <profile> <model>`,

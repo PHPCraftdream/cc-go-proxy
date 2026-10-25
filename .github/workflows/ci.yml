@@ -175,6 +175,9 @@ jobs:
         # Again without a version (the latest release), over the installed binaries.
         sh install.sh
         "$CCGP_INSTALL_DIR/ccgp" --version
+        # ... and it must be the newest published release.
+        want="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/PHPCraftdream/cc-go-proxy/releases/latest)"
+        [ "$("$CCGP_INSTALL_DIR/ccgp" --version)" = "ccgp v${want##*/v}" ]
 
     - name: install.ps1
       if: runner.os == 'Windows'
@@ -192,4 +195,9 @@ jobs:
         # Again without a version (the latest release), over the installed binaries.
         Remove-Item Env:CCGP_VERSION
         ./install.ps1
-        & "$env:CCGP_INSTALL_DIR\ccgp.exe" --version
+        $v = & "$env:CCGP_INSTALL_DIR\ccgp.exe" --version
+        $v
+        # ... and it must be the newest published release.
+        $latest = Invoke-RestMethod -UseBasicParsing -Uri 'https://api.github.com/repos/PHPCraftdream/cc-go-proxy/releases/latest' -Headers @{ 'User-Agent' = 'ccgp-ci' }
+        $want = 'ccgp v' + ([string]$latest.tag_name).TrimStart('v')
+        if ($v -ne $want) { throw "latest release is '$want' but the installer put '$v'" }

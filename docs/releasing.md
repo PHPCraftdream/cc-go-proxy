@@ -29,6 +29,12 @@ no version file to edit. Versions are never bumped automatically.
 
 The workflow refuses a tag that is not on `main` or is not a semantic version.
 
+npm publishing is off by default: the npm job builds the packages and dry-runs them, and publishes only when the
+repository variable `NPM_PUBLISH` is `true` (`gh variable set NPM_PUBLISH --body true -R PHPCraftdream/cc-go-proxy`).
+Turn it on once all seven package names are accepted by npm (see [npm-publication-log.md](npm-publication-log.md)).
+Users install from the GitHub release with `install.sh` / `install.ps1`, which always take the newest release; CI
+checks that.
+
 ## What a release contains
 
 | Asset | |
