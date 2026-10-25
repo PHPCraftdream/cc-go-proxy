@@ -37,6 +37,8 @@ func commands() []command {
 		{name: "--profile", args: "add|list|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
 		{name: "--version", args: "", desc: "Show version", run: versionCmd},
+		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
+		{name: "--version", args: "", desc: "Show version", run: versionCmd},
 		{name: "--help", args: "", desc: "Show this help", run: helpCmd},
 	}
 }
