@@ -134,7 +134,7 @@ func runDoctor(args []string, w io.Writer, env *doctorEnv) error {
 			if tag == "" {
 				tag = "[" + c.Status + "]"
 			}
-			fmt.Fprintf(w, "%-7s%s\n", tag, body)
+			_, _ = fmt.Fprintf(w, "%-7s%s\n", tag, body)
 		}
 	}
 	if anyFail {
@@ -307,6 +307,6 @@ func probeURL(url string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode, nil
 }

@@ -85,7 +85,7 @@ func ensureServerWith(cfg *config.Config, serveArgs []string, sc *serverChecks) 
 				return nil, err
 			}
 		} else {
-			fmt.Fprintf(sc.stderr,
+			_, _ = fmt.Fprintf(sc.stderr,
 				"ccgp: the running server is older than this binary (%s), %d request(s) in flight; restart it with: ccgp --restart\n",
 				why, h.Active)
 			return h, nil
@@ -105,7 +105,7 @@ func ensureServerWith(cfg *config.Config, serveArgs []string, sc *serverChecks) 
 		return nil, err
 	}
 	if why != "" {
-		fmt.Fprintf(sc.stderr, "ccgp: restarted the server (%s)\n", why)
+		_, _ = fmt.Fprintf(sc.stderr, "ccgp: restarted the server (%s)\n", why)
 	}
 	return h, nil
 }
@@ -149,7 +149,7 @@ func restartServer(cfg *config.Config, ops *restartOps) (*daemon.Health, error) 
 	if err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(ops.stdout, "ccgp restarted (pid %d) at %s\n", h.PID, base)
+	_, _ = fmt.Fprintf(ops.stdout, "ccgp restarted (pid %d) at %s\n", h.PID, base)
 	return h, nil
 }
 

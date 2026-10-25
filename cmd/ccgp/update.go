@@ -71,14 +71,14 @@ func updateFlow(checkOnly bool, base, dir, curVersion string,
 	}
 	switch compareVersions(curVersion, latest) {
 	case 0:
-		fmt.Fprintf(out, "ccgp is up to date (%s)\n", curVersion)
+		_, _ = fmt.Fprintf(out, "ccgp is up to date (%s)\n", curVersion)
 		return nil
 	case 1:
-		fmt.Fprintf(out, "this build (%s) is newer than the latest release (%s); nothing to do\n", curVersion, latest)
+		_, _ = fmt.Fprintf(out, "this build (%s) is newer than the latest release (%s); nothing to do\n", curVersion, latest)
 		return nil
 	}
 	if checkOnly {
-		fmt.Fprintf(out, "update available: %s -> %s\n", curVersion, latest)
+		_, _ = fmt.Fprintf(out, "update available: %s -> %s\n", curVersion, latest)
 		return nil
 	}
 
@@ -117,9 +117,9 @@ func updateFlow(checkOnly bool, base, dir, curVersion string,
 			return err
 		}
 	}
-	fmt.Fprintf(out, "updated ccgp %s -> %s\n", curVersion, latest)
+	_, _ = fmt.Fprintf(out, "updated ccgp %s -> %s\n", curVersion, latest)
 	if serverRunning() {
-		fmt.Fprintln(out, "restart the background server to use it: ccgp --restart")
+		_, _ = fmt.Fprintln(out, "restart the background server to use it: ccgp --restart")
 	}
 	return nil
 }
@@ -137,7 +137,7 @@ func latestVersion(ctx context.Context, client *http.Client, base string) (strin
 	if err != nil {
 		return "", fmt.Errorf("cannot look up the latest release: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	loc := resp.Header.Get("Location")
 	if resp.StatusCode < 300 || resp.StatusCode > 399 || loc == "" {
 		return "", fmt.Errorf("cannot find the latest release (HTTP %d from %s/latest)", resp.StatusCode, base)
@@ -283,7 +283,7 @@ func extractZipMember(data []byte, member string, max int64) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 		return readCapped(rc, member, max)
 	}
 	return nil, fmt.Errorf("%s is missing from the archive", member)
@@ -321,27 +321,27 @@ func installBinary(dir, name string, content []byte, goos string, rename func(fr
 	}
 	// WriteFile only applies the mode when it creates the file.
 	if err := os.Chmod(newPath, 0o755); err != nil {
-		os.Remove(newPath)
+		_ = os.Remove(newPath)
 		return fmt.Errorf("cannot make %s executable: %w", newPath, err)
 	}
 	if goos == "windows" {
-		os.Remove(oldPath)
+		_ = os.Remove(oldPath)
 		if err := rename(filepath.Join(dir, name), oldPath); err != nil {
-			os.Remove(newPath)
+			_ = os.Remove(newPath)
 			return fmt.Errorf("cannot move the old binary aside: %w", err)
 		}
 		if err := rename(newPath, filepath.Join(dir, name)); err != nil {
 			if backErr := rename(oldPath, filepath.Join(dir, name)); backErr != nil {
 				return fmt.Errorf("install failed (%v) and the backup could not be restored (%v)", err, backErr)
 			}
-			os.Remove(newPath)
+			_ = os.Remove(newPath)
 			return fmt.Errorf("cannot replace %s: %w", name, err)
 		}
-		os.Remove(oldPath)
+		_ = os.Remove(oldPath)
 		return nil
 	}
 	if err := rename(newPath, filepath.Join(dir, name)); err != nil {
-		os.Remove(newPath)
+		_ = os.Remove(newPath)
 		return fmt.Errorf("cannot replace %s: %w", name, err)
 	}
 	return nil
@@ -371,7 +371,7 @@ func updateDownload(ctx context.Context, client *http.Client, url string) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("download failed: %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download failed: %s: HTTP %d", url, resp.StatusCode)
 	}

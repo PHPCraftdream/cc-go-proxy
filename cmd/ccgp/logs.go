@@ -29,7 +29,7 @@ func tailLines(path string, n int) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read log: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -168,7 +168,7 @@ func copyFrom(w io.Writer, path string, offset int64) (int64, error) {
 		}
 		return 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return 0, err
 	}

@@ -195,7 +195,7 @@ func wantsHelp(inv invocation) bool {
 
 // printCommandHelp writes the help text of a command.
 func printCommandHelp(w io.Writer, c command) {
-	fmt.Fprint(w, commandHelpText(c))
+	_, _ = fmt.Fprint(w, commandHelpText(c))
 }
 
 // handleHelp prints the per-command help and reports whether it did. run()

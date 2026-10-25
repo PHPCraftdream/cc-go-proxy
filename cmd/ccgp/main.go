@@ -156,27 +156,27 @@ func buildStatus(base, logPath string, h *daemon.Health, healthErr error, cfg *c
 // renderStatusText prints the human-readable form of a status payload.
 func renderStatusText(w io.Writer, s statusData) error {
 	if s.Server.Running {
-		fmt.Fprintf(w, "server:  %s running (pid %d) at %s\n", s.Server.Version, s.Server.PID, s.Server.URL)
+		_, _ = fmt.Fprintf(w, "server:  %s running (pid %d) at %s\n", s.Server.Version, s.Server.PID, s.Server.URL)
 	} else {
-		fmt.Fprintf(w, "server:  not running at %s\n", s.Server.URL)
+		_, _ = fmt.Fprintf(w, "server:  not running at %s\n", s.Server.URL)
 	}
-	fmt.Fprintf(w, "log:     %s\n", s.LogFile)
+	_, _ = fmt.Fprintf(w, "log:     %s\n", s.LogFile)
 	switch s.Config.Mode {
 	case "missing":
-		fmt.Fprintf(w, "config:  %s (not created yet; created on first run)\n", s.Config.Path)
+		_, _ = fmt.Fprintf(w, "config:  %s (not created yet; created on first run)\n", s.Config.Path)
 	case "error":
-		fmt.Fprintf(w, "config:  error: %s\n", s.Config.Error)
+		_, _ = fmt.Fprintf(w, "config:  error: %s\n", s.Config.Error)
 	case "env":
-		fmt.Fprintln(w, "config:  env-only mode (no config.ktav)")
+		_, _ = fmt.Fprintln(w, "config:  env-only mode (no config.ktav)")
 	default:
-		fmt.Fprintf(w, "config:  %s\n", s.Config.Path)
+		_, _ = fmt.Fprintf(w, "config:  %s\n", s.Config.Path)
 		if s.CredsDir != "" {
-			fmt.Fprintf(w, "creds:   %s\n", s.CredsDir)
+			_, _ = fmt.Fprintf(w, "creds:   %s\n", s.CredsDir)
 			for _, p := range s.Providers {
-				fmt.Fprintf(w, "  provider %-12s %-7s %s\n", p.Name, p.Type, p.Login)
+				_, _ = fmt.Fprintf(w, "  provider %-12s %-7s %s\n", p.Name, p.Type, p.Login)
 			}
 			for _, p := range s.Profiles {
-				fmt.Fprintf(w, "  profile  %-12s -> %s\n", p.Name, p.Provider)
+				_, _ = fmt.Fprintf(w, "  profile  %-12s -> %s\n", p.Name, p.Provider)
 			}
 		}
 	}

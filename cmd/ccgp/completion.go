@@ -25,7 +25,7 @@ const completionUsage = `usage: ccgp --completion bash|zsh|powershell
   zsh         source <(ccgp --completion zsh)
   powershell  ccgp --completion powershell | Out-String | Invoke-Expression
 
-Put the line in your shell profile to keep it.`
+Put the line in your shell profile to keep it`
 
 func completionCmd(args []string) error {
 	if len(args) != 1 {

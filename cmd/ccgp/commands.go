@@ -174,7 +174,7 @@ func daemonServeArgs(serveArgs []string) []string {
 
 // printHelp writes the help text, with the command lines from the table.
 func printHelp(w io.Writer) {
-	fmt.Fprint(w, `ccgp - Claude Code bridge to OpenAI-compatible APIs and ChatGPT Codex
+	_, _ = fmt.Fprint(w, `ccgp - Claude Code bridge to OpenAI-compatible APIs and ChatGPT Codex
 
 Usage:
   ccgp <profile> [claude args...]  Ensure server + credentials, then run claude
@@ -185,9 +185,9 @@ Usage:
 			continue
 		}
 		head := strings.TrimSpace(c.name + " " + c.args)
-		fmt.Fprintf(w, "  ccgp %-34s %s\n", head, c.desc)
+		_, _ = fmt.Fprintf(w, "  ccgp %-34s %s\n", head, c.desc)
 	}
-	fmt.Fprint(w, `
+	_, _ = fmt.Fprint(w, `
 Profiles:
   ccgp --profile add [name] --like <profile>      New profile with its OWN login (e.g. a second Codex account: ccgp codex2)
   ccgp --profile add <name> --provider <p>        New profile on an existing login [--model M [--window N]]
