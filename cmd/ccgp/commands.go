@@ -43,6 +43,7 @@ func commands() []command {
 		{name: "--logout", args: "<provider> [--yes]", desc: "Remove the stored login (OAuth tokens or API key) of a provider", ensureConfig: true, run: logoutCmd},
 		{name: "--completion", args: "bash|zsh|powershell", desc: "Print a shell completion script (see its usage error for the install line)", ensureConfig: false, run: completionCmd},
 		{name: "--update", args: "[--check]", desc: "Self-update from the latest GitHub release (--check: only report)", run: updateCmd},
+		{name: "--doctor", args: "[--offline] [--json]", desc: "Run diagnostics (claude, config, server, logins, backends, files)", ensureConfig: false, run: doctorCmd},
 		{name: "--version", args: "", desc: "Show version", run: versionCmd},
 		{name: "--help", args: "", desc: "Show this help", run: helpCmd},
 		{name: "--complete", args: "<prog> <word>...", desc: "", hidden: true, run: completeCmd},

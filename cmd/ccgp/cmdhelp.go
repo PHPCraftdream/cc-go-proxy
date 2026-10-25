@@ -70,6 +70,22 @@ Examples:
   ccgp --logout codex
   ccgp --logout codex --yes
 `,
+	"--doctor": `ccgp --doctor [--offline] [--json]
+
+Run diagnostics and report every check as ok, warn or FAIL; exit code 1 when
+a check fails.
+
+Checked: the claude binary, the config, the background server (staleness vs.
+this binary), the login state of every provider (token age for Codex),
+reachability of each backend base URL, the creds directory permissions and
+the server log directory.
+
+  --offline    skip the external backend reachability probes (the local server check still runs)
+  --json       print the report as one JSON document
+
+Example:
+  ccgp --doctor
+`,
 	"--models": `ccgp --models [apply] [-v] [profile]
 
 Show the newest Codex models and how they map to the Claude model tiers.
