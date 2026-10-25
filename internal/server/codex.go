@@ -106,7 +106,9 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	// The access line is printed when the handler returns, before the stream
 	// ends; a failure inside the stream gets its own line.
 	profile, mapped, started := cfg.Profile, probe.Model+" -> "+model, time.Now()
+	release := deferActive(c)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer release()
 		defer cancel()
 		defer func() { _ = resp.Body.Close() }()
 		tr := &codex.Translator{Model: probe.Model, Emit: func(ev string, data any) {

@@ -17,7 +17,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
@@ -56,6 +55,10 @@ func run(args []string) error {
 			return err
 		}
 		return launch(inv.profile, inv.args)
+	}
+	// Per-command help runs before ensureConfig, so --help always works.
+	if handleHelp(inv, os.Stdout) {
+		return nil
 	}
 	if inv.cmd.ensureConfig {
 		if err := ensureConfig(); err != nil {
@@ -259,24 +262,6 @@ func serve(args []string) error {
 		return fmt.Errorf("already running (pid %d)", h.PID)
 	}
 	return server.Start(cfg)
-}
-
-// ensureServer returns the running server's health, starting it detached if needed.
-func ensureServer(cfg *config.Config, serveArgs []string) (*daemon.Health, error) {
-	base := daemon.BaseURL(cfg.Host, cfg.Port)
-	if h, err := daemon.Check(base); err == nil {
-		return h, nil
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	logPath, err := daemon.LogPath()
-	if err != nil {
-		return nil, err
-	}
-	args := daemonServeArgs(serveArgs)
-	return daemon.Start(exe, args, logPath, base, 10*time.Second)
 }
 
 // listenAddr resolves host/port without requiring a fully valid config.

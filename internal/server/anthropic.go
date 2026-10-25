@@ -136,7 +136,9 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		c.Set("Cache-Control", "no-cache")
 		c.Set("X-Accel-Buffering", "no")
+		release := deferActive(c)
 		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer release()
 			defer cancel()
 			defer func() { _ = resp.Body.Close() }()
 			buf := make([]byte, 32<<10)

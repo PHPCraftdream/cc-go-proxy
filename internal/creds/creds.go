@@ -154,6 +154,19 @@ func (s Store) DeleteProviderCreds(provider string) error {
 	return nil
 }
 
+// HasProviderCreds reports whether any stored login file of the provider
+// (OAuth tokens or API key, current or legacy format) exists, valid or not.
+func (s Store) HasProviderCreds(provider string) bool {
+	for _, p := range []string{s.OAuthPath(provider), s.apiKeyPath(provider)} {
+		for _, f := range []string{p, ktavfile.LegacyPath(p)} {
+			if _, err := os.Stat(f); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // SaveAPIKey stores a provider key owner-only.
 func (s Store) SaveAPIKey(provider, key string) error {
 	return ktavfile.Write(s.apiKeyPath(provider), apiKeyFile{APIKey: key})

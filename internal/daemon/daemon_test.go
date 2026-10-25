@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -56,5 +57,29 @@ func TestOpenLogRotates(t *testing.T) {
 	}
 	if st, _ := os.Stat(p); st.Size() != 0 {
 		t.Errorf("new log size = %d", st.Size())
+	}
+}
+
+func TestHealthNewFields(t *testing.T) {
+	b := []byte(`{"status":"ok","service":"ccgp","version":"0.1.0","pid":1}`)
+	var h Health
+	if err := json.Unmarshal(b, &h); err != nil {
+		t.Fatal(err)
+	}
+	if h.Exe != "" || h.ExeMod != 0 || h.Active != 0 {
+		t.Errorf("old payload should decode to zero new fields: %+v", h)
+	}
+	b, err := json.Marshal(Health{Status: "ok", Service: "ccgp", Version: "0.1.0", PID: 2, Exe: "/ccgp", ExeMod: 5, Active: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]any{"exe": "/ccgp", "exe_mod": float64(5), "active": float64(3)} {
+		if m[k] != want {
+			t.Errorf("%s = %v, want %v", k, m[k], want)
+		}
 	}
 }

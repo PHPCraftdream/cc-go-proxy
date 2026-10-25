@@ -213,3 +213,26 @@ func TestCorruptCredsFileIsAnError(t *testing.T) {
 		t.Error("corrupt key file read as empty")
 	}
 }
+
+func TestHasProviderCreds(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if s.HasProviderCreds("p") {
+		t.Fatal("empty store reports a login")
+	}
+	if err := s.SaveAPIKey("p", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HasProviderCreds("p") || s.HasProviderCreds("other") {
+		t.Fatal("api key not detected, or detected for another provider")
+	}
+	if err := s.DeleteProviderCreds("p"); err != nil {
+		t.Fatal(err)
+	}
+	// A legacy or unreadable file still counts: logout must be able to remove it.
+	if err := os.WriteFile(ktavfile.LegacyPath(s.OAuthPath("p")), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HasProviderCreds("p") {
+		t.Fatal("legacy file not detected")
+	}
+}

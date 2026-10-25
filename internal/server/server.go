@@ -146,20 +146,19 @@ func Start(cfg *config.Config) error {
 
 	// Middleware. No CORS: browsers must not reach the proxy.
 	app.Use(recover.New())
+	flight := &inFlight{}
+	app.Use(flight.middleware())
 
 	// Enable HTTP logging only when simple log mode is enabled
 	if cfg.SimpleLog {
 		app.Use(accessLog(os.Stdout))
 	}
 
-	// Health check endpoint; pid lets `ccgp --stop` verify the process.
+	// Health check endpoint; pid lets `ccgp --stop` verify the process,
+	// exe/exe_mod let `ccgp` detect a server started from an older binary.
+	exe, exeMod := exeInfo()
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
-			"status":  "ok",
-			"service": "ccgp",
-			"version": ProxyVersion,
-			"pid":     os.Getpid(),
-		})
+		return c.JSON(healthPayload(flight, exe, exeMod))
 	})
 
 	registerCallRoutes(app, requireProfile(index, build), &sessions{store: store})

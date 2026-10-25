@@ -24,6 +24,9 @@ type Health struct {
 	Service string `json:"service"`
 	Version string `json:"version"`
 	PID     int    `json:"pid"`
+	Exe     string `json:"exe,omitempty"`     // server binary path; missing on old servers
+	ExeMod  int64  `json:"exe_mod,omitempty"` // binary mtime (unix ns); 0 = unknown
+	Active  int64  `json:"active"`            // in-flight model requests
 }
 
 // BaseURL is http://host:port.

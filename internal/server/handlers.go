@@ -194,7 +194,9 @@ func handleStreamingMessages(c *fiber.Ctx, openaiReq *models.OpenAIRequest, cfg 
 	c.Set("Connection", "keep-alive")
 	c.Set("X-Accel-Buffering", "no")
 
+	release := deferActive(c)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		defer release()
 		if cfg.Debug {
 			fmt.Printf("[DEBUG] StreamWriter: Starting\n")
 		}
