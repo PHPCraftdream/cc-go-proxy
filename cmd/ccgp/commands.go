@@ -25,19 +25,19 @@ type command struct {
 // commands is ordered; later tasks append entries.
 func commands() []command {
 	return []command{
-		{"--serve", "[-d] [-s]", "Run server in foreground (-d debug, -s request log)", true, serveCmd},
-		{"--start", "", "Start background server", true, startCmd},
-		{"--stop", "", "Stop background server", false, stopCmd},
-		{"--status", "", "Show background server status", false, statusCmd},
-		{"--login", "<provider> [--device]", "Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)", true, loginCmd},
-		{"--models", "[apply] [-v] [profile]", "Show (or write into config) the newest Codex models per Claude tier", true, modelsCmd},
-		{"--send", "<from> <to> [count]", "Copy the latest sessions (default 10) of the current directory between \"claude\" and a profile", true, sessionsSendCmd},
-		{"--import", "<profile> [count]", "Same as: ccgp --send claude <profile>", true, sessionsImportCmd},
-		{"--export", "<profile> [count]", "Same as: ccgp --send <profile> claude", true, sessionsExportCmd},
-		{"--profile", "add|list|rm", "Manage profiles (and their providers) in config.ktav", true, profileDispatchCmd},
-		{"--config", "reset", "Back up the config and regenerate the default one", false, configCmd},
-		{"--version", "", "Show version", false, versionCmd},
-		{"--help", "", "Show this help", false, helpCmd},
+		{name: "--serve", args: "[-d] [-s]", desc: "Run server in foreground (-d debug, -s request log)", ensureConfig: true, run: serveCmd},
+		{name: "--start", args: "", desc: "Start background server", ensureConfig: true, run: startCmd},
+		{name: "--stop", args: "", desc: "Stop background server", run: stopCmd},
+		{name: "--status", args: "", desc: "Show background server status", run: statusCmd},
+		{name: "--login", args: "<provider> [--device]", desc: "Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)", ensureConfig: true, run: loginCmd},
+		{name: "--models", args: "[apply] [-v] [profile]", desc: "Show (or write into config) the newest Codex models per Claude tier", ensureConfig: true, run: modelsCmd},
+		{name: "--send", args: "<from> <to> [count]", desc: "Copy the latest sessions (default 10) of the current directory between \"claude\" and a profile", ensureConfig: true, run: sessionsSendCmd},
+		{name: "--import", args: "<profile> [count]", desc: "Same as: ccgp --send claude <profile>", ensureConfig: true, run: sessionsImportCmd},
+		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
+		{name: "--profile", args: "add|list|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
+		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
+		{name: "--version", args: "", desc: "Show version", run: versionCmd},
+		{name: "--help", args: "", desc: "Show this help", run: helpCmd},
 	}
 }
 
