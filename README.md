@@ -28,15 +28,15 @@ ccgpy codex                    # same, with every permission prompt off (--dange
   OpenAI-compatible APIs with a key (OpenAI, OpenRouter, Ollama, …), and Anthropic-compatible endpoints such as z.ai.
 - **Named profiles.** Each profile has its own URL token and its own provider; Claude's `fable` / `opus` / `sonnet` /
   `haiku` map to the models you choose, with the real context window of each, so compaction fires at the right time.
-  Several logins are supported: `ccgp profile add` clones a profile with its own login (a second ChatGPT account),
+  Several logins are supported: `ccgp --profile add` clones a profile with its own login (a second ChatGPT account),
   adds a profile to an existing login, or wires up a new backend.
 - **Locked down.** Every request needs `/call/<token>/…`; the server listens on loopback; secrets are owner-only on disk.
 - **Your Claude credentials stay out.** Each profile runs Claude Code in its own config directory with your agents,
   skills, commands and plugins copied in, but never an official login or API key.
-- **Sessions travel.** `ccgp send` (aliases `ccgp import` / `ccgp export`) copy the latest sessions of the
+- **Sessions travel.** `ccgp --send` (aliases `ccgp --import` / `ccgp --export`) copy the latest sessions of the
   current directory between Claude Code and a profile, or between two profiles.
 - **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command, and
-  `ccgp profile add` / `rm` validate the result and keep a backup first ([details](docs/configuration.md)).
+  `ccgp --profile add` / `rm` validate the result and keep a backup first ([details](docs/configuration.md)).
 - **Windows first**, also Linux and macOS; Windows is tested in CI.
 
 ## Install
@@ -77,27 +77,37 @@ On the first run ccgp:
 4. generates the profile's URL token;
 5. runs `claude` with `ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/<token>`.
 
-For z.ai: `ccgp login zai` once (asks for your API key), then `ccgp zai`.
+For z.ai: `ccgp --login zai` once (asks for your API key), then `ccgp zai`.
 
-A second ChatGPT account: `ccgp profile add codex2 --like codex`, then `ccgp codex2` (signs in on first start).
+A second ChatGPT account: `ccgp --profile add codex2 --like codex`, then `ccgp codex2` (signs in on first start).
 Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 
 ## Commands
+
+Commands start with `--`; a word without dashes is always a profile (`ccgp status` would run a profile called
+`status`). Per command: `ccgp --<command> --help`. Details: [CLI reference](docs/cli.md).
 
 | Command | Purpose |
 | --- | --- |
 | `ccgp <profile> [claude args…]` | Ensure server and credentials, run `claude` through the profile |
 | `ccgpy <profile> [claude args…]` | Same as `ccgp <profile> --dangerously-skip-permissions …`: Claude Code without permission prompts, so use it only where that is acceptable |
-| `ccgp login <provider> [--device]` | (Re)authenticate. Codex: browser OAuth, or `--device` for a device code. Others: API key |
-| `ccgp models [apply] [-v] [profile]` | Show, or write into the config, the newest models per Claude tier |
-| `ccgp send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |
-| `ccgp import <profile> [count]` | Alias of `ccgp send claude <profile>` |
-| `ccgp export <profile> [count]` | Alias of `ccgp send <profile> claude` |
-| `ccgp profile add\|list\|rm` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type`) |
-| `ccgp start` / `stop` / `status` | Manage the background server and show paths and login state |
-| `ccgp serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
-| `ccgp config reset` | Back up the config and write the default one |
-| `ccgp version` | Print the version |
+| `ccgp --login <provider> [--device]` | (Re)authenticate. Codex: browser OAuth, or `--device` for a device code. Others: API key |
+| `ccgp --logout <provider> [--yes]` | Remove the stored login (OAuth tokens or API key) of a provider; the config is not touched |
+| `ccgp --models [apply] [-v] [--json] [profile]` | Show, or write into the config, the newest models per Claude tier |
+| `ccgp --which <profile> <model> [--json]` | Show where a Claude model name is routed in a profile, offline |
+| `ccgp --send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |
+| `ccgp --import <profile> [count]` | Alias of `ccgp --send claude <profile>` |
+| `ccgp --export <profile> [count]` | Alias of `ccgp --send <profile> claude` |
+| `ccgp --profile add\|list\|rm` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type`) |
+| `ccgp --start` / `--stop` / `--restart` | Manage the background server |
+| `ccgp --status [--json]` | Show the server, paths and login state |
+| `ccgp --logs [-f] [-n N]` | Show the tail of the background server log, `-f` follows it |
+| `ccgp --doctor [--offline] [--json]` | Check `claude`, config, server, logins, backend reachability and permissions |
+| `ccgp --serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
+| `ccgp --config reset` | Back up the config and write the default one |
+| `ccgp --update [--check]` | Update ccgp and ccgpy from the latest GitHub release (checksum verified) |
+| `ccgp --completion bash\|zsh\|powershell` | Print a shell completion script |
+| `ccgp --version` | Print the version |
 
 ## Model label metadata
 
@@ -112,10 +122,10 @@ The response contains only `kind: "ccgp:model-route:v1"`, `requestedModel`, and 
 | Shape | A proxy you configure with env vars and point Claude Code at | A launcher + proxy: `ccgp <profile>` does the whole run |
 | Backends | OpenAI-compatible Chat Completions (OpenRouter, OpenAI, Ollama) | Those, plus ChatGPT Codex via subscription OAuth (Responses API) and Anthropic-compatible endpoints (z.ai) |
 | Routing and access | One backend (`OPENAI_BASE_URL`) per proxy | Several providers; named profiles, each with its own URL token and its own provider |
-| Config | `.env` and environment | Ktav `providers[]` / `profiles[]`, per-rule model mapping, generated mappings (`ccgp models`), hot reload |
+| Config | `.env` and environment | Ktav `providers[]` / `profiles[]`, per-rule model mapping, generated mappings (`ccgp --models`), hot reload |
 | Context | — | Per-model context windows; compaction window set for the session's main model |
 | Claude credentials | Not addressed | Never reach a ccgp session: isolated config directory per profile |
-| Sessions | — | `ccgp send` copies the current directory's latest sessions between profiles (and your own Claude Code via `import` / `export`) |
+| Sessions | — | `ccgp --send` copies the current directory's latest sessions between profiles (and your own Claude Code via `--import` / `--export`) |
 | Secrets | `.env` | Separate owner-only credentials directory; OAuth refresh tokens rotate safely |
 | Platforms | Builds for macOS, Linux and Windows | Windows first (owner-only ACLs, detached background process, tested in CI), also Linux and macOS |
 | Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, install scripts |
@@ -127,9 +137,10 @@ upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg an
 
 | | |
 | --- | --- |
+| [CLI reference](docs/cli.md) | Every command: flags, `--json`, `--doctor`, `--restart`, `--update`, completion |
 | [Configuration](docs/configuration.md) | Config file, providers, profiles (`profile add` / `rm`), model rules, context windows |
 | [Providers](docs/providers.md) | Codex, API keys, z.ai: sign-in, model mapping, effort levels |
-| [Sessions](docs/sessions.md) | `ccgp send`, `import` / `export`, thinking blocks |
+| [Sessions](docs/sessions.md) | `ccgp --send`, `--import` / `--export`, thinking blocks |
 | [Security](docs/security.md) | Token URLs, secrets at rest, why official credentials never reach a session |
 | [Architecture](docs/architecture.md) | Layout, request flow, invariants |
 | [Releasing](docs/releasing.md) | How releases, npm (token and Trusted Publishing) and license checks work |

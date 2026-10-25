@@ -9,7 +9,7 @@ to a provider and to model-mapping rules ([configuration.md](configuration.md)).
 | `codex_api` | OpenAI, OpenRouter, Ollama, any OpenAI-compatible API | Anthropic Messages → Chat Completions | API key |
 | `anthropic_compat` | z.ai GLM, any Anthropic-compatible endpoint | Anthropic Messages, forwarded unconverted | API key |
 
-`ccgp login <provider>` authenticates; every `ccgp <profile>` run also does it when credentials are missing.
+`ccgp --login <provider>` authenticates; every `ccgp <profile>` run also does it when credentials are missing.
 
 Claude Code asks for token counts all the time (`/v1/messages/count_tokens`). `anthropic_compat` forwards the call to
 the endpoint; `codex` and `codex_api` have no counting endpoint, so ccgp answers with a length-based estimate
@@ -18,8 +18,8 @@ the endpoint; `codex` and `codex_api` have no counting endpoint, so ccgp answers
 ## `codex` — ChatGPT subscription
 
 ```sh
-ccgp login codex            # browser sign-in: prints a link, never opens a browser itself
-ccgp login codex --device   # device code instead, for machines without a browser
+ccgp --login codex            # browser sign-in: prints a link, never opens a browser itself
+ccgp --login codex --device   # device code instead, for machines without a browser
 ```
 
 - **Browser flow** (default) is OAuth with PKCE and a loopback callback on `localhost:1455`.
@@ -35,7 +35,7 @@ ccgp login codex --device   # device code instead, for machines without a browse
 
 ### Model mapping for Codex
 
-`ccgp models` reads your account's model catalog (`…/codex/models`) and maps Claude's tiers to the newest releases:
+`ccgp --models` reads your account's model catalog (`…/codex/models`) and maps Claude's tiers to the newest releases:
 
 | Claude tier | Codex model |
 | --- | --- |
@@ -45,8 +45,8 @@ ccgp login codex --device   # device code instead, for machines without a browse
 | Haiku | `luna` of the release before the newest one |
 | anything else | the Sonnet model (the final `match: *` rule) |
 
-`ccgp models apply [profile]` writes it into the profile's managed block, and every fresh
-`ccgp login codex` does too. `ccgp models -v` shows every catalog field.
+`ccgp --models apply [profile]` writes it into the profile's managed block, and every fresh
+`ccgp --login codex` does too. `ccgp --models -v` shows every catalog field.
 
 The catalog has two numbers: `context_window` is only the default of Codex clients and
 `max_context_window` is the largest input the backend takes. For the GPT-6 generation and newer, ccgp
@@ -61,12 +61,12 @@ A model with no window at all is written as 272000 and noted.
 
 ## Several accounts
 
-`ccgp profile add codex2 --like codex` creates a second `codex`-type provider (its own login, `oauth-codex2.ktav`)
+`ccgp --profile add codex2 --like codex` creates a second `codex`-type provider (its own login, `oauth-codex2.ktav`)
 and a profile named `codex2`; `ccgp codex2` signs in on first start. Use this for separate personal and work
 accounts. Pooling accounts to get around subscription limits is against OpenAI's terms.
 
 The browser sign-in link opens in a browser where another account may already be signed in: use a private window
-or another browser profile, or `ccgp login codex2 --device`. Any provider type can be cloned with `--like`
+or another browser profile, or `ccgp --login codex2 --device`. Any provider type can be cloned with `--like`
 (not only `codex`). Details: [configuration.md](configuration.md#creating-and-removing-profiles).
 
 ## `codex_api` — API key
@@ -79,12 +79,12 @@ values in the profile against your account: ccgp cannot know them for an arbitra
 ## `anthropic_compat` — z.ai (GLM)
 
 ```sh
-ccgp login zai     # asks for your z.ai API key once (hidden input), saves it owner-only
+ccgp --login zai     # asks for your z.ai API key once (hidden input), saves it owner-only
 ccgp zai           # Claude Code through z.ai; extra arguments go to claude
 ```
 
 Requests go to `https://api.z.ai/api/anthropic` unconverted: only the model is mapped and the model identity
-in the system prompt is corrected. `ccgp models apply zai` (also run when the key is saved) writes the
+in the system prompt is corrected. `ccgp --models apply zai` (also run when the key is saved) writes the
 built-in preset:
 
 | Claude tier | z.ai model | Context |

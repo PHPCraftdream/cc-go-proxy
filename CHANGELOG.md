@@ -9,7 +9,20 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Changed
+- **Breaking:** CLI commands start with `--`: `ccgp --status`, `--login`, `--models`, `--profile`, `--send`, `--import`,
+  `--export`, `--start`, `--stop`, `--serve`, `--config`, `--version`, `--help` (the bare words are gone). A word
+  without dashes is always a profile, so profiles may now be named `status`, `login`, `serve`; only `claude` stays
+  reserved. An unknown first argument with a dash is an error, not a profile run.
+- `ccgp <profile>` restarts a background server that was started from an older binary when it is idle, and warns
+  when requests are in flight. `/health` now also reports the server binary's path, its mtime and the number of
+  in-flight model requests.
+
 ### Added
+- `ccgp --restart`, `--logs [-f] [-n N]`, `--doctor [--offline] [--json]`, `--which <profile> <model>`,
+  `--logout <provider>`, `--update [--check]` (checksum-verified self-update from the GitHub release) and
+  `--completion bash|zsh|powershell`; `--json` for `--status`, `--profile list` and `--models`;
+  `ccgp --<command> --help` for every command. See [docs/cli.md](docs/cli.md).
 - Authenticated model-label metadata at `/call/<token>/model?requested=<model-id>`, resolved with the inference routing rules without exposing tokens or invoking upstream inference.
 - `install.sh` (Linux, macOS) and `install.ps1` (Windows): install `ccgp` and `ccgpy` from the GitHub release for the OS and
   CPU, checked against `SHA256SUMS`. CI runs both against the published release.

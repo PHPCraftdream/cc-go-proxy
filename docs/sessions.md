@@ -1,16 +1,16 @@
 # Moving sessions between profiles and Claude Code
 
 A profile runs Claude Code with its own config directory, so its sessions are separate from yours and from
-other profiles'. `ccgp send` moves the sessions of **the directory you run it in** across; `import` and `export`
+other profiles'. `ccgp --send` moves the sessions of **the directory you run it in** across; `--import` and `--export`
 are aliases:
 
 ```sh
-cd D:devmyproject
-ccgp send codex codex2 3   # the 3 latest sessions of this directory in profile codex -> profile codex2
-ccgp send zai claude       # the 10 latest sessions of this directory in the zai profile -> your Claude Code
-ccgp send claude zai       # this directory's latest sessions in your Claude Code -> the zai profile
-ccgp import zai            # alias of: ccgp send claude zai
-ccgp export zai 3          # alias of: ccgp send zai claude
+cd /path/to/myproject
+ccgp --send codex codex2 3   # the 3 latest sessions of this directory in profile codex -> profile codex2
+ccgp --send zai claude       # the 10 latest sessions of this directory in the zai profile -> your Claude Code
+ccgp --send claude zai       # this directory's latest sessions in your Claude Code -> the zai profile
+ccgp --import zai            # alias of: ccgp --send claude zai
+ccgp --export zai 3          # alias of: ccgp --send zai claude
 ```
 
 `from` and `to` are a configured profile name or the word `claude` (your own Claude Code directory); they must

@@ -8,21 +8,21 @@ first run, from [`config.example.ktav`](../internal/config/config.example.ktav):
 | Windows | `%APPDATA%\cc-go-proxy\config.ktav` | `%APPDATA%\cc-go-proxy\creds\` | `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log` |
 | Linux / macOS | `~/.config/cc-go-proxy/config.ktav` | `~/.config/cc-go-proxy/creds/` | `~/.cache/cc-go-proxy/logs/ccgp.log` |
 
-`ccgp status` prints the real paths. `CCGP_CONFIG` points ccgp at another config file.
+`ccgp --status` prints the real paths. `CCGP_CONFIG` points ccgp at another config file.
 
 The config is **yours**: ccgp reads it and changes it only on your command.
 
-- `ccgp profile add` / `rm` edit the text surgically (comments, key order and line endings, CRLF included, stay),
+- `ccgp --profile add` / `rm` edit the text surgically (comments, key order and line endings, CRLF included, stay),
   validate the result with the real loader **before** replacing the file, and keep a backup
   `config.ktav.bak-<timestamp>` (with a `-N` suffix if the name is taken, so two edits in the same second never
   overwrite each other's backup).
-- `ccgp models apply`, and the refresh after a fresh `ccgp login codex`, rewrite only the lines between a
+- `ccgp --models apply`, and the refresh after a fresh `ccgp --login codex`, rewrite only the lines between a
   profile's `ccgp:managed-models` markers ([below](#generated-model-mappings)); no backup is made.
-- `ccgp config reset` writes the default template and keeps the old file as a backup.
+- `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
 Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens) lives in the
 separate `creds` directory, owner-only (Windows: explicit DACL, Unix: `0600`).
-A running server picks up config edits without a restart; only a change of the listen address or `max_body_mb` needs `ccgp stop`.
+A running server picks up config edits without a restart; only a change of the listen address or `max_body_mb` needs `ccgp --stop`.
 
 ## Layout
 
@@ -77,7 +77,7 @@ profiles: [
 `max_body_mb` is the largest request body in MiB, default `256` (an absent key means the default; `0` too). Claude Code resends the
 whole conversation on every call, and the reasoning signatures of a long session alone take megabytes, so a small cap
 cuts live sessions off with a connection reset. A larger body is answered with `413` and a `rejected` line in the log.
-Changing it needs `ccgp stop` (like the listen address).
+Changing it needs `ccgp --stop` (like the listen address).
 
 ### `providers[]`
 
@@ -108,11 +108,11 @@ and `context_window` (that model's input window in tokens). Without any rule, th
 ccgp can edit the config for you; every change is surgical, validated and backed up (see above):
 
 ```sh
-ccgp profile add codex2 --like codex                       # new login + profile, copying the source profile
-ccgp profile add codex-alt --provider codex                # new profile on the existing codex login
-ccgp profile add myai --type anthropic_compat --base-url https://example.internal/api --model my-model
-ccgp profile list
-ccgp profile rm codex2 [--yes] [--purge]
+ccgp --profile add codex2 --like codex                       # new login + profile, copying the source profile
+ccgp --profile add codex-alt --provider codex                # new profile on the existing codex login
+ccgp --profile add myai --type anthropic_compat --base-url https://example.internal/api --model my-model
+ccgp --profile list
+ccgp --profile rm codex2 [--yes] [--purge]
 ```
 
 - A **login belongs to a provider** (its `oauth-<provider>.ktav` / `apikey-<provider>.ktav` in the `creds`
@@ -125,10 +125,10 @@ ccgp profile rm codex2 [--yes] [--purge]
 - `--provider <provider>` adds a profile to an existing login. With `--model M` it gets one catch-all rule
   (`--window N` sets the window, default 272000 — the command says so); without, the rules of the provider's
   first profile (by name) are copied. If the provider has no profile yet, the new one gets no rules and the
-  command tells you to run `ccgp models apply <name>` (codex and preset providers) or to add a `models` list.
+  command tells you to run `ccgp --models apply <name>` (codex and preset providers) or to add a `models` list.
 - `--type <codex|codex_api|anthropic_compat>` [--base-url URL] creates a new backend (OpenRouter, Ollama, any
   Anthropic-compatible API). Without `--model`, a `codex` provider or one whose URL has a built-in preset gets
-  an empty managed block, ready for `ccgp models apply <name>`.
+  an empty managed block, ready for `ccgp --models apply <name>`.
 - `profile add` never signs in; it prints `run: ccgp <name>` — the launcher signs in on first start.
   It refuses reserved, invalid or already-used names and unknown sources, and needs the config file
   (env-only mode has a single implicit profile).
@@ -142,10 +142,9 @@ ccgp profile rm codex2 [--yes] [--purge]
 
 ### Reserved profile names
 
-`serve`, `start`, `stop`, `status`, `login`, `help`, `version`, `models`, `config`, `import`, `export`,
-`profile`, `send`, `claude` — a profile name must not collide with a `ccgp` command or the `ccgp send`
-endpoint `claude`. `ccgp profile add` applies the same rule to the provider it creates, which is named like
-its profile.
+Only `claude` is reserved: it is the endpoint name of your own Claude Code directory in `ccgp --send claude <profile>`.
+Commands start with `--`, so a profile may be called `status`, `login` or `serve`. `ccgp --profile add` applies the
+same rule to the provider it creates, which is named like its profile.
 
 ## Context windows and compaction
 
@@ -163,8 +162,8 @@ compacts earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), and variables you se
 
 ## Generated model mappings
 
-`ccgp models` prints what the backend offers and how Claude's tiers would map (read-only);
-`ccgp models apply [profile]` writes it. It rewrites only the lines between the markers
+`ccgp --models` prints what the backend offers and how Claude's tiers would map (read-only);
+`ccgp --models apply [profile]` writes it. It rewrites only the lines between the markers
 
 ```
 ## ccgp:managed-models begin <profile>
@@ -173,11 +172,11 @@ compacts earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), and variables you se
 
 of that profile (added if missing; the profile's old `default_model`, `context_window` and `models`
 are then replaced). Your comments and everything else stay. For `codex`, the mapping is also refreshed
-after every fresh `ccgp login codex`. Details per provider: [providers.md](providers.md).
+after every fresh `ccgp --login codex`. Details per provider: [providers.md](providers.md).
 
 ## Env-only mode
 
 If there is no config file — ccgp does not create one when `PROXY_TOKEN` is set — a single implicit
 profile `default` is built from the environment: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `PROXY_TOKEN`
 (at least 32 characters), `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`, `HOST`, `PORT`.
-See [`.env.example`](../.env.example). Login flows, profiles and `ccgp models` need the config file.
+See [`.env.example`](../.env.example). Login flows, profiles and `ccgp --models` need the config file.
