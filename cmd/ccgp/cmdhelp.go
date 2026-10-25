@@ -131,6 +131,19 @@ Edit the new file to configure providers, profiles and model names.
 Example:
   ccgp --config reset
 `,
+	"--update": `ccgp --update [--check]
+
+Update ccgp (and ccgpy, when installed next to it) from the latest GitHub
+release. The download is verified against the release's SHA256SUMS before
+anything is replaced; the running binary is replaced safely (a backup is
+kept while it runs). Config and credentials are not touched.
+
+  --check    only report whether an update is available
+
+Examples:
+  ccgp --update
+  ccgp --update --check
+`,
 	"--version": `ccgp --version
 
 Print the ccgp version.

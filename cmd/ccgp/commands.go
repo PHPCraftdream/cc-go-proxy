@@ -42,6 +42,7 @@ func commands() []command {
 		{name: "--restart", args: "", desc: "Stop and start the background server", ensureConfig: true, run: restartCmd},
 		{name: "--logout", args: "<provider> [--yes]", desc: "Remove the stored login (OAuth tokens or API key) of a provider", ensureConfig: true, run: logoutCmd},
 		{name: "--completion", args: "bash|zsh|powershell", desc: "Print a shell completion script (see its usage error for the install line)", ensureConfig: false, run: completionCmd},
+		{name: "--update", args: "[--check]", desc: "Self-update from the latest GitHub release (--check: only report)", run: updateCmd},
 		{name: "--version", args: "", desc: "Show version", run: versionCmd},
 		{name: "--help", args: "", desc: "Show this help", run: helpCmd},
 		{name: "--complete", args: "<prog> <word>...", desc: "", hidden: true, run: completeCmd},
