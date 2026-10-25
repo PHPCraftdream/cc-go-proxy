@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
@@ -53,7 +53,7 @@ func updateCmd(args []string) error {
 // whole lookup (config load included) lives here so tests can stub it.
 func defaultServerRunning() bool {
 	host, port := listenAddr()
-	_, err := daemon.Check(daemon.BaseURL(host, port))
+	_, err := angel.Check(angel.BaseURL(host, port))
 	return err == nil
 }
 

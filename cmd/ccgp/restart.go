@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
@@ -16,7 +16,7 @@ import (
 // than this binary: a different version, or the executable file on disk has
 // been replaced since the server started (same path, other mod time).
 // Missing/unknown fields mean an old server: not stale.
-func serverStale(h *daemon.Health, ownVersion, ownExe string, ownExeMod int64) (stale bool, why string) {
+func serverStale(h *angel.Health, ownVersion, ownExe string, ownExeMod int64) (stale bool, why string) {
 	if h.Version != ownVersion {
 		return true, fmt.Sprintf("server version %s, this binary is %s", h.Version, ownVersion)
 	}
@@ -42,9 +42,9 @@ func ownExeInfo() (string, int64) {
 // serverChecks bundles the process operations of ensureServer so the stale
 // detection can be tested without real servers.
 type serverChecks struct {
-	check      func(base string) (*daemon.Health, error)
+	check      func(base string) (*angel.Health, error)
 	stop       func(base string, timeout time.Duration) error
-	start      func(exe string, args []string, logPath, base string, timeout time.Duration) (*daemon.Health, error)
+	start      func(exe string, args []string, logPath, base string, timeout time.Duration) (*angel.Health, error)
 	stderr     io.Writer
 	ownVersion string
 	ownExe     string
@@ -54,9 +54,9 @@ type serverChecks struct {
 func defaultServerChecks() *serverChecks {
 	exe, mod := ownExeInfo()
 	return &serverChecks{
-		check:      daemon.Check,
-		stop:       daemon.Stop,
-		start:      daemon.Start,
+		check:      angel.Check,
+		stop:       angel.Stop,
+		start:      angel.Start,
 		stderr:     os.Stderr,
 		ownVersion: server.ProxyVersion,
 		ownExe:     exe,
@@ -67,12 +67,12 @@ func defaultServerChecks() *serverChecks {
 // ensureServer returns the running server's health, starting it detached if
 // needed. A stale server (older binary) is restarted when idle; when requests
 // are in flight it is kept and reported, because stopping it would cut them.
-func ensureServer(cfg *config.Config, serveArgs []string) (*daemon.Health, error) {
+func ensureServer(cfg *config.Config, serveArgs []string) (*angel.Health, error) {
 	return ensureServerWith(cfg, serveArgs, defaultServerChecks())
 }
 
-func ensureServerWith(cfg *config.Config, serveArgs []string, sc *serverChecks) (*daemon.Health, error) {
-	base := daemon.BaseURL(cfg.Host, cfg.Port)
+func ensureServerWith(cfg *config.Config, serveArgs []string, sc *serverChecks) (*angel.Health, error) {
+	base := angel.BaseURL(cfg.Host, cfg.Port)
 	var why string
 	if h, err := sc.check(base); err == nil {
 		var stale bool
@@ -95,11 +95,11 @@ func ensureServerWith(cfg *config.Config, serveArgs []string, sc *serverChecks) 
 	if err != nil {
 		return nil, err
 	}
-	logPath, err := daemon.LogPath()
+	logPath, err := angel.LogPath()
 	if err != nil {
 		return nil, err
 	}
-	args := daemonServeArgs(serveArgs)
+	args := angelServeArgs(serveArgs)
 	h, err := sc.start(exe, args, logPath, base, 10*time.Second)
 	if err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func ensureServerWith(cfg *config.Config, serveArgs []string, sc *serverChecks) 
 // tested without real servers.
 type restartOps struct {
 	stop    func(base string, timeout time.Duration) error
-	start   func(exe string, args []string, logPath, base string, timeout time.Duration) (*daemon.Health, error)
+	start   func(exe string, args []string, logPath, base string, timeout time.Duration) (*angel.Health, error)
 	stdout  io.Writer
 	exe     func() (string, error)
 	logPath func() (string, error)
@@ -122,19 +122,19 @@ type restartOps struct {
 
 func defaultRestartOps() *restartOps {
 	return &restartOps{
-		stop:    daemon.Stop,
-		start:   daemon.Start,
+		stop:    angel.Stop,
+		start:   angel.Start,
 		stdout:  os.Stdout,
 		exe:     os.Executable,
-		logPath: daemon.LogPath,
+		logPath: angel.LogPath,
 	}
 }
 
 // restartServer stops the server at base when it runs and starts a new one,
 // regardless of staleness or in-flight requests.
-func restartServer(cfg *config.Config, ops *restartOps) (*daemon.Health, error) {
-	base := daemon.BaseURL(cfg.Host, cfg.Port)
-	if err := ops.stop(base, 5*time.Second); err != nil && !errors.Is(err, daemon.ErrNotRunning) {
+func restartServer(cfg *config.Config, ops *restartOps) (*angel.Health, error) {
+	base := angel.BaseURL(cfg.Host, cfg.Port)
+	if err := ops.stop(base, 5*time.Second); err != nil && !errors.Is(err, angel.ErrNotRunning) {
 		return nil, err
 	}
 	exe, err := ops.exe()
@@ -145,7 +145,7 @@ func restartServer(cfg *config.Config, ops *restartOps) (*daemon.Health, error) 
 	if err != nil {
 		return nil, err
 	}
-	h, err := ops.start(exe, daemonServeArgs(nil), logPath, base, 10*time.Second)
+	h, err := ops.start(exe, angelServeArgs(nil), logPath, base, 10*time.Second)
 	if err != nil {
 		return nil, err
 	}

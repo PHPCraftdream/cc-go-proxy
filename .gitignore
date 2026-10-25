@@ -41,7 +41,7 @@ Thumbs.db
 session.jsonl
 *.log
 
-# Daemon files
+# Angel files
 *.pid
 
 # ccgp build and release artifacts

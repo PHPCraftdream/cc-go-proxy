@@ -1,18 +1,18 @@
-# npm publication log: the first release (0.1.0 / 0.1.1)
+# npm publication log: the first release
 
 What was done to publish `ccgp` on npm, what npm refused, how the packages were renamed, published and deleted, and
-where it stands. Written on 2026-10-23. The general process is in [releasing.md](releasing.md); this file is the
-history of the first attempt and what to do next.
+where it stands. Written on 2026-10-23, updated on 2026-10-25. The general process is in [releasing.md](releasing.md);
+this file is the history of the first attempts and what to do next.
 
 ## Summary
 
 | | State |
 | --- | --- |
-| GitHub Releases `v0.1.0`, `v0.1.1` | published, 6 archives + `SHA256SUMS` each |
-| npm `cc-go-proxy-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64` `@0.1.1` | published |
-| npm `cc-go-proxy-win32-x64`, `cc-go-proxy-win32-arm64`, `cc-go-proxy` (main) | **not published**: npm spam detection blocks `cc-go-proxy-win32-arm64` |
+| GitHub Releases `v0.1.0`, `v0.1.1`, `v0.2.0` | `v0.1.0`, `v0.1.1` to be deleted, `v0.2.0` released again from the current `main` (section 7) |
+| npm `cc-go-proxy-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64` `@0.1.1` | deleted on 2026-10-25 (`unpublish`) |
+| npm `cc-go-proxy-win32-x64`, `cc-go-proxy-win32-arm64` | never published: npm spam detection refuses `*-win32-<cpu>` names |
 | npm `ccgp-<os>-<cpu>` (the first attempt) | deleted (`unpublish`), all six return 404 |
-| Installation for users | `install.sh` / `install.ps1` from the GitHub release; npm is not mentioned in the README until all seven packages exist |
+| Next | Windows packages renamed to `cc-go-proxy-w32-x64` / `-w32-arm64`; all seven published as `0.2.0` |
 
 The npm package layout is the esbuild one: a main package (`cc-go-proxy`, a small JS launcher, commands `ccgp` and
 `ccgpy`) with `optionalDependencies` on six platform packages (`cc-go-proxy-<os>-<cpu>`), each holding two prebuilt
@@ -111,7 +111,32 @@ Commit `9ba5e3d`: `NPM_NAME: cc-go-proxy` in `release.yml`, `trust.mjs` and its 
 - Check after the deletion: `npm view ccgp-linux-x64 version` and the other five return `E404`
   (done on 2026-10-22: all six 404). The four published `cc-go-proxy-*` packages were deliberately left alone.
 
+### 7. 2026-10-25: the block is the `win32` name, not the project
+
+- Another project of the same owner (`netivri`, the same esbuild layout and workflow) published
+  `netivri-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64` without trouble and then got exactly the same
+  refusal on the first Windows package:
+  `403 Forbidden - PUT https://registry.npmjs.org/netivri-win32-x64 - Package name triggered spam detection`.
+  Two unrelated names, both blocked only on `<name>-win32-<cpu>`: the spam filter reacts to that pattern.
+- Decision: rename the Windows platform packages to `<name>-w32-x64` / `<name>-w32-arm64` (`PLATFORMS` in
+  `scripts/npm/build.mjs`; the launcher maps `process.platform === 'win32'` to `w32`; the `os` field stays `win32`).
+- The four `cc-go-proxy-*@0.1.1` packages were deleted by the owner (`npm login --auth-type=web`, then
+  `npm unpublish <name> --force` with 2FA). A granular token with "bypass 2FA" can no longer unpublish:
+  `403 … Granular access tokens that bypass two-factor authentication may not perform this action`.
+- The history is restarted as one release `0.2.0`: the GitHub Releases and tags `v0.1.0`, `v0.1.1`, `v0.2.0` are
+  deleted and `v0.2.0` is tagged again on the current `main`. No `cc-go-proxy*` package ever had the npm version
+  `0.2.0`, so it is free; `0.1.1` can never be used again for the four deleted names.
+- npm blocks new versions of a fully unpublished package for 24 hours, so the four `cc-go-proxy-<linux|darwin>-*`
+  names can be published again from about 2026-10-26 17:00 UTC.
+
 ## Where it stands, and what to do next
+
+The items below were written on 2026-10-23, before section 7; what is still open after it:
+
+- dry-run the release with the `w32` names (Actions → Release → Run workflow, version `0.2.0`);
+- after the 24-hour wait: delete the old releases and tags, set `NPM_PUBLISH=true`, tag `v0.2.0`;
+- if `cc-go-proxy-w32-*` is refused too, use the support ticket below with the new names.
+
 
 1. **Wait or ask npm.** If the block does not lift within a day or two, write to https://npmjs.com/support from the
    `phpcraftdream` account. A text that can be pasted:

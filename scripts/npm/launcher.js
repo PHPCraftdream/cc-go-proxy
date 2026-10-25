@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Starts the prebuilt ccgp binary that npm installed for this platform as an
-// optional dependency (__PREFIX__-<platform>-<arch>), and passes arguments, stdio,
-// signals and the exit code through.
+// optional dependency (__PREFIX__-<platform>-<arch>, w32 for win32), and passes
+// arguments, stdio, signals and the exit code through.
 'use strict';
 
 const { spawn } = require('node:child_process');
 const { chmodSync } = require('node:fs');
 const { basename } = require('node:path');
 
-const key = `${process.platform}-${process.arch}`;
+// Windows packages are named w32-<arch> (see PLATFORMS in build.mjs).
+const key = `${process.platform === 'win32' ? 'w32' : process.platform}-${process.arch}`;
 const pkg = `__PREFIX__-${key}`;
 // bin/ccgpy.js starts the ccgpy binary (ccgp with permission prompts off), bin/ccgp.js starts ccgp.
 const name = basename(__filename, '.js') === 'ccgpy' ? 'ccgpy' : 'ccgp';

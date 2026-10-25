@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
@@ -30,7 +30,7 @@ func fakeDoctorEnv() *doctorEnv {
 			return &config.Config{ConfigFile: "x", Providers: map[string]*config.Provider{}}, nil
 		},
 		defaultMiss:  func() bool { return false },
-		daemonCheck:  func(string) (*daemon.Health, error) { return nil, errors.New("not running") },
+		angelCheck:   func(string) (*angel.Health, error) { return nil, errors.New("not running") },
 		base:         "http://127.0.0.1:8080",
 		ownVersion:   "test",
 		ownExe:       "/bin/ccgp",
@@ -110,15 +110,15 @@ func TestDoctorServerCheck(t *testing.T) {
 	if c := checkServer(env); c.Status != "ok" || !bytes.Contains([]byte(c.Detail), []byte("not running (starts on demand)")) {
 		t.Fatalf("down: status %q, detail %q", c.Status, c.Detail)
 	}
-	env.daemonCheck = func(string) (*daemon.Health, error) {
-		return &daemon.Health{Version: env.ownVersion, PID: 42}, nil
+	env.angelCheck = func(string) (*angel.Health, error) {
+		return &angel.Health{Version: env.ownVersion, PID: 42}, nil
 	}
 	c := checkServer(env)
 	if c.Status != "ok" || !bytes.Contains([]byte(c.Detail), []byte("pid 42")) {
 		t.Fatalf("running: status %q, detail %q", c.Status, c.Detail)
 	}
-	env.daemonCheck = func(string) (*daemon.Health, error) {
-		return &daemon.Health{Version: "old", PID: 7}, nil
+	env.angelCheck = func(string) (*angel.Health, error) {
+		return &angel.Health{Version: "old", PID: 7}, nil
 	}
 	if c := checkServer(env); c.Status != "warn" || !bytes.Contains([]byte(c.Detail), []byte("ccgp --restart")) {
 		t.Fatalf("stale: status %q, detail %q", c.Status, c.Detail)

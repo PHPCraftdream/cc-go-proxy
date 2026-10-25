@@ -59,6 +59,15 @@ OS and CPU, check it against `SHA256SUMS` and install `ccgp` and `ccgpy` (Linux 
 `CCGP_INSTALL_DIR` to pick the directory; the scripts are short, read them first if you like:
 [install.sh](install.sh), [install.ps1](install.ps1).
 
+With npm (any platform, Node.js 18 or newer):
+
+```sh
+npm install -g cc-go-proxy
+```
+
+The package `cc-go-proxy` installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
+platform (no install scripts run). Update it with npm, not with `ccgp --update`.
+
 You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the
 [Ktav](https://github.com/ktav-lang/golang) config parser is pure Go, nothing is downloaded on first use.
 
@@ -128,7 +137,7 @@ The response contains only `kind: "ccgp:model-route:v1"`, `requestedModel`, and 
 | Sessions | — | `ccgp --send` copies the current directory's latest sessions between profiles (and your own Claude Code via `--import` / `--export`) |
 | Secrets | `.env` | Separate owner-only credentials directory; OAuth refresh tokens rotate safely |
 | Platforms | Builds for macOS, Linux and Windows | Windows first (owner-only ACLs, detached background process, tested in CI), also Linux and macOS |
-| Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, install scripts |
+| Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, install scripts, npm package |
 
 The Anthropic ↔ OpenAI Chat Completions translation, streaming and adaptive per-model capability detection are
 upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg and contributors.
@@ -138,7 +147,7 @@ upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg an
 | | |
 | --- | --- |
 | [CLI reference](docs/cli.md) | Every command: flags, `--json`, `--doctor`, `--restart`, `--update`, completion |
-| [Configuration](docs/configuration.md) | Config file, providers, profiles (`profile add` / `rm`), model rules, context windows |
+| [Configuration](docs/configuration.md) | Config file, providers, profiles (`--profile add` / `rm`), model rules, context windows |
 | [Providers](docs/providers.md) | Codex, API keys, z.ai: sign-in, model mapping, effort levels |
 | [Sessions](docs/sessions.md) | `ccgp --send`, `--import` / `--export`, thinking blocks |
 | [Security](docs/security.md) | Token URLs, secrets at rest, why official credentials never reach a session |

@@ -29,8 +29,14 @@ cat <<EOF
 ## Install
 
 \`\`\`sh
+# Linux, macOS
+curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh | CCGP_VERSION=${version} sh
+
+# Windows (PowerShell)
+\$env:CCGP_VERSION='${version}'; irm https://raw.githubusercontent.com/${repo}/main/install.ps1 | iex
+
 # npm (any platform)
-npm install -g ccgp@${version}
+npm install -g cc-go-proxy@${version}
 
 # Go
 go install github.com/${repo}/cmd/ccgp@v${version}

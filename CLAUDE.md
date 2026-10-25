@@ -24,7 +24,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) between Claude Code config dirs; `StripThinking` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload |
-| `internal/daemon` | detached background process, `/health`-based control |
+| `internal/angel` | detached background process, `/health`-based control |
 
 ## Invariants
 

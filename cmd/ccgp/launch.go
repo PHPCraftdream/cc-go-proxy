@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 )
 
 func sortStrings(s []string) { sort.Strings(s) }
@@ -58,7 +58,7 @@ func launch(profile string, claudeArgs []string) error {
 	cmd := exec.Command(claude, claudeArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = compactEnv(
-		claudeEnv(os.Environ(), daemon.BaseURL(cfg.Host, cfg.Port)+"/call/"+token, configDir),
+		claudeEnv(os.Environ(), angel.BaseURL(cfg.Host, cfg.Port)+"/call/"+token, configDir),
 		cfg.Profiles[profile], mainModel(claudeArgs, os.Getenv, configDir))
 
 	// Ctrl+C goes to claude (same console group); ccgp must not exit first.

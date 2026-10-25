@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
@@ -48,7 +48,7 @@ type doctorEnv struct {
 	lookPath     func(string) (string, error)
 	loadConfig   func() (*config.Config, error)
 	defaultMiss  func() bool
-	daemonCheck  func(string) (*daemon.Health, error)
+	angelCheck   func(string) (*angel.Health, error)
 	base         string
 	ownVersion   string
 	ownExe       string
@@ -72,8 +72,8 @@ func defaultDoctorEnv() *doctorEnv {
 		lookPath:     exec.LookPath,
 		loadConfig:   config.Load,
 		defaultMiss:  missingDefaultConfig,
-		daemonCheck:  daemon.Check,
-		base:         daemon.BaseURL(host, port),
+		angelCheck:   angel.Check,
+		base:         angel.BaseURL(host, port),
 		ownVersion:   server.ProxyVersion,
 		ownExe:       exe,
 		ownExeMod:    mod,
@@ -83,7 +83,7 @@ func defaultDoctorEnv() *doctorEnv {
 		probe:        probeURL,
 		stat:         os.Stat,
 		windows:      runtime.GOOS == "windows",
-		logPath:      daemon.LogPath,
+		logPath:      angel.LogPath,
 		logWritable:  defaultLogWritable,
 		now:          time.Now,
 	}
@@ -186,7 +186,7 @@ func checkConfig(env *doctorEnv) check {
 }
 
 func checkServer(env *doctorEnv) check {
-	h, err := env.daemonCheck(env.base)
+	h, err := env.angelCheck(env.base)
 	if err != nil {
 		return check{Name: "server", Status: "ok", Detail: "not running (starts on demand)"}
 	}

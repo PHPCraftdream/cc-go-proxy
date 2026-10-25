@@ -129,12 +129,12 @@ ccgp --profile rm codex2 [--yes] [--purge]
 - `--type <codex|codex_api|anthropic_compat>` [--base-url URL] creates a new backend (OpenRouter, Ollama, any
   Anthropic-compatible API). Without `--model`, a `codex` provider or one whose URL has a built-in preset gets
   an empty managed block, ready for `ccgp --models apply <name>`.
-- `profile add` never signs in; it prints `run: ccgp <name>` — the launcher signs in on first start.
+- `--profile add` never signs in; it prints `run: ccgp <name>` — the launcher signs in on first start.
   It refuses reserved, invalid or already-used names and unknown sources, and needs the config file
   (env-only mode has a single implicit profile).
-- `profile list` shows one row per profile: PROFILE, PROVIDER, TYPE, LOGIN, MAIN MODEL (what the `sonnet` tier
+- `--profile list` shows one row per profile: PROFILE, PROVIDER, TYPE, LOGIN, MAIN MODEL (what the `sonnet` tier
   resolves to) and CLAUDE DIR (yes/no).
-- `profile rm` asks `remove profile "<name>"? [y/N]` unless `--yes`, removes the profile and — if no other
+- `--profile rm` asks `remove profile "<name>"? [y/N]` unless `--yes`, removes the profile and — if no other
   profile uses it — its provider, and drops the profile's URL token. It refuses to remove the last profile.
   Without `--purge` it lists what stays behind (the isolated Claude dir, and the provider's credentials if the
   provider was removed); `--purge` deletes `<config dir>/cc-go-proxy/claude/<name>` and, if the provider was

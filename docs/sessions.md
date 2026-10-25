@@ -50,7 +50,7 @@ Thinking-block signatures are valid only for the provider/account that produced 
 signature carries encrypted reasoning another account may not decrypt), and the official API rejects foreign
 ones. Therefore thinking and `redacted_thinking` blocks are removed whenever the source and destination
 **providers** differ — `claude` counts as a provider of its own — and kept only between two profiles on the
-same provider. This applies to `import` too, which used to keep the blocks.
+same provider. This applies to `--import` too.
 
 Claude Code writes one line per content block, chained by `parentUuid`; a line left empty is dropped and its
 children are re-attached to its parent, so the conversation stays connected. Every other line is copied byte

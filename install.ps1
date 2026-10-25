@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/PHPCraftdream/cc-go-proxy/main/install.ps1 | iex
 #
 # Environment:
-#   CCGP_VERSION      version to install, e.g. 0.1.1 (default: the latest release)
+#   CCGP_VERSION      version to install, e.g. 0.2.0 (default: the latest release)
 #   CCGP_INSTALL_DIR  where to put the binaries (default: %LOCALAPPDATA%\Programs\ccgp)
 #   CCGP_NO_PATH=1    do not add the directory to the user PATH
 #

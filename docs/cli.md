@@ -10,8 +10,8 @@ only `claude` is reserved (the endpoint name in `ccgp --send claude <profile>`).
 starts with a dash is an error (`unknown command "--stauts", see: ccgp --help`), never a profile run. Everything after
 the profile goes to `claude` untouched: `ccgp codex --help` is Claude Code's help.
 
-`ccgp --<command> --help` prints the help of that command. `ccgpy <profile> …` is `ccgp <profile>
---dangerously-skip-permissions …`.
+`ccgp --<command> --help` prints the help of that command, `ccgp --help` lists them all, `ccgp --version` prints the
+version. `ccgpy <profile> …` is `ccgp <profile> --dangerously-skip-permissions …`.
 
 ## Server
 
@@ -82,6 +82,9 @@ archive for this OS and CPU and `SHA256SUMS`, verifies the checksum before touch
 (and `ccgpy`, if it sits next to it) in the directory of the running binary. On Windows the running file is renamed
 to `.old` first. Config and credentials are not touched; `--check` only reports whether an update exists. When a
 server is running, restart it afterwards with `ccgp --restart`.
+
+Installed with npm, update with npm instead (`npm install -g cc-go-proxy@latest`): `--update` would replace the binary
+inside the npm package, and the next npm install would put the packaged version back.
 
 ## Shell completion
 

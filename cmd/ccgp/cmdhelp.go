@@ -153,6 +153,7 @@ Update ccgp (and ccgpy, when installed next to it) from the latest GitHub
 release. The download is verified against the release's SHA256SUMS before
 anything is replaced; the running binary is replaced safely (a backup is
 kept while it runs). Config and credentials are not touched.
+Installed with npm (cc-go-proxy)? Update with npm install -g cc-go-proxy.
 
   --check    only report whether an update is available
 

@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 )
 
@@ -126,7 +126,7 @@ func TestStatusJSON(t *testing.T) {
 	}
 	providers := []statusProvider{{Name: "p1", Type: config.ProviderTypeAnthropicCompat, Login: "key from $CCGP_TEST_SECRET"}}
 	profiles := []statusProfile{{Name: "alpha", Provider: "p1"}}
-	st := buildStatus("http://127.0.0.1:1", "x.log", &daemon.Health{Version: "ccgp v9", PID: 42}, nil, cfg, nil, filepath.Join(t.TempDir(), "creds"), nil, providers, profiles)
+	st := buildStatus("http://127.0.0.1:1", "x.log", &angel.Health{Version: "ccgp v9", PID: 42}, nil, cfg, nil, filepath.Join(t.TempDir(), "creds"), nil, providers, profiles)
 
 	var buf bytes.Buffer
 	if err := writeJSON(&buf, st); err != nil {

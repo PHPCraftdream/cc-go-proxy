@@ -16,7 +16,7 @@ no version file to edit. Versions are never bumped automatically.
 
 1. In [`CHANGELOG.md`](../CHANGELOG.md) rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (keep a fresh empty
    `## [Unreleased]` above it). The section becomes the release notes.
-2. First release only: delete the "Pre-release" note from the README install section. Then merge to `main` and wait for CI (tests on Linux and Windows, lint, license check, cross-compile vet).
+2. Merge to `main` and wait for CI (tests on Linux and Windows, lint, license check, cross-compile vet).
 3. Optional dry run: **Actions → Release → Run workflow**. It builds and packs everything and runs
    `npm publish --dry-run`; it creates no release and publishes nothing.
 4. Tag and push:
@@ -31,9 +31,9 @@ The workflow refuses a tag that is not on `main` or is not a semantic version.
 
 npm publishing is off by default: the npm job builds the packages and dry-runs them, and publishes only when the
 repository variable `NPM_PUBLISH` is `true` (`gh variable set NPM_PUBLISH --body true -R PHPCraftdream/cc-go-proxy`).
-Turn it on once all seven package names are accepted by npm (see [npm-publication-log.md](npm-publication-log.md)).
-Users install from the GitHub release with `install.sh` / `install.ps1`, which always take the newest release; CI
-checks that.
+Turn it on for a release that should reach npm; the history of the first attempts is in
+[npm-publication-log.md](npm-publication-log.md). `install.sh` / `install.ps1` install from the GitHub release and
+always take the newest one; CI checks that.
 
 ## What a release contains
 
@@ -82,11 +82,12 @@ new package name needs a token.
    The environment variant needs the `npm` environment to exist (*Settings → Environments*); there you can also
    require a reviewer for every publish.
 3. Push the tag. Seven packages appear: `cc-go-proxy` and `cc-go-proxy-linux-x64`, `-linux-arm64`, `-darwin-x64`,
-   `-darwin-arm64`, `-win32-x64`, `-win32-arm64`. (npm refuses the name `ccgp` itself as too similar to `ncp`; the
-   commands are still `ccgp` and `ccgpy`.)
+   `-darwin-arm64`, `-w32-x64`, `-w32-arm64`. (npm refuses the name `ccgp` itself as too similar to `ncp`, and its
+   spam filter refuses names ending in `-win32-<cpu>`, hence `w32`; the commands are still `ccgp` and `ccgpy`.)
 
 To publish under another name or a scope, change `NPM_NAME` at the top of `release.yml` (for example
-`@yourscope/cc-go-proxy`; the platform packages follow as `@yourscope/cc-go-proxy-<os>-<cpu>`).
+`@yourscope/cc-go-proxy`; the platform packages follow as `@yourscope/cc-go-proxy-<os>-<cpu>`, with `w32` for
+Windows).
 
 ### 2. Switch to Trusted Publishing
 

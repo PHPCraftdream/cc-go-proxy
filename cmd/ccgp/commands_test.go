@@ -113,13 +113,16 @@ func TestPrintHelpListsAllCommands(t *testing.T) {
 	if !strings.Contains(out, "profile codex") {
 		t.Error("help does not document the bare-word-is-a-profile rule")
 	}
+	if !strings.Contains(out, "ccgpy <profile>") {
+		t.Error("help does not mention ccgpy")
+	}
 }
 
-func TestDaemonServeArgs(t *testing.T) {
-	got := daemonServeArgs([]string{"-d"})
+func TestAngelServeArgs(t *testing.T) {
+	got := angelServeArgs([]string{"-d"})
 	want := []string{"--serve", "-s", "-d"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Errorf("daemonServeArgs = %q, want %q", got, want)
+		t.Errorf("angelServeArgs = %q, want %q", got, want)
 	}
 }
 

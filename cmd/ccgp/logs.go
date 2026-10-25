@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 )
 
 // logChunkSize is how many bytes tailLines reads at a time from the end.
@@ -188,7 +188,7 @@ func logsCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	path, err := daemon.LogPath()
+	path, err := angel.LogPath()
 	if err != nil {
 		return err
 	}

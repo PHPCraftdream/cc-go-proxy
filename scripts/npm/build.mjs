@@ -21,8 +21,9 @@ export const PLATFORMS = [
   { id: 'linux-arm64', os: 'linux', cpu: 'arm64', exe: 'ccgp', yexe: 'ccgpy', label: 'Linux arm64' },
   { id: 'darwin-x64', os: 'darwin', cpu: 'x64', exe: 'ccgp', yexe: 'ccgpy', label: 'macOS x64' },
   { id: 'darwin-arm64', os: 'darwin', cpu: 'arm64', exe: 'ccgp', yexe: 'ccgpy', label: 'macOS arm64' },
-  { id: 'win32-x64', os: 'win32', cpu: 'x64', exe: 'ccgp.exe', yexe: 'ccgpy.exe', label: 'Windows x64' },
-  { id: 'win32-arm64', os: 'win32', cpu: 'arm64', exe: 'ccgp.exe', yexe: 'ccgpy.exe', label: 'Windows arm64' },
+  // "w32", not "win32": npm's spam filter refuses names ending in -win32-<cpu>.
+  { id: 'w32-x64', os: 'win32', cpu: 'x64', exe: 'ccgp.exe', yexe: 'ccgpy.exe', label: 'Windows x64' },
+  { id: 'w32-arm64', os: 'win32', cpu: 'arm64', exe: 'ccgp.exe', yexe: 'ccgpy.exe', label: 'Windows arm64' },
 ];
 
 const HERE = dirname(fileURLToPath(import.meta.url));

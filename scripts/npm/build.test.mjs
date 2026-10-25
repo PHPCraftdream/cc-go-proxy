@@ -58,6 +58,16 @@ test('builds one package per platform plus the main one, main last', () => {
   assert.equal(readFileSync(join(out, 'ccgp', 'bin', 'ccgpy.js'), 'utf8'), launcher);
 });
 
+// npm's spam filter refuses <name>-win32-<cpu>; the launcher must look up the same ids.
+test('platform ids use w32 for Windows, as the launcher does', () => {
+  for (const p of PLATFORMS) {
+    assert.equal(p.id, `${p.os === 'win32' ? 'w32' : p.os}-${p.cpu}`);
+    assert.ok(!p.id.includes('win32'), p.id);
+  }
+  const src = readFileSync(join(HERE, 'launcher.js'), 'utf8');
+  assert.ok(src.includes("process.platform === 'win32' ? 'w32' : process.platform"));
+});
+
 test('the package name is configurable', () => {
   const bin = join(work, 'bin2');
   fakeBinaries(bin);
@@ -65,7 +75,7 @@ test('the package name is configurable', () => {
   build({ version: '0.1.0-rc.1', bin, out, name: '@acme/ccgp' });
   const main = json(out, '@acme/ccgp', 'package.json');
   assert.equal(main.name, '@acme/ccgp');
-  assert.ok('@acme/ccgp-win32-x64' in main.optionalDependencies);
+  assert.ok('@acme/ccgp-w32-x64' in main.optionalDependencies);
 });
 
 test('rejects a bad version and a missing binary', () => {
@@ -73,8 +83,8 @@ test('rejects a bad version and a missing binary', () => {
   fakeBinaries(bin);
   assert.throws(() => build({ version: 'v1.2.3', bin, out: join(work, 'o3') }), /invalid version/);
   assert.throws(() => build({ version: '1.2', bin, out: join(work, 'o3') }), /invalid version/);
-  rmSync(join(bin, 'bin-win32-arm64'), { recursive: true });
-  assert.throws(() => build({ version: '1.2.3', bin, out: join(work, 'o3') }), /missing binary for win32-arm64/);
+  rmSync(join(bin, 'bin-w32-arm64'), { recursive: true });
+  assert.throws(() => build({ version: '1.2.3', bin, out: join(work, 'o3') }), /missing binary for w32-arm64/);
 
   const bin4 = join(work, 'bin4');
   fakeBinaries(bin4);

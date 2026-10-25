@@ -30,7 +30,7 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 | `internal/sessions` | `--send` (aliases `--import` / `--export`): streaming, append-only session copy and thinking-block removal |
 | `internal/identity` | Model-identity sentence rewrite |
 | `internal/preset` | Built-in mappings and effort maps for known providers (z.ai) |
-| `internal/daemon` | Detached background process, `/health`-based control (health also reports the server binary path, its mtime and the in-flight request count, which `ccgp <profile>` uses to restart a stale idle server) |
+| `internal/angel` | Detached background process, `/health`-based control (health also reports the server binary path, its mtime and the in-flight request count, which `ccgp <profile>` uses to restart a stale idle server) |
 
 ## Invariants
 

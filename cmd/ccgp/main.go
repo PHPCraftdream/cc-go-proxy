@@ -18,8 +18,8 @@ import (
 	"io/fs"
 	"os"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
@@ -127,7 +127,7 @@ type statusData struct {
 }
 
 // buildStatus assembles the status payload; it performs no I/O.
-func buildStatus(base, logPath string, h *daemon.Health, healthErr error, cfg *config.Config, cfgErr error, credsDir string, credsErr error, providers []statusProvider, profiles []statusProfile) statusData {
+func buildStatus(base, logPath string, h *angel.Health, healthErr error, cfg *config.Config, cfgErr error, credsDir string, credsErr error, providers []statusProvider, profiles []statusProfile) statusData {
 	s := statusData{
 		LogFile:   logPath,
 		CredsDir:  credsDir,
@@ -194,9 +194,9 @@ func status(args []string) error {
 		}
 	}
 	host, port := listenAddr()
-	base := daemon.BaseURL(host, port)
-	logPath, _ := daemon.LogPath()
-	h, healthErr := daemon.Check(base)
+	base := angel.BaseURL(host, port)
+	logPath, _ := angel.LogPath()
+	h, healthErr := angel.Check(base)
 	cfg, cfgErr := config.Load()
 	credsDir := ""
 	var credsErr error
@@ -258,7 +258,7 @@ func serve(args []string) error {
 	if cfg.ConfigFile != "" {
 		fmt.Printf("config: %s\n", cfg.ConfigFile)
 	}
-	if h, err := daemon.Check(daemon.BaseURL(cfg.Host, cfg.Port)); err == nil {
+	if h, err := angel.Check(angel.BaseURL(cfg.Host, cfg.Port)); err == nil {
 		return fmt.Errorf("already running (pid %d)", h.PID)
 	}
 	return server.Start(cfg)

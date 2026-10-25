@@ -13,7 +13,7 @@ test('covers the main package and every platform package', () => {
   const names = packageNames();
   assert.equal(names.length, 1 + PLATFORMS.length);
   assert.equal(names[0], 'cc-go-proxy');
-  assert.ok(names.includes('cc-go-proxy-win32-x64') && names.includes('cc-go-proxy-darwin-arm64'));
+  assert.ok(names.includes('cc-go-proxy-w32-x64') && names.includes('cc-go-proxy-darwin-arm64'));
   assert.deepEqual(packageNames('@me/x').slice(0, 2), ['@me/x', '@me/x-linux-x64']);
 });
 

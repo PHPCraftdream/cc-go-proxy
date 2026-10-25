@@ -20,7 +20,7 @@ In scope, for example:
 - reaching a model endpoint without a valid profile token, or learning a token from the server (responses, logs, `/health`);
 - reading or writing credentials outside the owner-only `creds` directory, or leaking OAuth or API keys;
 - an official Claude credential (login, API key, OAuth token) reaching a ccgp session, or `ccgp --export` /
-  `import` copying something it must not;
+  `--import` copying something it must not;
 - a request that makes the server write or read files outside its directories;
 - vulnerabilities in the release pipeline: unsigned or tampered artifacts, a way to publish without the release workflow.
 

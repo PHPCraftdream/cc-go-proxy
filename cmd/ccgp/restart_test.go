@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
@@ -16,19 +16,19 @@ func TestServerStale(t *testing.T) {
 	v := server.ProxyVersion
 	tests := []struct {
 		name      string
-		h         *daemon.Health
+		h         *angel.Health
 		ownExe    string
 		ownExeMod int64
 		wantStale bool
 		wantWhy   string
 	}{
-		{name: "same version and exe", h: &daemon.Health{Version: v, Exe: "/ccgp", ExeMod: 10}, ownExe: "/ccgp", ownExeMod: 10},
-		{name: "version differs", h: &daemon.Health{Version: "0.0.9"}, wantStale: true, wantWhy: "server version 0.0.9, this binary is " + v},
-		{name: "exe file replaced", h: &daemon.Health{Version: v, Exe: "/ccgp", ExeMod: 10}, ownExe: "/ccgp", ownExeMod: 20, wantStale: true, wantWhy: "the executable file changed since the server started"},
-		{name: "different exe path", h: &daemon.Health{Version: v, Exe: "/old/ccgp", ExeMod: 10}, ownExe: "/new/ccgp", ownExeMod: 20},
-		{name: "server exe unknown", h: &daemon.Health{Version: v}, ownExe: "/ccgp", ownExeMod: 20},
-		{name: "server mod time unknown", h: &daemon.Health{Version: v, Exe: "/ccgp"}, ownExe: "/ccgp", ownExeMod: 20},
-		{name: "own mod time unknown", h: &daemon.Health{Version: v, Exe: "/ccgp", ExeMod: 10}, ownExe: "/ccgp"},
+		{name: "same version and exe", h: &angel.Health{Version: v, Exe: "/ccgp", ExeMod: 10}, ownExe: "/ccgp", ownExeMod: 10},
+		{name: "version differs", h: &angel.Health{Version: "0.0.9"}, wantStale: true, wantWhy: "server version 0.0.9, this binary is " + v},
+		{name: "exe file replaced", h: &angel.Health{Version: v, Exe: "/ccgp", ExeMod: 10}, ownExe: "/ccgp", ownExeMod: 20, wantStale: true, wantWhy: "the executable file changed since the server started"},
+		{name: "different exe path", h: &angel.Health{Version: v, Exe: "/old/ccgp", ExeMod: 10}, ownExe: "/new/ccgp", ownExeMod: 20},
+		{name: "server exe unknown", h: &angel.Health{Version: v}, ownExe: "/ccgp", ownExeMod: 20},
+		{name: "server mod time unknown", h: &angel.Health{Version: v, Exe: "/ccgp"}, ownExe: "/ccgp", ownExeMod: 20},
+		{name: "own mod time unknown", h: &angel.Health{Version: v, Exe: "/ccgp", ExeMod: 10}, ownExe: "/ccgp"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,23 +42,23 @@ func TestServerStale(t *testing.T) {
 
 type fakeChecks struct {
 	serverChecks
-	checkHealth *daemon.Health
+	checkHealth *angel.Health
 	checkErr    error
 	stopped     int
 	started     int
-	startHealth *daemon.Health
+	startHealth *angel.Health
 }
 
-func newFakeChecks(h *daemon.Health) *fakeChecks {
+func newFakeChecks(h *angel.Health) *fakeChecks {
 	fc := &fakeChecks{checkHealth: h}
-	fc.check = func(string) (*daemon.Health, error) {
+	fc.check = func(string) (*angel.Health, error) {
 		if fc.checkErr != nil {
 			return nil, fc.checkErr
 		}
 		return fc.checkHealth, nil
 	}
 	fc.stop = func(string, time.Duration) error { fc.stopped++; return nil }
-	fc.start = func(string, []string, string, string, time.Duration) (*daemon.Health, error) {
+	fc.start = func(string, []string, string, string, time.Duration) (*angel.Health, error) {
 		fc.started++
 		return fc.startHealth, nil
 	}
@@ -68,8 +68,8 @@ func newFakeChecks(h *daemon.Health) *fakeChecks {
 }
 
 func TestEnsureServerStaleIdleRestarts(t *testing.T) {
-	fc := newFakeChecks(&daemon.Health{Version: "old", PID: 1, Active: 0})
-	fc.startHealth = &daemon.Health{Version: server.ProxyVersion, PID: 2}
+	fc := newFakeChecks(&angel.Health{Version: "old", PID: 1, Active: 0})
+	fc.startHealth = &angel.Health{Version: server.ProxyVersion, PID: 2}
 	h, err := ensureServerWith(&config.Config{Host: "127.0.0.1", Port: "1"}, nil, &fc.serverChecks)
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +86,8 @@ func TestEnsureServerStaleIdleRestarts(t *testing.T) {
 }
 
 func TestEnsureServerStaleStartFailsNoSuccessLine(t *testing.T) {
-	fc := newFakeChecks(&daemon.Health{Version: "old"})
-	fc.start = func(string, []string, string, string, time.Duration) (*daemon.Health, error) {
+	fc := newFakeChecks(&angel.Health{Version: "old"})
+	fc.start = func(string, []string, string, string, time.Duration) (*angel.Health, error) {
 		return nil, errors.New("start boom")
 	}
 	if _, err := ensureServerWith(&config.Config{Host: "127.0.0.1", Port: "1"}, nil, &fc.serverChecks); err == nil {
@@ -99,7 +99,7 @@ func TestEnsureServerStaleStartFailsNoSuccessLine(t *testing.T) {
 }
 
 func TestEnsureServerStaleBusyWarnsAndKeeps(t *testing.T) {
-	fc := newFakeChecks(&daemon.Health{Version: "old", PID: 1, Active: 3})
+	fc := newFakeChecks(&angel.Health{Version: "old", PID: 1, Active: 3})
 	h, err := ensureServerWith(&config.Config{Host: "127.0.0.1", Port: "1"}, nil, &fc.serverChecks)
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestEnsureServerStaleBusyWarnsAndKeeps(t *testing.T) {
 }
 
 func TestEnsureServerFreshUntouched(t *testing.T) {
-	fc := newFakeChecks(&daemon.Health{Version: server.ProxyVersion, PID: 7})
+	fc := newFakeChecks(&angel.Health{Version: server.ProxyVersion, PID: 7})
 	h, err := ensureServerWith(&config.Config{Host: "127.0.0.1", Port: "1"}, nil, &fc.serverChecks)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestEnsureServerFreshUntouched(t *testing.T) {
 }
 
 func TestEnsureServerStaleStopFails(t *testing.T) {
-	fc := newFakeChecks(&daemon.Health{Version: "old"})
+	fc := newFakeChecks(&angel.Health{Version: "old"})
 	fc.stop = func(string, time.Duration) error { return errors.New("boom") }
 	if _, err := ensureServerWith(&config.Config{Host: "127.0.0.1", Port: "1"}, nil, &fc.serverChecks); err == nil || err.Error() != "boom" {
 		t.Errorf("err = %v, want boom", err)
@@ -146,23 +146,23 @@ func TestEnsureServerStaleStopFails(t *testing.T) {
 
 type fakeOps struct {
 	restartOps
-	running *daemon.Health
+	running *angel.Health
 	stopped int
 	started int
 }
 
-func newFakeOps(running *daemon.Health) *fakeOps {
+func newFakeOps(running *angel.Health) *fakeOps {
 	fo := &fakeOps{running: running}
 	fo.stop = func(string, time.Duration) error {
 		if fo.running == nil {
-			return daemon.ErrNotRunning
+			return angel.ErrNotRunning
 		}
 		fo.stopped++
 		return nil
 	}
-	fo.start = func(string, []string, string, string, time.Duration) (*daemon.Health, error) {
+	fo.start = func(string, []string, string, string, time.Duration) (*angel.Health, error) {
 		fo.started++
-		return &daemon.Health{Version: server.ProxyVersion, PID: 100 + fo.started}, nil
+		return &angel.Health{Version: server.ProxyVersion, PID: 100 + fo.started}, nil
 	}
 	fo.stdout = &bytes.Buffer{}
 	fo.exe = func() (string, error) { return "/ccgp", nil }
@@ -190,7 +190,7 @@ func TestRestartServerNotRunningJustStarts(t *testing.T) {
 }
 
 func TestRestartServerRunningStopsThenStarts(t *testing.T) {
-	fo := newFakeOps(&daemon.Health{PID: 5, Active: 4})
+	fo := newFakeOps(&angel.Health{PID: 5, Active: 4})
 	h, err := restartServer(restartCfg, &fo.restartOps)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestRestartServerRunningStopsThenStarts(t *testing.T) {
 }
 
 func TestRestartServerStopErrorPropagates(t *testing.T) {
-	fo := newFakeOps(&daemon.Health{PID: 5})
+	fo := newFakeOps(&angel.Health{PID: 5})
 	fo.stop = func(string, time.Duration) error { return errors.New("stop boom") }
 	if _, err := restartServer(restartCfg, &fo.restartOps); err == nil || err.Error() != "stop boom" {
 		t.Errorf("err = %v, want stop boom", err)
@@ -219,7 +219,7 @@ func TestRestartServerStopErrorPropagates(t *testing.T) {
 
 func TestRestartServerStartErrorPropagates(t *testing.T) {
 	fo := newFakeOps(nil)
-	fo.start = func(string, []string, string, string, time.Duration) (*daemon.Health, error) {
+	fo.start = func(string, []string, string, string, time.Duration) (*angel.Health, error) {
 		return nil, errors.New("start boom")
 	}
 	if _, err := restartServer(restartCfg, &fo.restartOps); err == nil || err.Error() != "start boom" {
@@ -244,7 +244,7 @@ func TestOwnExeInfo(t *testing.T) {
 func TestEnsureServerNotRunningStartsSilently(t *testing.T) {
 	fc := newFakeChecks(nil)
 	fc.checkErr = errors.New("connection refused")
-	fc.startHealth = &daemon.Health{Version: server.ProxyVersion, PID: 5}
+	fc.startHealth = &angel.Health{Version: server.ProxyVersion, PID: 5}
 	h, err := ensureServerWith(&config.Config{Host: "127.0.0.1", Port: "1"}, nil, &fc.serverChecks)
 	if err != nil || h.PID != 5 {
 		t.Fatalf("h=%v err=%v", h, err)

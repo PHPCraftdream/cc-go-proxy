@@ -140,7 +140,7 @@ This release embodies the project philosophy: "Support all provider quirks autom
   - Haiku → lightweight models (gpt-5-mini, gemini-flash)
   - Sonnet → flagship models (gpt-5, grok)
   - Opus → premium models (gpt-5, o3)
-- **Daemon mode** with background process management
+- **Angel mode** with background process management
 - **`ccp` wrapper script** for seamless Claude Code integration
 - **Simple log mode** (`-s` flag) with one-line request summaries and throughput metrics
 - **Debug mode** (`-d` flag) for full request/response logging

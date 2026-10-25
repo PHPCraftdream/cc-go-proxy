@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/daemon"
 )
 
 // command is one CLI command, named with a leading "--". The table below is
@@ -101,13 +101,13 @@ func startCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("ccgp running (pid %d) at %s\n", h.PID, daemon.BaseURL(cfg.Host, cfg.Port))
+	fmt.Printf("ccgp running (pid %d) at %s\n", h.PID, angel.BaseURL(cfg.Host, cfg.Port))
 	return nil
 }
 
 func stopCmd(args []string) error {
 	host, port := listenAddr()
-	if err := daemon.Stop(daemon.BaseURL(host, port), 5*time.Second); err != nil {
+	if err := angel.Stop(angel.BaseURL(host, port), 5*time.Second); err != nil {
 		return err
 	}
 	fmt.Println("ccgp stopped")
@@ -167,8 +167,8 @@ func helpCmd(args []string) error {
 	return nil
 }
 
-// daemonServeArgs builds the argv of the detached background server.
-func daemonServeArgs(serveArgs []string) []string {
+// angelServeArgs builds the argv of the detached background server.
+func angelServeArgs(serveArgs []string) []string {
 	return append([]string{"--serve", "-s"}, serveArgs...)
 }
 
@@ -180,6 +180,8 @@ Usage:
   ccgp <profile> [claude args...]  Ensure server + credentials, then run claude
                                    (a word without dashes is always a profile: ccgp codex runs profile codex;
                                    commands start with --)
+  ccgpy <profile> [claude args...] Same as ccgp <profile> --dangerously-skip-permissions ...
+                                   (Claude Code without permission prompts)
 `)
 	for _, c := range commands() {
 		if c.hidden {
@@ -207,5 +209,6 @@ Env-only mode (no config.ktav):
 
 Example:
   ccgp codex -p "hello"
+  ccgpy codex
 `)
 }

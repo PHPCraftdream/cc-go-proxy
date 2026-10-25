@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/cc-go-proxy/main/install.sh | sh
 #
 # Environment:
-#   CCGP_VERSION      version to install, e.g. 0.1.1 (default: the latest release)
+#   CCGP_VERSION      version to install, e.g. 0.2.0 (default: the latest release)
 #   CCGP_INSTALL_DIR  where to put the binaries (default: ~/.local/bin)
 #
 # The archive is checked against the release's SHA256SUMS before anything is

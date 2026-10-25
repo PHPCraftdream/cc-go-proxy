@@ -147,8 +147,8 @@ jobs:
         - { goos: linux,   goarch: arm64, npm: linux-arm64,  ext: tar.gz }
         - { goos: darwin,  goarch: amd64, npm: darwin-x64,   ext: tar.gz }
         - { goos: darwin,  goarch: arm64, npm: darwin-arm64, ext: tar.gz }
-        - { goos: windows, goarch: amd64, npm: win32-x64,    ext: zip }
-        - { goos: windows, goarch: arm64, npm: win32-arm64,  ext: zip }
+        - { goos: windows, goarch: amd64, npm: w32-x64,      ext: zip }
+        - { goos: windows, goarch: arm64, npm: w32-arm64,    ext: zip }
     env:
       VERSION: ${{ needs.meta.outputs.version }}
       GOOS: ${{ matrix.goos }}

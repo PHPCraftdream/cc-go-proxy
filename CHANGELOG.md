@@ -11,90 +11,70 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [0.2.0] - 2026-10-25
 
-### Changed
-- **Breaking:** CLI commands start with `--`: `ccgp --status`, `--login`, `--models`, `--profile`, `--send`, `--import`,
-  `--export`, `--start`, `--stop`, `--serve`, `--config`, `--version`, `--help` (the bare words are gone). A word
-  without dashes is always a profile, so profiles may now be named `status`, `login`, `serve`; only `claude` stays
-  reserved. An unknown first argument with a dash is an error, not a profile run.
-- `ccgp <profile>` restarts a background server that was started from an older binary when it is idle, and warns
-  when requests are in flight. `/health` now also reports the server binary's path, its mtime and the number of
-  in-flight model requests.
-
-- The release workflow publishes to npm only when the repository variable `NPM_PUBLISH` is `true` (the job still
-  builds and dry-runs the packages); the installer scripts and the CI check that they install the newest release.
-
-### Added
-- `ccgp --restart`, `--logs [-f] [-n N]`, `--doctor [--offline] [--json]`, `--which <profile> <model>`,
-  `--logout <provider>`, `--update [--check]` (checksum-verified self-update from the GitHub release) and
-  `--completion bash|zsh|powershell`; `--json` for `--status`, `--profile list` and `--models`;
-  `ccgp --<command> --help` for every command. See [docs/cli.md](docs/cli.md).
-- Authenticated model-label metadata at `/call/<token>/model?requested=<model-id>`, resolved with the inference routing rules without exposing tokens or invoking upstream inference.
-- `install.sh` (Linux, macOS) and `install.ps1` (Windows): install `ccgp` and `ccgpy` from the GitHub release for the OS and
-  CPU, checked against `SHA256SUMS`. CI runs both against the published release.
-
-## [0.1.1] - 2026-10-22
-
-### Fixed
-- The npm package is `cc-go-proxy` (`npm install -g cc-go-proxy`; the commands stay `ccgp` and `ccgpy`): npm refused
-  the name `ccgp` as too similar to `ncp`, so 0.1.0 reached GitHub Releases but not npm.
-
-## [0.1.0] - 2026-10-22
-
 First release of ccgp as an independent project.
 
 ### Added
-- `ccgp profile add` / `list` / `rm`: several logins side by side. `add --like` clones a profile with its own
+- `ccgp <profile>` launcher: starts the background server, makes sure credentials exist, runs Claude Code through
+  the profile. Named profiles, each with its own URL token and its own provider. A background server started from an
+  older binary is restarted when it is idle; with requests in flight ccgp warns and leaves it running.
+- Command line: every command starts with `--` (`ccgp --status`, `--login`, `--models`, `--profile`, `--send`, ...);
+  a word without dashes is always a profile, only `claude` is reserved, and an unknown `--command` is an error. One
+  command table drives dispatch, `ccgp --help`, `ccgp --<command> --help` and shell completion. See
+  [docs/cli.md](docs/cli.md).
+- `ccgp --profile add` / `list` / `rm`: several logins side by side. `add --like` clones a profile with its own
   provider (a second ChatGPT account), `--provider` adds a profile to an existing login, `--type` wires up a
   new backend; `list` shows profiles, providers, login state and Claude dirs; `rm` removes a profile and its
   provider when unused (`--purge` also deletes the isolated Claude dir and credentials).
-- `ccgp send <from> <to> [count]`: copy the latest sessions between profiles and `claude`; `import` / `export`
-  are aliases. Thinking blocks are now stripped whenever the two sides belong to different providers (including
-  `import`, which used to keep them), since their signatures are only valid for the provider that wrote them.
-- Safe config editing: `ccgp profile add` / `rm` edit `config.ktav` surgically (comments, key order and line
+- `ccgp --send <from> <to> [count]`: copy the latest sessions of the current directory between profiles and `claude`
+  (streaming, append-only, progress output); `--import` / `--export` are aliases. Thinking blocks are stripped
+  whenever the two sides belong to different providers, since their signatures are only valid for the provider that
+  wrote them.
+- Safe config editing: `ccgp --profile add` / `rm` edit `config.ktav` surgically (comments, key order and line
   endings stay), validate the result with the real loader before replacing the file, and keep a
   `config.ktav.bak-<timestamp>` backup whose name is never overwritten.
-- `ccgp <profile>` launcher: starts the background server, makes sure credentials exist, runs Claude Code through
-  the profile. Named profiles, each with its own URL token and its own provider.
-- Token-in-URL access: every model request is `/call/<token>/...`; unknown tokens get `404`.
+- `ccgp --start` / `--stop` / `--status` / `--serve`, `ccgp --config reset`; Windows, Linux and macOS.
+- `ccgp --restart`, `--logs [-f] [-n N]`, `--doctor [--offline] [--json]`, `--which <profile> <model>`,
+  `--logout <provider>`, `--update [--check]` (checksum-verified self-update from the GitHub release) and
+  `--completion bash|zsh|powershell`; `--json` for `--status`, `--profile list` and `--models`.
+- Token-in-URL access: every model request is `/call/<token>/...`; unknown tokens get `404`. `/health` reports the
+  server binary's path and mtime and the number of in-flight model requests.
+- Authenticated model-label metadata at `/call/<token>/model?requested=<model-id>`, resolved with the inference
+  routing rules without exposing tokens or invoking upstream inference.
 - Ktav configuration with `providers[]` and `profiles[]`, created on first run, hot-reloaded, changed only
-  by explicit commands. Secrets live in a separate owner-only `creds` directory.
+  by explicit commands. Secrets live in a separate owner-only `creds` directory. The parser is the pure-Go package
+  of ktav-lang/golang: nothing is downloaded on first use and the binary works offline.
 - `codex` provider: ChatGPT subscription through OAuth (browser PKCE by default, device code with `--device`),
   refresh-token rotation, Anthropic Messages translated to the Responses API with reasoning round-trip.
 - `codex_api` provider (OpenAI-compatible API key) and `anthropic_compat` provider (unconverted passthrough, used for
   z.ai GLM, with an `effort_map`).
-- `ccgp models` / `ccgp models apply`: newest Codex models per Claude tier from the account catalog, per-rule
-  `context_window`, built-in z.ai preset; `ccgp login zai`.
+- `ccgp --models` / `ccgp --models apply`: newest Codex models per Claude tier from the account catalog, per-rule
+  `context_window`, built-in z.ai preset; `ccgp --login zai`. For the GPT-6 generation they write a context window of
+  922000 (OpenAI's documented input limit) when the catalog's `max_context_window` is lower; a larger catalog value
+  wins.
 - Per-model context windows and compaction: the launcher sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the rule of the
   session's main model, clamped to the 100k-1M range Claude Code accepts; `compact_percent`.
 - `count_tokens` for `codex` and `codex_api` answers with a length-based estimate instead of a constant.
 - Isolated Claude Code configuration per profile: official credentials never reach a ccgp session; agents, skills,
   commands, plugins and settings are mirrored one way.
 - The model-identity sentence in Claude Code's prompt is replaced with the real backend model.
-- `ccgp import` / `ccgp export`: copy the latest sessions between your Claude Code and a profile (streaming,
-  append-only, thinking blocks removed on export).
-- `ccgp config reset`, `ccgp status`, `ccgp start` / `stop`; Windows, Linux and macOS.
-- Releases: binaries for six platforms with checksums and build-provenance attestations, npm packages (token or
-  Trusted Publishing), third-party license notices; dual license check in CI.
-- For the GPT-6 generation `ccgp models` / `apply` write a context window of 922000 (OpenAI's documented input limit)
-  when the catalog's `max_context_window` is lower (872000), so Claude Code compacts later; a larger catalog value wins.
 - `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
-  permission prompts off), a second small binary that starts the `ccgp` next to it. It is built and packaged with every
-  release (archives, and the npm package installs both commands).
+  permission prompts off), a second small binary that starts the `ccgp` next to it.
+- Installation: `install.sh` (Linux, macOS) and `install.ps1` (Windows) install `ccgp` and `ccgpy` from the GitHub
+  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `cc-go-proxy`
+  (`npm install -g cc-go-proxy`) installs both commands. CI checks that the scripts install the newest release.
+- Releases: binaries for six platforms with checksums and build-provenance attestations, npm packages (token or
+  Trusted Publishing, switched on by the repository variable `NPM_PUBLISH`), third-party license notices; dual
+  license check in CI.
 
 ### Changed
 - The Go module is now `github.com/PHPCraftdream/cc-go-proxy`.
 - Licensed under `MIT OR Apache-2.0` (the MIT-licensed upstream parts keep their notice, see `NOTICE`).
 - The version is set from the release tag at build time.
-- ccgp's own files are Ktav now, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
+- ccgp's own files are Ktav, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
   `creds` directory and `.ccgp-mirror.ktav` in a profile's Claude directory. The JSON files of earlier versions are read
   once, converted and removed, so existing logins and URL tokens keep working. A file is checked to read back as the same
   value before it is written. (Claude Code's own JSON files, such as `settings.json`, are untouched.)
-- The config parser is now the pure-Go package of ktav-lang/golang 0.8.1: no native library is downloaded on first
-  use, `KTAV_LIB_PATH` is no longer needed, and the binary works offline from the first run.
-- `ccgp send` / `import` / `export` copy only the sessions of the directory they are run in (the latest 10 of that
-  directory by default), not the latest sessions of every project, and print progress: `[k/N]` per session and a
-  percentage line every two seconds on large transcripts.
-- The request log now says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
+- The request log says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
   that breaks after the reply started gets a `stream failed` line; before, both were silent.
 - Codex backend: the wait for the reply headers is limited to 90 seconds. A request the backend stalled on used to hang
   for several minutes before failing with 502; now it fails sooner and Claude Code retries it.
@@ -106,6 +86,5 @@ First release of ccgp as an independent project.
   with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
   config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
 
-[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0
+[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.2.0

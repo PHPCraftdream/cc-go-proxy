@@ -169,8 +169,8 @@ jobs:
         CCGP_INSTALL_DIR: ${{ runner.temp }}/ccgp-bin
       run: |
         set -eu
-        CCGP_VERSION=0.1.1 sh install.sh
-        [ "$("$CCGP_INSTALL_DIR/ccgp" --version)" = "ccgp v0.1.1" ]
+        CCGP_VERSION=0.2.0 sh install.sh
+        [ "$("$CCGP_INSTALL_DIR/ccgp" --version)" = "ccgp v0.2.0" ]
         "$CCGP_INSTALL_DIR/ccgpy" help | grep -q '^usage: ccgpy <profile>'
         # Again without a version (the latest release), over the installed binaries.
         sh install.sh
@@ -187,10 +187,10 @@ jobs:
         CCGP_NO_PATH: '1'
       run: |
         $ErrorActionPreference = 'Stop'
-        $env:CCGP_VERSION = '0.1.1'
+        $env:CCGP_VERSION = '0.2.0'
         ./install.ps1
         $v = & "$env:CCGP_INSTALL_DIR\ccgp.exe" --version
-        if ($v -ne 'ccgp v0.1.1') { throw "version is '$v'" }
+        if ($v -ne 'ccgp v0.2.0') { throw "version is '$v'" }
         & "$env:CCGP_INSTALL_DIR\ccgpy.exe" help | Select-String -Pattern '^usage: ccgpy <profile>' -Quiet | ForEach-Object { if (-not $_) { throw 'ccgpy help' } }
         # Again without a version (the latest release), over the installed binaries.
         Remove-Item Env:CCGP_VERSION
