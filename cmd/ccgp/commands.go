@@ -36,6 +36,7 @@ func commands() []command {
 		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
 		{name: "--profile", args: "add|list [--json]|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
+		{name: "--which", args: "<profile> <model> [--json]", desc: "Show where a Claude model is routed in a profile (offline)", ensureConfig: true, run: whichCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
 		{name: "--restart", args: "", desc: "Stop and start the background server", ensureConfig: true, run: restartCmd},
 		{name: "--logout", args: "<provider> [--yes]", desc: "Remove the stored login (OAuth tokens or API key) of a provider", ensureConfig: true, run: logoutCmd},
