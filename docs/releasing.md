@@ -29,11 +29,14 @@ no version file to edit. Versions are never bumped automatically.
 
 The workflow refuses a tag that is not on `main` or is not a semantic version.
 
-npm publishing is off by default: the npm job builds the packages and dry-runs them, and publishes only when the
+npm publishing is off by default: on a tag the npm job only builds the packages, and publishes them only when the
 repository variable `NPM_PUBLISH` is `true` (`gh variable set NPM_PUBLISH --body true -R PHPCraftdream/cc-go-proxy`).
-Turn it on for a release that should reach npm; the history of the first attempts is in
-[npm-publication-log.md](npm-publication-log.md). `install.sh` / `install.ps1` install from the GitHub release and
-always take the newest one; CI checks that.
+Turn it on for a release that should reach npm, or turn it on later and re-run the release run's npm job; the history
+of the first attempts is in [npm-publication-log.md](npm-publication-log.md). `install.sh` / `install.ps1` install
+from the GitHub release and always take the newest one; CI checks that.
+
+The packages go out in this order: the two Windows ones (`-w32-*`, the names npm refused before), the other four
+platforms, the main package last. A refusal stops the run there, so a refused Windows name leaves nothing published.
 
 ## What a release contains
 

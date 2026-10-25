@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Publishes the packages made by build.mjs: platform packages first, the main
-// package last, so a user never gets a main package whose dependencies are missing.
+// Publishes the packages made by build.mjs: platform packages first (Windows
+// ones leading), the main package last, so a user never gets a main package
+// whose dependencies are missing.
 //
 //   node scripts/npm/publish.mjs <out-dir> [--dry-run]
 //
@@ -20,6 +21,14 @@ export function alreadyPublished(output) {
   return /cannot publish over (the )?previously published version/i.test(output) || /\bEPUBLISHCONFLICT\b/.test(output);
 }
 
+// publishRank orders the packages: Windows platform packages first (npm's spam
+// filter has refused those names before, so a refusal stops the run before the
+// other platforms are out), then the other platforms, the main package last.
+export function publishRank(pkg) {
+  if (pkg.optionalDependencies) return 2;
+  return (pkg.os ?? []).includes('win32') ? 0 : 1;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
@@ -35,8 +44,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     .filter((d) => d.isDirectory())
     .map((d) => join(resolve(outDir), d.name));
   const pkgOf = (dir) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-  // Packages without optionalDependencies (the platform ones) go first.
-  dirs.sort((a, b) => Number(!!pkgOf(a).optionalDependencies) - Number(!!pkgOf(b).optionalDependencies) || a.localeCompare(b));
+  dirs.sort((a, b) => publishRank(pkgOf(a)) - publishRank(pkgOf(b)) || a.localeCompare(b));
 
   const published = (name, version) => {
     const r = spawnSync(npm, ['view', `${name}@${version}`, 'version'], { encoding: 'utf8', shell });

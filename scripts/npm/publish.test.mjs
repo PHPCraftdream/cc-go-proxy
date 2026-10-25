@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { alreadyPublished } from './publish.mjs';
+import { PLATFORMS } from './build.mjs';
+import { alreadyPublished, publishRank } from './publish.mjs';
+
+test('Windows packages go first, the main package last', () => {
+  const platform = PLATFORMS.map((p) => ({ name: `x-${p.id}`, os: [p.os], cpu: [p.cpu] }));
+  const main = { name: 'x', optionalDependencies: {} };
+  const order = [main, ...platform]
+    .sort((a, b) => publishRank(a) - publishRank(b) || a.name.localeCompare(b.name))
+    .map((p) => p.name);
+  assert.deepEqual(order, [
+    'x-w32-arm64', 'x-w32-x64',
+    'x-darwin-arm64', 'x-darwin-x64', 'x-linux-arm64', 'x-linux-x64',
+    'x',
+  ]);
+});
 
 test('a version npm already has counts as published', () => {
   // Seen on a re-run of the v0.1.1 release, when `npm view` still missed the version.
