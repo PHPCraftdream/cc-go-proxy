@@ -19,6 +19,7 @@ type command struct {
 	args         string // synopsis after the name
 	desc         string // one-line description
 	ensureConfig bool   // create the default config first
+	hidden       bool   // helper command, skipped by printHelp
 	run          func(args []string) error
 }
 
@@ -40,8 +41,10 @@ func commands() []command {
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
 		{name: "--restart", args: "", desc: "Stop and start the background server", ensureConfig: true, run: restartCmd},
 		{name: "--logout", args: "<provider> [--yes]", desc: "Remove the stored login (OAuth tokens or API key) of a provider", ensureConfig: true, run: logoutCmd},
+		{name: "--completion", args: "bash|zsh|powershell", desc: "Print a shell completion script (see its usage error for the install line)", ensureConfig: false, run: completionCmd},
 		{name: "--version", args: "", desc: "Show version", run: versionCmd},
 		{name: "--help", args: "", desc: "Show this help", run: helpCmd},
+		{name: "--complete", args: "<prog> <word>...", desc: "", hidden: true, run: completeCmd},
 	}
 }
 
@@ -176,6 +179,9 @@ Usage:
                                    (a word without dashes is always a profile; commands start with --)
 `)
 	for _, c := range commands() {
+		if c.hidden {
+			continue
+		}
 		head := strings.TrimSpace(c.name + " " + c.args)
 		fmt.Fprintf(w, "  ccgp %-34s %s\n", head, c.desc)
 	}

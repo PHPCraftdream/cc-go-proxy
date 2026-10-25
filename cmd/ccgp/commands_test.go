@@ -78,7 +78,7 @@ func TestCommandTable(t *testing.T) {
 			t.Errorf("duplicate command %s", c.name)
 		}
 		seen[c.name] = true
-		if c.desc == "" {
+		if c.desc == "" && !c.hidden {
 			t.Errorf("%s: empty description", c.name)
 		}
 		if c.run == nil {
@@ -100,6 +100,12 @@ func TestPrintHelpListsAllCommands(t *testing.T) {
 	printHelp(&buf)
 	out := buf.String()
 	for _, c := range commands() {
+		if c.hidden {
+			if strings.Contains(out, "ccgp "+c.name) {
+				t.Errorf("help mentions hidden command %s", c.name)
+			}
+			continue
+		}
 		if !strings.Contains(out, "ccgp "+c.name) {
 			t.Errorf("help does not mention %s", c.name)
 		}
@@ -119,7 +125,10 @@ func TestDaemonServeArgs(t *testing.T) {
 
 // Commands that only read state must not create the default config.
 func TestEnsureConfigPolicy(t *testing.T) {
-	noConfig := map[string]bool{"--stop": true, "--status": true, "--config": true, "--version": true, "--help": true}
+	noConfig := map[string]bool{
+		"--stop": true, "--status": true, "--config": true, "--logs": true, "--version": true, "--help": true,
+		"--completion": true, "--complete": true, "--doctor": true, "--update": true,
+	}
 	for _, c := range commands() {
 		if c.ensureConfig == noConfig[c.name] {
 			t.Errorf("%s: ensureConfig = %v", c.name, c.ensureConfig)
