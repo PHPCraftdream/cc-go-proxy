@@ -178,7 +178,8 @@ func printHelp(w io.Writer) {
 
 Usage:
   ccgp <profile> [claude args...]  Ensure server + credentials, then run claude
-                                   (a word without dashes is always a profile; commands start with --)
+                                   (a word without dashes is always a profile: ccgp codex runs profile codex;
+                                   commands start with --)
 `)
 	for _, c := range commands() {
 		if c.hidden {
