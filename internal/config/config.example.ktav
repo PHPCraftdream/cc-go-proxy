@@ -1,10 +1,10 @@
 ## ccgp config (Ktav 0.8). Created by ccgp on first run; edit freely.
 ## ccgp only reads this file, with one exception: the block between the
 ## `ccgp:managed-models` marker lines of a profile is rewritten by
-## `ccgp models apply` (and after `ccgp login codex`). Everything else,
+## `ccgp --models apply` (and after `ccgp --login codex`). Everything else,
 ## including your comments, is never touched.
 ## Machine-managed state (profile URL tokens, API keys, rotating OAuth tokens)
-## lives next to it in the `creds` directory (see `ccgp status`).
+## lives next to it in the `creds` directory (see `ccgp --status`).
 ##
 ## Location:
 ##   Windows: %APPDATA%\cc-go-proxy\config.ktav
@@ -15,11 +15,11 @@ listen.host: 127.0.0.1
 listen.port: 60093
 ## Largest request body in MiB. A long conversation is resent in full on every
 ## call (reasoning signatures alone reach megabytes); bigger bodies are refused
-## with 413. Needs a server restart (`ccgp stop`) to change.
+## with 413. Needs a server restart (`ccgp --stop`) to change.
 listen.max_body_mb: 256
 
 providers: [
-    ## "codex": your ChatGPT subscription via OAuth (`ccgp login codex`, or `--device` for device code).
+    ## "codex": your ChatGPT subscription via OAuth (`ccgp --login codex`, or `--device` for device code).
     {
         name: codex
         type: codex
@@ -33,7 +33,7 @@ providers: [
         base_url: https://api.openai.com/v1
     }
     ## "zai": z.ai GLM models through their Anthropic-compatible endpoint, requests are
-    ## forwarded unconverted. API key from z.ai: `ccgp login zai`.
+    ## forwarded unconverted. API key from z.ai: `ccgp --login zai`.
     {
         name: zai
         type: anthropic_compat
@@ -65,7 +65,7 @@ profiles: [
         name: codex
         provider: codex
         ## Fable -> astra, Opus -> sol, Sonnet -> luna, Haiku -> previous luna.
-        ## Run `ccgp models apply codex` to refresh these to the newest releases.
+        ## Run `ccgp --models apply codex` to refresh these to the newest releases.
         ## ccgp:managed-models begin codex
         models: [
             {
@@ -112,7 +112,7 @@ profiles: [
         name: zai
         provider: zai
         ## Fable -> glm-5.3, Opus and everything below -> glm-5.3-flash (1M windows).
-        ## Run `ccgp models apply zai` to refresh these from the built-in preset.
+        ## Run `ccgp --models apply zai` to refresh these from the built-in preset.
         ## ccgp:managed-models begin zai
         models: [
             {

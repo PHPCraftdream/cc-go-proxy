@@ -17,7 +17,7 @@ import (
 var profileNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 // ValidateProfileName rejects names that cannot be used as `ccgp <name>`:
-// malformed or colliding with a ccgp command.
+// malformed or reserved (claude is the ccgp --send endpoint name).
 func ValidateProfileName(name string) error {
 	switch {
 	case name == "":
@@ -25,7 +25,7 @@ func ValidateProfileName(name string) error {
 	case !profileNameRe.MatchString(name):
 		return fmt.Errorf("profile name %q: use 1-32 characters [a-z0-9_-], starting with a letter or digit", name)
 	case reservedProfiles[name]:
-		return fmt.Errorf("profile name %q is a ccgp command name", name)
+		return fmt.Errorf("profile name %q is reserved: claude is the ccgp --send endpoint name", name)
 	}
 	return nil
 }

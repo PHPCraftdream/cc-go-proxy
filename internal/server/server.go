@@ -152,7 +152,7 @@ func Start(cfg *config.Config) error {
 		app.Use(accessLog(os.Stdout))
 	}
 
-	// Health check endpoint; pid lets `ccgp stop` verify the process.
+	// Health check endpoint; pid lets `ccgp --stop` verify the process.
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status":  "ok",
@@ -210,7 +210,7 @@ func profileResolver(cfg *config.Config, store creds.Store) (*creds.TokenIndex, 
 				return nil, err
 			}
 			if key == "" && !isLocalURL(pr.BaseURL) {
-				return nil, fmt.Errorf("provider %q has no API key, run `ccgp login %s`", pr.Name, pr.Name)
+				return nil, fmt.Errorf("provider %q has no API key, run `ccgp --login %s`", pr.Name, pr.Name)
 			}
 			if key == "" {
 				key = "ollama"

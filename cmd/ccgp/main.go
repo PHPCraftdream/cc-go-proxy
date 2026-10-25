@@ -1,12 +1,14 @@
 // Command ccgp is a headless Claude Code -> OpenAI/Codex bridge.
 //
 //	ccgp <profile> [claude args...]   start server if needed, ensure creds, run claude
-//	ccgp serve [-d] [-s]              run server in foreground
-//	ccgp start|stop|status            manage background server
-//	ccgp login <provider> [--device] (re)authenticate a provider
-//	ccgp send <from> <to> [n]         copy the n latest sessions of the current directory between "claude" and profiles
-//	ccgp import|export <profile> [n]  aliases of send: claude -> profile / profile -> claude
-//	ccgp profile add|list|rm          manage profiles (and their providers) in config.ktav
+//	ccgp --serve [-d] [-s]            run server in foreground
+//	ccgp --start|--stop|--status      manage background server
+//	ccgp --login <provider> [--device] (re)authenticate a provider
+//	ccgp --send <from> <to> [n]       copy the n latest sessions of the current directory between "claude" and profiles
+//	ccgp --import|--export <profile> [n]  aliases of send: claude -> profile / profile -> claude
+//	ccgp --profile add|list|rm        manage profiles (and their providers) in config.ktav
+//
+// Commands are written with a leading "--"; a bare word is always a profile.
 package main
 
 import (
@@ -40,82 +42,26 @@ type exitError int
 func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		printHelp()
-		return nil
+	inv, err := parseInvocation(args)
+	if err != nil {
+		return err
 	}
-	switch args[0] {
-	case "help", "-h", "--help":
-		printHelp()
-		return nil
-	case "version", "--version":
-		fmt.Println(version)
-		return nil
-	case "stop", "status", "config":
-	default:
+	if inv.cmd == nil {
+		if inv.profile == "" {
+			printHelp(os.Stdout)
+			return nil
+		}
+		if err := ensureConfig(); err != nil {
+			return err
+		}
+		return launch(inv.profile, inv.args)
+	}
+	if inv.cmd.ensureConfig {
 		if err := ensureConfig(); err != nil {
 			return err
 		}
 	}
-	switch args[0] {
-	case "serve":
-		return serve(args[1:])
-	case "start":
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		h, err := ensureServer(cfg, args[1:])
-		if err != nil {
-			return err
-		}
-		fmt.Printf("ccgp running (pid %d) at %s\n", h.PID, daemon.BaseURL(cfg.Host, cfg.Port))
-		return nil
-	case "stop":
-		host, port := listenAddr()
-		if err := daemon.Stop(daemon.BaseURL(host, port), 5*time.Second); err != nil {
-			return err
-		}
-		fmt.Println("ccgp stopped")
-		return nil
-	case "status":
-		return status()
-	case "config":
-		return configCmd(args[1:])
-	case "models":
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		return models(cfg, args[1:])
-	case "import", "export", "send":
-		return sessionsCmd(args[0], args[1:])
-	case "profile":
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		return profileCmd(cfg, args[1:])
-	case "login":
-		device, rest := false, []string{}
-		for _, a := range args[1:] {
-			if a == "--device" {
-				device = true
-			} else {
-				rest = append(rest, a)
-			}
-		}
-		if len(rest) != 1 {
-			return errors.New("usage: ccgp login <provider> [--device]")
-		}
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		return login(cfg, rest[0], true, device)
-	default:
-		return launch(args[0], args[1:])
-	}
+	return inv.cmd.run(inv.args)
 }
 
 // ensureConfig creates the default config on first run.
@@ -186,7 +132,7 @@ func status() error {
 	return nil
 }
 
-// serve runs the server in the foreground.
+// --serve runs the server in the foreground.
 func serve(args []string) error {
 	debug, simple := false, false
 	for _, a := range args {
@@ -196,7 +142,7 @@ func serve(args []string) error {
 		case "-s", "--simple":
 			simple = true
 		default:
-			return fmt.Errorf("serve: unknown flag %q", a)
+			return fmt.Errorf("--serve: unknown flag %q", a)
 		}
 	}
 	cfg, err := config.LoadWithDebug(debug)
@@ -227,8 +173,7 @@ func ensureServer(cfg *config.Config, serveArgs []string) (*daemon.Health, error
 	if err != nil {
 		return nil, err
 	}
-	// Simple request log by default in background mode.
-	args := append([]string{"serve", "-s"}, serveArgs...)
+	args := daemonServeArgs(serveArgs)
 	return daemon.Start(exe, args, logPath, base, 10*time.Second)
 }
 
@@ -247,45 +192,10 @@ func listenAddr() (string, string) {
 	return host, port
 }
 
-func printHelp() {
-	fmt.Println(`ccgp - Claude Code bridge to OpenAI-compatible APIs and ChatGPT Codex
-
-Usage:
-  ccgp <profile> [claude args...]  Ensure server + credentials, then run claude
-  ccgp serve [-d] [-s]             Run server in foreground (-d debug, -s request log)
-  ccgp start                       Start background server
-  ccgp stop                        Stop background server
-  ccgp status                      Show background server status
-  ccgp login <provider> [--device] Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)
-  ccgp models [apply] [-v] [profile] Show (or write into config) the newest Codex models per Claude tier
-  ccgp send <from> <to> [count]    Copy the latest sessions (default 10) of the current directory between "claude" and a profile
-  ccgp import <profile> [count]    Same as: ccgp send claude <profile>
-  ccgp export <profile> [count]    Same as: ccgp send <profile> claude
-  ccgp profile add [name] --like <profile>      New profile with its OWN login (e.g. a second Codex account: ccgp codex2)
-  ccgp profile add <name> --provider <p>        New profile on an existing login [--model M [--window N]]
-  ccgp profile add <name> --type <t> ...        New backend: codex | codex_api | anthropic_compat [--base-url URL] [--model M]
-  ccgp profile list                Show profiles, providers, login state and Claude dirs
-  ccgp profile rm <name> [--yes] [--purge]  Remove a profile (its provider too when unused; --purge deletes data)
-  ccgp config reset                Back up the config and regenerate the default one
-  ccgp version                    Show version
-
-Config (Ktav):
-  Windows: %APPDATA%\cc-go-proxy\config.ktav   Linux: ~/.config/cc-go-proxy/config.ktav
-  Override: CCGP_CONFIG. Created automatically on first run.
-  Credentials are stored separately in <config dir>/cc-go-proxy/creds (owner-only).
-
-Env-only mode (no config.ktav):
-  OPENAI_API_KEY, PROXY_TOKEN (min 32 chars), OPENAI_BASE_URL, HOST, PORT
-  Profile name: default
-
-Example:
-  ccgp codex -p "hello"`)
-}
-
-// configCmd implements `ccgp config reset`.
+// configCmd implements `ccgp --config reset`.
 func configCmd(args []string) error {
 	if len(args) != 1 || args[0] != "reset" {
-		return errors.New("usage: ccgp config reset")
+		return errors.New("usage: ccgp --config reset")
 	}
 	path, backup, err := config.ResetFile()
 	if err != nil {
@@ -295,6 +205,6 @@ func configCmd(args []string) error {
 		fmt.Printf("old config saved as %s\n", backup)
 	}
 	fmt.Printf("default config written to %s\n", path)
-	fmt.Println("next: ccgp models apply   (refresh the generated model mappings)")
+	fmt.Println("next: ccgp --models apply   (refresh the generated model mappings)")
 	return nil
 }

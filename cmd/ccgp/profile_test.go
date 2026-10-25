@@ -233,7 +233,7 @@ func TestProfileAddTypeNewBackend(t *testing.T) {
 		t.Errorf("rules = %+v, want %+v", pf.Models, want)
 	}
 
-	// codex without --model: ready for `ccgp models apply` (managed block).
+	// codex without --model: ready for `ccgp --models apply` (managed block).
 	path, cfg = writeTestConfig(t, testConfig)
 	out.Reset()
 	if err := profileAdd(&out, profileAddOpts{Type: config.ProviderTypeCodex, Name: "fresh"}, path, cfg, creds.Store{}); err != nil {
@@ -243,7 +243,7 @@ func TestProfileAddTypeNewBackend(t *testing.T) {
 	if !config.HasManaged(string(b), "fresh") {
 		t.Error("a codex profile without --model must get an empty managed block")
 	}
-	if !strings.Contains(out.String(), "then: ccgp models apply fresh") {
+	if !strings.Contains(out.String(), "then: ccgp --models apply fresh") {
 		t.Errorf("output:\n%s", out.String())
 	}
 
@@ -284,7 +284,7 @@ func TestProfileAddRefusals(t *testing.T) {
 		want string
 	}{
 		{"existing name", profileAddOpts{Like: "codex", Name: "zai"}, "already in use"},
-		{"reserved name", profileAddOpts{Like: "codex", Name: "serve"}, "command"},
+		{"reserved name", profileAddOpts{Like: "codex", Name: "claude"}, "reserved"},
 		{"invalid name", profileAddOpts{Like: "codex", Name: "Bad"}, "[a-z0-9_-]"},
 		{"unknown source", profileAddOpts{Like: "nope"}, "unknown profile"},
 		{"unknown provider", profileAddOpts{Provider: "nope", Name: "x"}, "unknown provider"},
@@ -349,7 +349,7 @@ func TestProfileList(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"PROFILE", "PROVIDER", "TYPE", "LOGIN", "MAIN MODEL", "CLAUDE DIR",
-		"not logged in (ccgp login codex)",
+		"not logged in (ccgp --login codex)",
 		"gpt-6-luna", // sonnet tier of the codex profile
 	} {
 		if !strings.Contains(got, want) {
@@ -547,7 +547,7 @@ func TestClaudeProfileDirSafety(t *testing.T) {
 	if err != nil || p != filepath.Join(base, "codex") {
 		t.Fatalf("claudeProfileDir = %q, %v", p, err)
 	}
-	for _, bad := range []string{"", "..", "Foo", "a b", "serve", filepath.Join(base, "x")} {
+	for _, bad := range []string{"", "..", "Foo", "a b", "claude", filepath.Join(base, "x")} {
 		if _, err := claudeProfileDir(base, bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}

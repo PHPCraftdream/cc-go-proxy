@@ -69,7 +69,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		cancel()
 		if errors.Is(err, oauth.ErrNotLoggedIn) || errors.Is(err, oauth.ErrReloginRequired) {
 			return anthropicError(c, fiber.StatusUnauthorized, "authentication_error",
-				fmt.Sprintf("%v (ccgp login %s)", err, cfg.ProviderName))
+				fmt.Sprintf("%v (ccgp --login %s)", err, cfg.ProviderName))
 		}
 		return anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
 	}
@@ -81,7 +81,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		if status == http.StatusUnauthorized {
 			// Still 401 after refresh: credentials are no longer accepted.
 			return anthropicError(c, status, "authentication_error",
-				fmt.Sprintf("codex: unauthorized, run `ccgp login %s`: %s", cfg.ProviderName, codex.ErrorMessage(b)))
+				fmt.Sprintf("codex: unauthorized, run `ccgp --login %s`: %s", cfg.ProviderName, codex.ErrorMessage(b)))
 		}
 		return anthropicError(c, status, codex.ErrorType(status), "codex: "+codex.ErrorMessage(b))
 	}

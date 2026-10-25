@@ -70,7 +70,7 @@ func TestSessionFailedRefreshKeepsStoredTokens(t *testing.T) {
 	}
 }
 
-// `ccgp login` rewrites the file while the server runs; the session picks it up.
+// `ccgp --login` rewrites the file while the server runs; the session picks it up.
 func TestSessionPicksUpNewLogin(t *testing.T) {
 	store := Store{Path: filepath.Join(t.TempDir(), "codex.json")}
 	fresh := func(refresh string) *Tokens {

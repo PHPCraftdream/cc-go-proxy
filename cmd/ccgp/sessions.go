@@ -23,11 +23,11 @@ type endpoint struct {
 	label    string // profile name or "claude"
 }
 
-// claudeEndpointLabel names the user's own Claude Code dir in `ccgp send`.
+// claudeEndpointLabel names the user's own Claude Code dir in `ccgp --send`.
 const claudeEndpointLabel = "claude"
 
-// sessionsCmd implements `ccgp send <from> <to> [count]` and its aliases
-// `ccgp import|export <profile> [count]`, all through the same code path.
+// sessionsCmd implements `ccgp --send <from> <to> [count]` and its aliases
+// `ccgp --import|--export <profile> [count]`, all through the same code path.
 // Only the sessions of the directory the command is run in are copied.
 func sessionsCmd(kind string, args []string) error {
 	from, to, count, err := parseSendCommand(kind, args)
@@ -109,7 +109,7 @@ func parseSendCommand(kind string, args []string) (from, to string, count int, e
 
 func parseSendArgs(args []string) (from, to string, count int, err error) {
 	if len(args) < 2 || len(args) > 3 {
-		return "", "", 0, fmt.Errorf("usage: ccgp send <from> <to> [count]   (from/to: \"claude\" or a profile; count: how many latest sessions of the current directory, default %d)", defaultSessionCount)
+		return "", "", 0, fmt.Errorf("usage: ccgp --send <from> <to> [count]   (from/to: \"claude\" or a profile; count: how many latest sessions of the current directory, default %d)", defaultSessionCount)
 	}
 	count = defaultSessionCount
 	if len(args) == 3 {
@@ -124,7 +124,7 @@ func parseSendArgs(args []string) (from, to string, count int, err error) {
 
 func parseSessionArgs(kind string, args []string) (profile string, count int, err error) {
 	if len(args) < 1 || len(args) > 2 {
-		return "", 0, fmt.Errorf("usage: ccgp %s <profile> [count]   (count: how many latest sessions of the current directory, default %d)", kind, defaultSessionCount)
+		return "", 0, fmt.Errorf("usage: ccgp --%s <profile> [count]   (count: how many latest sessions of the current directory, default %d)", kind, defaultSessionCount)
 	}
 	count = defaultSessionCount
 	if len(args) == 2 {

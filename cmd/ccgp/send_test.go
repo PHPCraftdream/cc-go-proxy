@@ -73,7 +73,7 @@ func TestParseSendArgs(t *testing.T) {
 			t.Errorf("accepted %v", bad)
 		}
 	}
-	if _, _, _, err := parseSendArgs(nil); err == nil || !strings.Contains(err.Error(), "ccgp send") {
+	if _, _, _, err := parseSendArgs(nil); err == nil || !strings.Contains(err.Error(), "ccgp --send") {
 		t.Errorf("usage = %v", err)
 	}
 }

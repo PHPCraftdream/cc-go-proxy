@@ -177,7 +177,7 @@ jobs:
     - name: Smoke test
       if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
       run: |
-        got="$(./out/ccgp version)"
+        got="$(./out/ccgp --version)"
         echo "$got"
         [ "$got" = "ccgp v${VERSION}" ]
         ./out/ccgpy help | grep -q '^usage: ccgpy <profile>'

@@ -24,7 +24,7 @@ func TestParseSessionArgs(t *testing.T) {
 			t.Errorf("accepted %v", bad)
 		}
 	}
-	if _, _, err := parseSessionArgs("export", nil); err == nil || !strings.Contains(err.Error(), "ccgp export") {
+	if _, _, err := parseSessionArgs("export", nil); err == nil || !strings.Contains(err.Error(), "ccgp --export") {
 		t.Errorf("usage = %v", err)
 	}
 }

@@ -82,7 +82,7 @@ function Install-Ccgp {
             Write-Host "Added $dir to your user PATH; open a new terminal to use it."
         }
     }
-    Write-Host "Next: ccgp help   (you also need Claude Code: 'claude' on PATH)"
+    Write-Host "Next: ccgp --help   (you also need Claude Code: 'claude' on PATH)"
 }
 
 Install-Ccgp

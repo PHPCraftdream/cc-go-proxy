@@ -28,12 +28,11 @@ const (
 // legacyTypeOpenAI is the former name of ProviderTypeCodexAPI.
 const legacyTypeOpenAI = "openai"
 
-// reservedProfiles collide with `ccgp <command>`.
+// reservedProfiles are names a profile must not use: "claude" is the
+// endpoint name of the user's own Claude Code directory in
+// `ccgp --send claude <profile>` (and --import/--export).
 var reservedProfiles = map[string]bool{
-	"serve": true, "start": true, "stop": true, "status": true,
-	"login": true, "help": true, "version": true, "models": true, "config": true,
-	// "claude" collides with the `ccgp send claude <profile>` endpoint name.
-	"import": true, "export": true, "profile": true, "send": true, "claude": true,
+	"claude": true,
 }
 
 // ModelRule maps Claude model names matching a glob to a backend model and
@@ -164,7 +163,7 @@ func (fc *fileConfig) validate() error {
 			return fmt.Errorf("profile %q: compact_percent must be 0-100", pf.Name)
 		}
 		if reservedProfiles[pf.Name] {
-			return fmt.Errorf("profiles[%d]: %q is a ccgp command name", i, pf.Name)
+			return fmt.Errorf("profiles[%d]: %q is a reserved profile name (claude is the ccgp --send endpoint)", i, pf.Name)
 		}
 		if !providers[pf.Provider] {
 			return fmt.Errorf("profile %q: unknown provider %q", pf.Name, pf.Provider)

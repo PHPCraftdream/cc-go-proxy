@@ -1,5 +1,5 @@
 // Package preset holds built-in model mappings for providers that have no
-// model catalog of their own, so `ccgp models apply` can write them into the
+// model catalog of their own, so `ccgp --models apply` can write them into the
 // config. Numbers come from the providers' documentation (see each preset).
 package preset
 

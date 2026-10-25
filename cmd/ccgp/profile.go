@@ -19,7 +19,7 @@ import (
 // rule created with --model but without --window.
 const defaultCatchallWindow = 272_000
 
-// profileAddOpts is the parsed `ccgp profile add` command line.
+// profileAddOpts is the parsed `ccgp --profile add` command line.
 type profileAddOpts struct {
 	Name      string
 	Like      string // --like <profile>: copy an existing profile + its provider
@@ -32,13 +32,13 @@ type profileAddOpts struct {
 	HasWindow bool
 }
 
-// profileCmd implements `ccgp profile <add|list|rm>`.
+// profileCmd implements `ccgp --profile <add|list|rm>`.
 func profileCmd(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: ccgp profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat>) | ccgp profile list | ccgp profile rm <name> [--yes] [--purge]")
+		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge]")
 	}
 	if cfg.IsEnvMode() {
-		return errors.New("ccgp profile needs config.ktav (env-only mode has a single implicit profile)")
+		return errors.New("ccgp --profile needs config.ktav (env-only mode has a single implicit profile)")
 	}
 	store, err := credsStore()
 	if err != nil {
@@ -135,7 +135,7 @@ func nameTaken(cfg *config.Config, name string) bool {
 	return profile || provider
 }
 
-// profileAdd is the testable core of `ccgp profile add`. The store parameter
+// profileAdd is the testable core of `ccgp --profile add`. The store parameter
 // keeps the credential store at hand for future uses; credentials themselves
 // are created by the first `ccgp <name>` sign-in, not here.
 func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Config, store creds.Store) error {
@@ -147,7 +147,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 	}
 	if chosen != 1 {
-		return errors.New("usage: ccgp profile add <name> --like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat> [--base-url URL] [--model M [--window N]] (exactly one of --like, --provider, --type)")
+		return errors.New("usage: ccgp --profile add <name> --like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat> [--base-url URL] [--model M [--window N]] (exactly one of --like, --provider, --type)")
 	}
 
 	data, err := os.ReadFile(cfgPath)
@@ -210,7 +210,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 	}
 
-	// Ready for `ccgp models apply`: codex providers have a live catalog,
+	// Ready for `ccgp --models apply`: codex providers have a live catalog,
 	// other providers a built-in preset for their URL. Without --model no
 	// mapping is invented.
 	_, hasPreset := preset.ForBaseURL(providerURL)
@@ -249,7 +249,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		if err != nil || !readyForApply {
 			return out, err
 		}
-		// An empty managed block, so `ccgp models apply <name>` can fill it;
+		// An empty managed block, so `ccgp --models apply <name>` can fill it;
 		// inside the same validated, backed-up edit.
 		return config.AddManaged(out, name)
 	})
@@ -271,14 +271,14 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 	_, _ = fmt.Fprintf(w, "run: ccgp %s   (signs in on first start)\n", name)
 	switch {
 	case readyForApply:
-		_, _ = fmt.Fprintf(w, "then: ccgp models apply %s\n", name)
+		_, _ = fmt.Fprintf(w, "then: ccgp --models apply %s\n", name)
 	case !opts.HasModel && len(rules) == 0:
 		_, _ = fmt.Fprintf(w, "no model rules were copied; edit %s to add a models list\n", cfgPath)
 	}
 	return nil
 }
 
-// profileList is the testable core of `ccgp profile list`.
+// profileList is the testable core of `ccgp --profile list`.
 func profileList(w io.Writer, cfg *config.Config, store creds.Store, claudeBase string) error {
 	_, _ = fmt.Fprintf(w, "%-16s %-16s %-17s %-38s %-16s %s\n",
 		"PROFILE", "PROVIDER", "TYPE", "LOGIN", "MAIN MODEL", "CLAUDE DIR")
@@ -301,7 +301,7 @@ func profileList(w io.Writer, cfg *config.Config, store creds.Store, claudeBase 
 	return nil
 }
 
-// profileRmOpts is the parsed `ccgp profile rm` command line.
+// profileRmOpts is the parsed `ccgp --profile rm` command line.
 type profileRmOpts struct {
 	Name  string
 	Yes   bool
@@ -327,7 +327,7 @@ func parseProfileRm(args []string) (profileRmOpts, error) {
 		}
 	}
 	if o.Name == "" {
-		return o, errors.New("usage: ccgp profile rm <name> [--yes] [--purge]")
+		return o, errors.New("usage: ccgp --profile rm <name> [--yes] [--purge]")
 	}
 	return o, nil
 }
@@ -347,7 +347,7 @@ func claudeProfileDir(base, name string) (string, error) {
 	return p, nil
 }
 
-// profileRemove is the testable core of `ccgp profile rm`.
+// profileRemove is the testable core of `ccgp --profile rm`.
 func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.Config, store creds.Store, claudeBase string, stdin io.Reader) error {
 	pf, ok := cfg.Profiles[opts.Name]
 	if !ok {

@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: ccgp version
-      description: Output of `ccgp version`, and how you installed it (npm, release archive, go install).
+      description: Output of `ccgp --version`, and how you installed it (npm, release archive, go install).
     validations:
       required: true
   - type: dropdown
@@ -43,5 +43,5 @@ body:
     id: logs
     attributes:
       label: Log
-      description: The relevant lines of the server log (`ccgp status` shows its path).
+      description: The relevant lines of the server log (`ccgp --status` shows its path).
       render: text

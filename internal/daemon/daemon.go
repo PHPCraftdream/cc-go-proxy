@@ -1,4 +1,4 @@
-// Package daemon runs `ccgp serve` as a detached background process and
+// Package daemon runs `ccgp --serve` as a detached background process and
 // controls it via /health (which reports the server pid).
 package daemon
 

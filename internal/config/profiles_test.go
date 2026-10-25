@@ -50,9 +50,8 @@ func TestValidateProfileName(t *testing.T) {
 		{"-x", "[a-z0-9_-]"},
 		{"a b", "[a-z0-9_-]"},
 		{strings.Repeat("a", 33), "[a-z0-9_-]"}, // 33 chars: too long
-		{"serve", "command"},
-		{"profile", "command"},
-		{"send", "command"},
+		{"serve", ""},                           // former ccgp command names are valid profiles now
+		{"claude", "reserved"},
 	}
 	for _, tt := range tests {
 		err := ValidateProfileName(tt.name)

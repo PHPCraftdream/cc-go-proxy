@@ -30,7 +30,7 @@ type Model struct {
 	// Hidden entries are not offered in pickers but may still be usable; they
 	// qualify only as the previous release (Haiku), never as the newest.
 	Hidden bool
-	// Raw holds the catalog entry as received (for `ccgp models -v`).
+	// Raw holds the catalog entry as received (for `ccgp --models -v`).
 	Raw map[string]json.RawMessage
 }
 

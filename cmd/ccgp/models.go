@@ -15,7 +15,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 )
 
-// models implements `ccgp models [apply] [-v] [profile]`.
+// models implements `ccgp --models [apply] [-v] [profile]`.
 func models(cfg *config.Config, args []string) error {
 	apply, verbose := false, false
 flags:
@@ -31,7 +31,7 @@ flags:
 		args = args[1:]
 	}
 	if len(args) > 1 {
-		return errors.New("usage: ccgp models [apply] [-v] [profile]")
+		return errors.New("usage: ccgp --models [apply] [-v] [profile]")
 	}
 	if cfg.IsEnvMode() {
 		return errors.New("models needs config.ktav (env-only mode has no managed profiles)")
@@ -96,7 +96,7 @@ flags:
 		fmt.Printf("applied to %s (profile %q)\n", cfg.ConfigFile, pf.Name)
 	}
 	if !apply {
-		fmt.Println("\nDry run. Write this into the config with: ccgp models apply")
+		fmt.Println("\nDry run. Write this into the config with: ccgp --models apply")
 	}
 	return nil
 }
@@ -161,7 +161,7 @@ func loadCatalog(ctx context.Context, cfg *config.Config, provider string) (*pro
 	sess := &oauth.Session{Store: oauth.Store{Path: store.OAuthPath(provider)}, Client: &oauth.Client{}}
 	tok, err := sess.Token(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w (run: ccgp login %s)", err, provider)
+		return nil, fmt.Errorf("%w (run: ccgp --login %s)", err, provider)
 	}
 	list, err := codex.FetchCatalog(ctx, cfg.Providers[provider].BaseURL, tok)
 	if err != nil {
@@ -220,7 +220,7 @@ func autoApplyModels(cfg *config.Config, provider string) {
 	defer cancel()
 	pc, err := loadCatalog(ctx, cfg, provider)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ccgp: could not read the model catalog (%v); run `ccgp models apply` later\n", err)
+		fmt.Fprintf(os.Stderr, "ccgp: could not read the model catalog (%v); run `ccgp --models apply` later\n", err)
 		return
 	}
 	data, err := os.ReadFile(cfg.ConfigFile)

@@ -9,7 +9,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
-// A profile may contain one block rewritten by `ccgp models apply`:
+// A profile may contain one block rewritten by `ccgp --models apply`:
 //
 //	## ccgp:managed-models begin <profile>
 //	...

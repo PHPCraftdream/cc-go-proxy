@@ -101,4 +101,4 @@ case ":${PATH}:" in
   *) say "Note: ${dir} is not on your PATH. Add it, for example:"
      say "  echo 'export PATH=\"${dir}:\$PATH\"' >> ~/.profile" ;;
 esac
-say "Next: ccgp help   (you also need Claude Code: 'claude' on PATH)"
+say "Next: ccgp --help   (you also need Claude Code: 'claude' on PATH)"

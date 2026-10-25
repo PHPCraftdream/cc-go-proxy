@@ -88,7 +88,7 @@ func browserLogin(ctx context.Context, provider string) (*oauth.Tokens, error) {
 		fmt.Fprintf(os.Stderr, "\nSign in to ChatGPT for provider %q.\n\n", provider)
 		fmt.Fprintf(os.Stderr, "Open this link in a browser on this computer:\n\n  %s\n\n", authURL)
 		fmt.Fprintf(os.Stderr, "After you sign in, the browser returns to localhost:%s and ccgp continues.\n", oauth.CallbackPort)
-		fmt.Fprintf(os.Stderr, "No browser on this computer? Use: ccgp login %s --device\n\nWaiting (10 minutes)...\n", provider)
+		fmt.Fprintf(os.Stderr, "No browser on this computer? Use: ccgp --login %s --device\n\nWaiting (10 minutes)...\n", provider)
 	})
 	if err != nil {
 		return nil, err
@@ -182,7 +182,7 @@ func loginState(store creds.Store, pr *config.Provider) string {
 		t, err := oauth.Store{Path: store.OAuthPath(pr.Name)}.Load()
 		switch {
 		case errors.Is(err, oauth.ErrNotLoggedIn):
-			return "not logged in (ccgp login " + pr.Name + ")"
+			return "not logged in (ccgp --login " + pr.Name + ")"
 		case err != nil:
 			return "error: " + err.Error()
 		}
@@ -203,7 +203,7 @@ func loginState(store creds.Store, pr *config.Provider) string {
 		case isLocal(pr.BaseURL):
 			return "no key needed (local)"
 		}
-		return "no API key (ccgp login " + pr.Name + ")"
+		return "no API key (ccgp --login " + pr.Name + ")"
 	}
 	return "unknown type"
 }
