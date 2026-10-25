@@ -56,7 +56,17 @@ func profileCmd(cfg *config.Config, args []string) error {
 		if err != nil {
 			return err
 		}
-		return profileList(os.Stdout, cfg, store, base)
+		jsonOut := false
+		for _, a := range args[1:] {
+			if a == "--json" {
+				jsonOut = true
+			}
+		}
+		rows := buildProfileRows(cfg, store, base)
+		if jsonOut {
+			return writeJSON(os.Stdout, profileListData{Profiles: rows})
+		}
+		return profileList(os.Stdout, rows)
 	case "rm":
 		opts, err := parseProfileRm(args[1:])
 		if err != nil {
@@ -278,10 +288,23 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 	return nil
 }
 
-// profileList is the testable core of `ccgp --profile list`.
-func profileList(w io.Writer, cfg *config.Config, store creds.Store, claudeBase string) error {
-	_, _ = fmt.Fprintf(w, "%-16s %-16s %-17s %-38s %-16s %s\n",
-		"PROFILE", "PROVIDER", "TYPE", "LOGIN", "MAIN MODEL", "CLAUDE DIR")
+// profileRow is one entry of `ccgp --profile list`.
+type profileRow struct {
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+	Type      string `json:"type"`
+	Login     string `json:"login"`
+	MainModel string `json:"mainModel"`
+	ClaudeDir bool   `json:"claudeDir"`
+}
+
+type profileListData struct {
+	Profiles []profileRow `json:"profiles"`
+}
+
+// buildProfileRows assembles the list rows; the only I/O is the Claude dir check.
+func buildProfileRows(cfg *config.Config, store creds.Store, claudeBase string) []profileRow {
+	var rows []profileRow
 	for _, name := range sortedKeys(cfg.Profiles) {
 		pf := cfg.Profiles[name]
 		pr := cfg.Providers[pf.Provider]
@@ -289,14 +312,28 @@ func profileList(w io.Writer, cfg *config.Config, store creds.Store, claudeBase 
 		if m, ok := (&config.Config{ModelRules: pf.Models, DefaultModel: pf.DefaultModel}).ResolveModel("sonnet"); ok {
 			mainModel = m
 		}
-		dir := "no"
+		claudeDir := false
 		if p, err := claudeProfileDir(claudeBase, name); err == nil {
 			if _, err := os.Stat(p); err == nil {
-				dir = "yes"
+				claudeDir = true
 			}
 		}
+		rows = append(rows, profileRow{Name: name, Provider: pf.Provider, Type: pr.Type, Login: loginState(store, pr), MainModel: mainModel, ClaudeDir: claudeDir})
+	}
+	return rows
+}
+
+// profileList prints the human-readable profile table.
+func profileList(w io.Writer, rows []profileRow) error {
+	_, _ = fmt.Fprintf(w, "%-16s %-16s %-17s %-38s %-16s %s\n",
+		"PROFILE", "PROVIDER", "TYPE", "LOGIN", "MAIN MODEL", "CLAUDE DIR")
+	for _, r := range rows {
+		dir := "no"
+		if r.ClaudeDir {
+			dir = "yes"
+		}
 		_, _ = fmt.Fprintf(w, "%-16s %-16s %-17s %-38s %-16s %s\n",
-			name, pf.Provider, pr.Type, loginState(store, pr), mainModel, dir)
+			r.Name, r.Provider, r.Type, r.Login, r.MainModel, dir)
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ import (
 
 // models implements `ccgp --models [apply] [-v] [profile]`.
 func models(cfg *config.Config, args []string) error {
-	apply, verbose := false, false
+	apply, verbose, jsonOut := false, false, false
 flags:
 	for len(args) > 0 {
 		switch args[0] {
@@ -25,6 +25,8 @@ flags:
 			apply = true
 		case "-v", "--verbose":
 			verbose = true
+		case "--json":
+			jsonOut = true
 		default:
 			break flags
 		}
@@ -35,6 +37,9 @@ flags:
 	}
 	if cfg.IsEnvMode() {
 		return errors.New("models needs config.ktav (env-only mode has no managed profiles)")
+	}
+	if apply && jsonOut {
+		return errors.New("--json only works with the show form: ccgp --models [--json] [-v] [profile]")
 	}
 
 	profiles, err := managedProfiles(cfg, args)
@@ -62,21 +67,33 @@ flags:
 		byProvider[pf.Provider] = pc
 	}
 
-	for _, name := range sortedKeys(byProvider) {
-		pc := byProvider[name]
-		fmt.Printf("provider %s: %d models in the account catalog\n", name, len(pc.models))
-		for _, m := range pc.models {
-			hidden := ""
-			if m.Hidden {
-				hidden = "  (hidden)"
-			}
-			fmt.Printf("  %-28s %s%s\n", m.Slug, windowText(m.ContextWindow), hidden)
-			if verbose {
-				printRaw(m)
+	if !jsonOut {
+		for _, name := range sortedKeys(byProvider) {
+			pc := byProvider[name]
+			fmt.Printf("provider %s: %d models in the account catalog\n", name, len(pc.models))
+			for _, m := range pc.models {
+				hidden := ""
+				if m.Hidden {
+					hidden = "  (hidden)"
+				}
+				fmt.Printf("  %-28s %s%s\n", m.Slug, windowText(m.ContextWindow), hidden)
+				if verbose {
+					printRaw(m)
+				}
 			}
 		}
 	}
+	var mj modelsData
 	for _, pf := range profiles {
+		if jsonOut {
+			if pc := byProvider[pf.Provider]; pc != nil {
+				mj.Profiles = append(mj.Profiles, catalogModelsProfile(pf.Name, pf.Provider, pc.sel))
+			} else {
+				p, _ := preset.ForBaseURL(cfg.Providers[pf.Provider].BaseURL)
+				mj.Profiles = append(mj.Profiles, presetModelsProfile(pf.Name, pf.Provider, p))
+			}
+			continue
+		}
 		fmt.Println()
 		var rules []config.ModelRule
 		if pc := byProvider[pf.Provider]; pc != nil {
@@ -95,10 +112,58 @@ flags:
 		}
 		fmt.Printf("applied to %s (profile %q)\n", cfg.ConfigFile, pf.Name)
 	}
+	if jsonOut {
+		return writeJSON(os.Stdout, mj)
+	}
 	if !apply {
 		fmt.Println("\nDry run. Write this into the config with: ccgp --models apply")
 	}
 	return nil
+}
+
+// modelTier is one Claude tier -> backend model mapping.
+type modelTier struct {
+	Tier          string `json:"tier"`
+	Model         string `json:"model"`
+	ContextWindow int64  `json:"contextWindow"`
+}
+
+type modelsProfile struct {
+	Profile  string      `json:"profile"`
+	Provider string      `json:"provider"`
+	Preset   string      `json:"preset,omitempty"`
+	Tiers    []modelTier `json:"tiers"`
+	Notes    []string    `json:"notes,omitempty"`
+}
+
+type modelsData struct {
+	Profiles []modelsProfile `json:"profiles"`
+}
+
+// catalogModelsProfile converts a live codex catalog selection into JSON form.
+func catalogModelsProfile(profile, provider string, sel codex.Selection) modelsProfile {
+	return modelsProfile{
+		Profile:  profile,
+		Provider: provider,
+		Tiers: []modelTier{
+			{Tier: "fable", Model: sel.Fable, ContextWindow: sel.FableWindow},
+			{Tier: "opus", Model: sel.Opus, ContextWindow: sel.OpusWindow},
+			{Tier: "sonnet", Model: sel.Sonnet, ContextWindow: sel.SonnetWindow},
+			{Tier: "haiku", Model: sel.Haiku, ContextWindow: sel.HaikuWindow},
+			// Custom model names route to the Sonnet model.
+			{Tier: "other", Model: sel.Sonnet, ContextWindow: sel.SonnetWindow},
+		},
+		Notes: sel.Notes,
+	}
+}
+
+// presetModelsProfile converts a built-in preset into JSON form.
+func presetModelsProfile(profile, provider string, p preset.Preset) modelsProfile {
+	tiers := make([]modelTier, 0, len(p.Rules))
+	for _, r := range p.Rules {
+		tiers = append(tiers, modelTier{Tier: r.Match, Model: r.Model, ContextWindow: r.ContextWindow})
+	}
+	return modelsProfile{Profile: profile, Provider: provider, Preset: p.Name, Tiers: tiers}
 }
 
 // writeManaged writes rules into the profile's managed block, adding the block

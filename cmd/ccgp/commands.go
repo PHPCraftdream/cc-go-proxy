@@ -28,13 +28,13 @@ func commands() []command {
 		{name: "--serve", args: "[-d] [-s]", desc: "Run server in foreground (-d debug, -s request log)", ensureConfig: true, run: serveCmd},
 		{name: "--start", args: "", desc: "Start background server", ensureConfig: true, run: startCmd},
 		{name: "--stop", args: "", desc: "Stop background server", run: stopCmd},
-		{name: "--status", args: "", desc: "Show background server status", run: statusCmd},
+		{name: "--status", args: "[--json]", desc: "Show background server status", run: statusCmd},
 		{name: "--login", args: "<provider> [--device]", desc: "Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)", ensureConfig: true, run: loginCmd},
-		{name: "--models", args: "[apply] [-v] [profile]", desc: "Show (or write into config) the newest Codex models per Claude tier", ensureConfig: true, run: modelsCmd},
+		{name: "--models", args: "[apply] [--json] [-v] [profile]", desc: "Show (or write into config) the newest Codex models per Claude tier", ensureConfig: true, run: modelsCmd},
 		{name: "--send", args: "<from> <to> [count]", desc: "Copy the latest sessions (default 10) of the current directory between \"claude\" and a profile", ensureConfig: true, run: sessionsSendCmd},
 		{name: "--import", args: "<profile> [count]", desc: "Same as: ccgp --send claude <profile>", ensureConfig: true, run: sessionsImportCmd},
 		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
-		{name: "--profile", args: "add|list|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
+		{name: "--profile", args: "add|list [--json]|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
 		{name: "--version", args: "", desc: "Show version", run: versionCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
@@ -108,7 +108,7 @@ func stopCmd(args []string) error {
 }
 
 func statusCmd(args []string) error {
-	return status()
+	return status(args)
 }
 
 func loginCmd(args []string) error {

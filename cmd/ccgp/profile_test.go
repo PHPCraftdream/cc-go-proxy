@@ -343,7 +343,7 @@ func TestProfileList(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := profileList(&out, cfg, creds.Store{Dir: t.TempDir()}, base); err != nil {
+	if err := profileList(&out, buildProfileRows(cfg, creds.Store{Dir: t.TempDir()}, base)); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()

@@ -14,6 +14,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"time"
@@ -88,45 +89,146 @@ func missingDefaultConfig() bool {
 	return errors.Is(err, fs.ErrNotExist)
 }
 
-// status prints server state, file locations and per-provider login state.
-func status() error {
-	host, port := listenAddr()
-	base := daemon.BaseURL(host, port)
-	logPath, _ := daemon.LogPath()
+// statusData is the machine- and human-rendered state of `ccgp --status`.
+type statusServer struct {
+	Running bool   `json:"running"`
+	Version string `json:"version"`
+	PID     int    `json:"pid"`
+	URL     string `json:"url"`
+}
 
-	h, err := daemon.Check(base)
-	if err != nil {
-		fmt.Printf("server:  not running at %s\n", base)
-	} else {
-		fmt.Printf("server:  %s running (pid %d) at %s\n", h.Version, h.PID, base)
+type statusConfig struct {
+	Mode  string `json:"mode"` // "file", "env", "missing" or "error"
+	Path  string `json:"path"`
+	Error string `json:"error,omitempty"`
+}
+
+type statusProvider struct {
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Login string `json:"login"`
+}
+
+type statusProfile struct {
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+}
+
+type statusData struct {
+	Server    statusServer     `json:"server"`
+	LogFile   string           `json:"logFile"`
+	Config    statusConfig     `json:"config"`
+	CredsDir  string           `json:"credsDir"`
+	Providers []statusProvider `json:"providers"`
+	Profiles  []statusProfile  `json:"profiles"`
+}
+
+// buildStatus assembles the status payload; it performs no I/O.
+func buildStatus(base, logPath string, h *daemon.Health, healthErr error, cfg *config.Config, cfgErr error, credsDir string, credsErr error, providers []statusProvider, profiles []statusProfile) statusData {
+	s := statusData{
+		LogFile:   logPath,
+		CredsDir:  credsDir,
+		Providers: providers,
+		Profiles:  profiles,
 	}
-	fmt.Printf("log:     %s\n", logPath)
-
-	cfg, cfgErr := config.Load()
+	if healthErr != nil {
+		s.Server = statusServer{URL: base}
+	} else {
+		s.Server = statusServer{Running: true, Version: h.Version, PID: h.PID, URL: base}
+	}
 	switch {
 	case cfgErr != nil && missingDefaultConfig():
 		p, _ := config.DefaultConfigPath()
-		fmt.Printf("config:  %s (not created yet; created on first run)\n", p)
+		s.Config = statusConfig{Mode: "missing", Path: p}
 	case cfgErr != nil:
-		fmt.Printf("config:  error: %v\n", cfgErr)
+		s.Config = statusConfig{Mode: "error", Error: cfgErr.Error()}
 	case cfg.IsEnvMode():
-		fmt.Println("config:  env-only mode (no config.ktav)")
+		s.Config = statusConfig{Mode: "env"}
 	default:
-		fmt.Printf("config:  %s\n", cfg.ConfigFile)
-		store, err := credsStore()
-		if err != nil {
-			return err
-		}
-		fmt.Printf("creds:   %s\n", store.Dir)
-		for _, name := range sortedKeys(cfg.Providers) {
-			pr := cfg.Providers[name]
-			fmt.Printf("  provider %-12s %-7s %s\n", name, pr.Type, loginState(store, pr))
-		}
-		for _, name := range sortedKeys(cfg.Profiles) {
-			fmt.Printf("  profile  %-12s -> %s\n", name, cfg.Profiles[name].Provider)
+		s.Config = statusConfig{Mode: "file", Path: cfg.ConfigFile}
+	}
+	return s
+}
+
+// renderStatusText prints the human-readable form of a status payload.
+func renderStatusText(w io.Writer, s statusData) error {
+	if s.Server.Running {
+		fmt.Fprintf(w, "server:  %s running (pid %d) at %s\n", s.Server.Version, s.Server.PID, s.Server.URL)
+	} else {
+		fmt.Fprintf(w, "server:  not running at %s\n", s.Server.URL)
+	}
+	fmt.Fprintf(w, "log:     %s\n", s.LogFile)
+	switch s.Config.Mode {
+	case "missing":
+		fmt.Fprintf(w, "config:  %s (not created yet; created on first run)\n", s.Config.Path)
+	case "error":
+		fmt.Fprintf(w, "config:  error: %s\n", s.Config.Error)
+	case "env":
+		fmt.Fprintln(w, "config:  env-only mode (no config.ktav)")
+	default:
+		fmt.Fprintf(w, "config:  %s\n", s.Config.Path)
+		if s.CredsDir != "" {
+			fmt.Fprintf(w, "creds:   %s\n", s.CredsDir)
+			for _, p := range s.Providers {
+				fmt.Fprintf(w, "  provider %-12s %-7s %s\n", p.Name, p.Type, p.Login)
+			}
+			for _, p := range s.Profiles {
+				fmt.Fprintf(w, "  profile  %-12s -> %s\n", p.Name, p.Provider)
+			}
 		}
 	}
+	return nil
+}
+
+// status prints server state, file locations and per-provider login state.
+func status(args []string) error {
+	jsonOut := false
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+		} else {
+			return fmt.Errorf("--status: unknown flag %q", a)
+		}
+	}
+	host, port := listenAddr()
+	base := daemon.BaseURL(host, port)
+	logPath, _ := daemon.LogPath()
+	h, healthErr := daemon.Check(base)
+	cfg, cfgErr := config.Load()
+	credsDir := ""
+	var credsErr error
+	var providers []statusProvider
+	var profiles []statusProfile
+	if cfgErr == nil && !cfg.IsEnvMode() {
+		store, err := credsStore()
+		if err != nil {
+			credsErr = err
+		} else {
+			credsDir = store.Dir
+			for _, name := range sortedKeys(cfg.Providers) {
+				pr := cfg.Providers[name]
+				providers = append(providers, statusProvider{Name: name, Type: pr.Type, Login: loginState(store, pr)})
+			}
+			for _, name := range sortedKeys(cfg.Profiles) {
+				profiles = append(profiles, statusProfile{Name: name, Provider: cfg.Profiles[name].Provider})
+			}
+		}
+	}
+	st := buildStatus(base, logPath, h, healthErr, cfg, cfgErr, credsDir, credsErr, providers, profiles)
+	out := io.Writer(os.Stdout)
+	var err error
+	if jsonOut {
+		err = writeJSON(out, st)
+	} else {
+		err = renderStatusText(out, st)
+	}
 	if err != nil {
+		return err
+	}
+	if credsErr != nil {
+		return credsErr
+	}
+	if healthErr != nil {
 		return exitError(3)
 	}
 	return nil
