@@ -24,6 +24,7 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 | `internal/securefile` | Atomic owner-only writes (Windows DACL / Unix `0600`) |
 | `internal/oauth` | Codex browser (PKCE) and device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client, model catalog |
+| `internal/connpool` | Transport of every upstream client: requests spread over 8 lanes (own pool and connection each, fewest in flight wins); each lane renews its pool every 10 minutes, at staggered times, and an old pool closes its connections as their last request ends; a request whose connection broke before the reply is sent once more. Connections that the far end cuts after a fixed lifetime (seen: 30 minutes to chatgpt.com) never reach it |
 | `internal/converter` | Messages ↔ Chat Completions for `codex_api` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload, handlers |
 | `internal/claudehome` | The isolated Claude Code config directory and its one-way mirror |

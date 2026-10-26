@@ -896,7 +896,8 @@ func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config) (*h
 
 	// Create HTTP client with longer timeout for streaming
 	client := &http.Client{
-		Timeout: 300 * time.Second,
+		Transport: openAITransport,
+		Timeout:   300 * time.Second,
 	}
 
 	// Make request
@@ -992,7 +993,8 @@ func callOpenAIInternal(req *models.OpenAIRequest, cfg *config.Config) (*models.
 
 	// Create HTTP client with timeout
 	client := &http.Client{
-		Timeout: 90 * time.Second,
+		Transport: openAITransport,
+		Timeout:   90 * time.Second,
 	}
 
 	// Make request

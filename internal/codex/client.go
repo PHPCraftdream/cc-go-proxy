@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
@@ -22,13 +23,16 @@ const originator = "codex_cli_rs"
 // Claude Code retries it.
 const ResponseHeaderTimeout = 90 * time.Second
 
-// HTTPClient has no overall timeout: responses stream for minutes.
+// HTTPClient has no overall timeout: responses stream for minutes. Its
+// connections are spread over lanes and renewed (connpool).
 var HTTPClient = newClient(ResponseHeaderTimeout)
 
 func newClient(headerTimeout time.Duration) *http.Client {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	t.ResponseHeaderTimeout = headerTimeout
-	return &http.Client{Transport: t}
+	return &http.Client{Transport: connpool.New(0, 0, func() *http.Transport {
+		t := http.DefaultTransport.(*http.Transport).Clone()
+		t.ResponseHeaderTimeout = headerTimeout
+		return t
+	})}
 }
 
 // Call POSTs req to baseURL/responses with OAuth headers. On 401 it forces a

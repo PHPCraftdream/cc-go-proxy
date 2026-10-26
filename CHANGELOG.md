@@ -9,6 +9,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Fixed
+- Requests no longer fail together when the backend (or a proxy on the way) cuts a connection after a fixed lifetime:
+  every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
+  connections are now renewed every 10 minutes without interrupting running requests, and a request whose
+  connection breaks before the reply is sent again.
+- Parallel requests no longer share one connection: they are spread over 8 connections per backend, so one
+  busy connection does not slow down the others.
+
 ## [0.2.0] - 2026-10-25
 
 First release of ccgp as an independent project.

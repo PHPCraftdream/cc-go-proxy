@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
@@ -291,8 +292,8 @@ func TestStalledBackendFailsAtHeaderTimeout(t *testing.T) {
 }
 
 func TestDefaultClientHasHeaderTimeout(t *testing.T) {
-	tr, ok := HTTPClient.Transport.(*http.Transport)
-	if !ok || tr.ResponseHeaderTimeout != ResponseHeaderTimeout {
+	tr, ok := HTTPClient.Transport.(*connpool.Transport)
+	if !ok || tr.Pool().ResponseHeaderTimeout != ResponseHeaderTimeout {
 		t.Errorf("transport = %#v", HTTPClient.Transport)
 	}
 }

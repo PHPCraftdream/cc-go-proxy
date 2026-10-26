@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/identity"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
@@ -18,7 +19,10 @@ import (
 )
 
 // upstreamClient has no overall timeout: responses stream for minutes.
-var upstreamClient = &http.Client{}
+var upstreamClient = &http.Client{Transport: connpool.New(0, 0, nil)}
+
+// openAITransport carries the OpenAI-compatible requests.
+var openAITransport = connpool.New(0, 0, nil)
 
 // forwardedResponseHeaders are copied from the upstream reply to the client.
 var forwardedResponseHeaders = []string{
