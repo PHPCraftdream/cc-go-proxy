@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
@@ -29,10 +31,51 @@ func anthropicError(c *fiber.Ctx, status int, typ, msg string) error {
 // logOut receives the non-access log lines (rejected bodies, broken streams).
 var logOut io.Writer = os.Stdout
 
-// logStreamFailure prints the line for a stream that broke after its reply started.
-func logStreamFailure(w io.Writer, started time.Time, profile, model, msg string) {
+// maxLogDetail caps the raw upstream event in a stream failure line.
+const maxLogDetail = 1000
+
+// logStreamFailure prints the line for a stream that broke after its reply
+// started; detail is the raw upstream event that ended it, extra the request
+// ids and timing, either may be empty.
+func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detail, extra string) {
+	line := oneLine(msg, maxLogErr)
+	if detail != "" {
+		line += " | upstream event: " + oneLine(detail, maxLogDetail)
+	}
+	if extra != "" {
+		line += " | " + extra
+	}
 	_, _ = fmt.Fprintf(w, "[%s] stream failed after %s [%s] %s: %s\n", started.Format("15:04:05"),
-		time.Since(started).Round(time.Millisecond), profile, model, oneLine(msg, maxLogErr))
+		time.Since(started).Round(time.Millisecond), profile, model, line)
+}
+
+// logSlowStream prints the timing line of a stream that completed slowly.
+func logSlowStream(w io.Writer, started time.Time, profile, model, summary string) {
+	_, _ = fmt.Fprintf(w, "[%s] slow stream %s [%s] %s: %s\n", started.Format("15:04:05"),
+		time.Since(started).Round(time.Millisecond), profile, model, summary)
+}
+
+// joinNonEmpty joins the non-empty parts with " | ".
+func joinNonEmpty(parts ...string) string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, " | ")
+}
+
+// upstreamIDs names the response's request ids, for matching a failure with
+// the backend's side.
+func upstreamIDs(h http.Header) string {
+	var ids []string
+	for _, k := range []string{"X-Request-Id", "Cf-Ray"} {
+		if v := h.Get(k); v != "" {
+			ids = append(ids, strings.ToLower(k)+"="+v)
+		}
+	}
+	return strings.Join(ids, " ")
 }
 
 // handleCodexMessages serves /v1/messages via the ChatGPT Codex backend.
@@ -64,6 +107,8 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		baseURL = pr.BaseURL
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	trace := newUpstreamTrace()
+	ctx = httptrace.WithClientTrace(ctx, trace.clientTrace())
 	resp, err := codex.Call(ctx, baseURL, s, req)
 	if err != nil {
 		cancel()
@@ -105,7 +150,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	c.Set("X-Accel-Buffering", "no")
 	// The access line is printed when the handler returns, before the stream
 	// ends; a failure inside the stream gets its own line.
-	profile, mapped, started := cfg.Profile, probe.Model+" -> "+model, time.Now()
+	profile, mapped, started, bodyBytes := cfg.Profile, probe.Model+" -> "+model, time.Now(), len(body)
 	release := deferActive(c)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer release()
@@ -118,8 +163,13 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			}
 		}}
 		_ = tr.Run(resp.Body)
-		if tr.Failed != "" {
-			logStreamFailure(logOut, started, profile, mapped, tr.Failed)
+		end := time.Now()
+		switch {
+		case tr.Failed != "":
+			logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
+				joinNonEmpty(upstreamIDs(resp.Header), trace.summary(tr, end, bodyBytes)))
+		case trace.slow(end):
+			logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), upstreamIDs(resp.Header)))
 		}
 	})
 	return nil

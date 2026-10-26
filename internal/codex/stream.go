@@ -2,10 +2,12 @@ package codex
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // Emit receives one Anthropic SSE event (name + payload).
@@ -33,6 +35,9 @@ type event struct {
 			InputTokensDetails struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"input_tokens_details"`
+			OutputTokensDetails struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"output_tokens_details"`
 		} `json:"usage"`
 		IncompleteDetails *struct {
 			Reason string `json:"reason"`
@@ -42,9 +47,19 @@ type event struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	} `json:"response"`
-	// top-level `error` events
+	// top-level `error` events: code/message at the top or in an `error` object
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Error   *struct {
+		Type    string `json:"type"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// Usage is the token count of a response.
+type Usage struct {
+	Input, Cached, Output, Reasoning int
 }
 
 type block struct {
@@ -59,6 +74,13 @@ type Translator struct {
 	Emit  Emit
 	// Failed is the message of the error event sent to the client, if any.
 	Failed string
+	// Detail is the raw upstream event that failed the stream (error or
+	// response.failed), for the log.
+	Detail string
+	// FirstDelta is when the first thinking, text or tool input arrived (zero: none).
+	FirstDelta time.Time
+	// Usage is the token count of the finished response (zero when none was sent).
+	Usage Usage
 
 	started bool
 	next    int
@@ -85,6 +107,9 @@ func (t *Translator) Run(r io.Reader) error {
 		var ev event
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			continue
+		}
+		if ev.Type == "error" || ev.Type == "response.failed" {
+			t.Detail = data
 		}
 		t.handle(&ev)
 		if t.done {
@@ -180,19 +205,34 @@ func (t *Translator) handle(ev *event) {
 		t.finish(ev)
 
 	case "response.failed":
-		msg := "response failed"
+		code, msg := "", ""
 		if ev.Response != nil && ev.Response.Error != nil {
-			msg = ev.Response.Error.Message
+			code, msg = ev.Response.Error.Code, ev.Response.Error.Message
 		}
-		t.fail(msg)
+		t.fail(describeError(code, msg, "response failed"))
 
 	case "error":
-		msg := ev.Message
-		if msg == "" {
-			msg = "upstream error " + ev.Code
+		code, msg := ev.Code, ev.Message
+		if ev.Error != nil {
+			code = cmp.Or(code, ev.Error.Code, ev.Error.Type)
+			msg = cmp.Or(msg, ev.Error.Message)
 		}
-		t.fail(msg)
+		t.fail(describeError(code, msg, "upstream error"))
 	}
+}
+
+// describeError joins an upstream error code and message; fallback names the
+// failure when the message is missing.
+func describeError(code, msg, fallback string) string {
+	switch {
+	case msg != "" && code != "":
+		return code + ": " + msg
+	case msg != "":
+		return msg
+	case code != "":
+		return fallback + " " + code
+	}
+	return fallback
 }
 
 func (t *Translator) openBlock(itemID, kind string, cb map[string]any) {
@@ -209,6 +249,9 @@ func (t *Translator) delta(itemID string, d map[string]any) {
 	}
 	if d["type"] == "input_json_delta" {
 		b.sawDelta = true
+	}
+	if t.FirstDelta.IsZero() && d["type"] != "signature_delta" {
+		t.FirstDelta = time.Now()
 	}
 	t.Emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": b.index, "delta": d})
 }
@@ -249,6 +292,7 @@ func (t *Translator) finish(ev *event) {
 		}
 		if u := r.Usage; u != nil {
 			cached := u.InputTokensDetails.CachedTokens
+			t.Usage = Usage{Input: u.InputTokens, Cached: cached, Output: u.OutputTokens, Reasoning: u.OutputTokensDetails.ReasoningTokens}
 			usage = map[string]any{
 				"input_tokens":            u.InputTokens - cached,
 				"cache_read_input_tokens": cached,

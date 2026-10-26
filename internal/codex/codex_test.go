@@ -212,6 +212,9 @@ func TestTranslatorFailureReasons(t *testing.T) {
 		{"response.failed without text", sseBody(created, `{"type":"response.failed","response":{}}`), "response failed"},
 		{"error event", sseBody(created, `{"type":"error","message":"rate limited"}`), "rate limited"},
 		{"error event with code only", sseBody(created, `{"type":"error","code":"E42"}`), "upstream error E42"},
+		{"error event with an error object", sseBody(created, `{"type":"error","error":{"type":"server_error","message":"boom"}}`), "server_error: boom"},
+		{"empty error event", sseBody(created, `{"type":"error"}`), "upstream error"},
+		{"response.failed with code", sseBody(created, `{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"slow down"}}}`), "rate_limit_exceeded: slow down"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -220,6 +223,9 @@ func TestTranslatorFailureReasons(t *testing.T) {
 			_ = tr.Run(strings.NewReader(tt.body))
 			if !gotErr || tr.Failed != tt.want {
 				t.Errorf("error event %v, Failed = %q; want %q", gotErr, tr.Failed, tt.want)
+			}
+			if tr.Detail == "" || !strings.Contains(tt.body, tr.Detail) {
+				t.Errorf("Detail = %q, want the raw failing event", tr.Detail)
 			}
 		})
 	}

@@ -24,6 +24,22 @@ version. `ccgpy <profile> …` is `ccgp <profile> --dangerously-skip-permissions
 | `--logs [-f] [-n N]` | Last `N` lines of the server log (default 50); `-f` follows it, also across log rotation |
 | `--serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` one line per request) |
 
+### Reading the log
+
+Every request has one line: start time, status, the time until the backend's reply headers, the route and, for
+failures, the error. A streamed Codex answer that goes wrong or is slow gets a second line:
+
+- `stream failed after …`: the stream broke after it started. The reason, then the raw backend event that ended it
+  (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
+- `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
+
+The timing: `conn new (dns, connect, tls)` or `conn reused (idle …)` and the number of upstream calls when there was
+more than one (a retry after a broken connection, a token refresh); then, from the start of the call, `headers`,
+`first token` (first thinking, text or tool input) and `total`; the request size; the tokens (input, cached, output,
+reasoning). Long `headers` with a reused connection means the backend was slow to start; a long gap from `headers` to
+`first token` is the model reading a long prompt (input tokens) or thinking (reasoning tokens); a long `total` after
+an early first token means a long answer.
+
 ### A server from an older binary
 
 After you reinstall or update ccgp, a server that is still running keeps the old code. `/health` reports the

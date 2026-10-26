@@ -137,11 +137,30 @@ func TestSlowStreamPastHeaderTimeoutSurvives(t *testing.T) {
 
 func TestLogStreamFailureLine(t *testing.T) {
 	var b bytes.Buffer
-	logStreamFailure(&b, time.Now().Add(-2*time.Second), "codex", "claude-opus-5-5 -> gpt-6.1-sol", "stream read error:\n unexpected EOF")
+	logStreamFailure(&b, time.Now().Add(-2*time.Second), "codex", "claude-opus-5-5 -> gpt-6.1-sol", "stream read error:\n unexpected EOF", "", "")
 	got := b.String()
 	for _, want := range []string{"stream failed after 2", "[codex] claude-opus-5-5 -> gpt-6.1-sol: stream read error: unexpected EOF\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("line %q lacks %q", got, want)
+		}
+	}
+}
+
+// An error event from the backend is logged raw, with the request ids.
+func TestUpstreamErrorEventIsLoggedRaw(t *testing.T) {
+	ev := `{"type":"error","error":{"type":"server_error","code":"overloaded","message":"try again"},"sequence_number":3}`
+	_, body, _, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("X-Request-Id", "req_123")
+		w.Header().Set("Cf-Ray", "ray-ams")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\ndata: " + ev + "\n\n"))
+	}), time.Minute)
+	if !strings.Contains(body, "codex: overloaded: try again") {
+		t.Errorf("client error lacks the upstream message: %q", body)
+	}
+	for _, want := range []string{"overloaded: try again | upstream event: " + ev, "| x-request-id=req_123 cf-ray=ray-ams | conn new", "| request "} {
+		if !strings.Contains(stream, want) {
+			t.Errorf("stream log %q lacks %q", stream, want)
 		}
 	}
 }

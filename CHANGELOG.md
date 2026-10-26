@@ -14,10 +14,17 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose
   connection breaks before the reply is sent again.
+- A Codex stream that the backend ends with an error event is logged with the backend's code and message, the raw
+  event and the `x-request-id` / `cf-ray` of the response; before, such failures read only `upstream error`. The
+  code and message of an `error` object inside the event also reach Claude Code now.
 - Parallel requests no longer share one connection: they are spread over 7 connections per backend, so one
   busy connection does not slow down the others.
 
 ### Added
+- A slow Codex answer (reply headers after 20 s or the whole answer over 2 minutes) gets a `slow stream` log line
+  with the timing: new or reused connection (DNS, connect, TLS), time to headers, to the first token and in total,
+  request size and tokens. Broken streams carry the same timing. See
+  [docs/cli.md](docs/cli.md#reading-the-log).
 - `connections.active` / `connections.total` in config.ktav (default 7 / 10) and `ccgp --connections [active N]
   [total N] [--json]` to show and set them: connections taking new requests, and the limit for them plus the ones
   still finishing older requests. Applied by a running server without a restart.
