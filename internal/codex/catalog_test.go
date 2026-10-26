@@ -38,6 +38,8 @@ func TestPickLatestPerTier(t *testing.T) {
 		m("gpt-6.1-astra", 1_000_000, false),
 		m("gpt-6-sol", 1_050_000, false),
 		m("gpt-6.1-sol", 900_000, false),
+		m("gpt-6.1-terra", 700_000, false),
+		m("gpt-5.6-terra", 272_000, false),
 		m("gpt-6.1-luna", 800_000, false),
 		m("gpt-6-luna", 1_050_000, false),
 		m("gpt-5.6-luna", 372_000, true), // superseded, hidden in the picker
@@ -47,37 +49,52 @@ func TestPickLatestPerTier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.Fable != "gpt-6.1-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6.1-luna" {
-		t.Errorf("main tiers = %+v", sel)
+	if sel.Fable != "gpt-6.1-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6.1-terra" || sel.Haiku != "gpt-6.1-luna" {
+		t.Errorf("tiers = %+v", sel)
 	}
-	// Haiku: luna of the release before the newest luna (6), not 5.6.
-	if sel.Haiku != "gpt-6-luna" {
-		t.Errorf("Haiku = %q, want gpt-6-luna", sel.Haiku)
-	}
-	if sel.FableWindow != 1_000_000 || sel.OpusWindow != 900_000 || sel.SonnetWindow != 800_000 || sel.HaikuWindow != 1_050_000 {
+	if sel.FableWindow != 1_000_000 || sel.OpusWindow != 900_000 || sel.SonnetWindow != 700_000 || sel.HaikuWindow != 800_000 {
 		t.Errorf("windows = %d %d %d %d", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow, sel.HaikuWindow)
+	}
+	if len(sel.Notes) != 0 {
+		t.Errorf("unexpected notes = %v", sel.Notes)
 	}
 }
 
-func TestPickPreviousLunaMayBeHidden(t *testing.T) {
+// The catalog of 2026-10-26: gpt-6.1-terra is new, luna is still at 6.
+func TestPickCatalogWithTerra(t *testing.T) {
 	sel, err := Pick([]Model{
-		m("gpt-6-astra", 1_050_000, false),
-		m("gpt-6-sol", 1_050_000, false),
-		m("gpt-6-luna", 1_050_000, false),
-		m("gpt-5.6-luna", 372_000, true),
+		m("gpt-6.1-sol", 500_000, false),
+		m("gpt-6-astra", 272_000, false),
+		m("gpt-6.1-terra", 500_000, false),
+		m("gpt-6-sol", 272_000, false),
+		m("gpt-6-luna", 272_000, false),
+		m("gpt-5.6-sol", 272_000, false),
+		m("gpt-5.6-terra", 272_000, false),
+		m("gpt-5.6-luna", 272_000, false),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.Haiku != "gpt-5.6-luna" || sel.HaikuWindow != 372_000 {
-		t.Errorf("Haiku = %q window %d", sel.Haiku, sel.HaikuWindow)
+	if sel.Fable != "gpt-6-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6.1-terra" || sel.Haiku != "gpt-6-luna" {
+		t.Errorf("tiers = %+v", sel)
 	}
-	// Each tier carries its own window; nothing is averaged or hidden.
-	if sel.FableWindow != 1_050_000 || sel.OpusWindow != 1_050_000 || sel.SonnetWindow != 1_050_000 {
-		t.Errorf("windows = %d %d %d", sel.FableWindow, sel.OpusWindow, sel.SonnetWindow)
+}
+
+func TestPickSonnetFallsBackToLuna(t *testing.T) {
+	sel, err := Pick([]Model{
+		m("gpt-6-astra", 1_050_000, false),
+		m("gpt-6-sol", 1_050_000, false),
+		m("gpt-6-luna", 1_050_000, false),
+		m("gpt-5.6-terra", 272_000, true), // hidden: not a candidate
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(sel.Notes) != 0 {
-		t.Errorf("unexpected notes = %v", sel.Notes)
+	if sel.Sonnet != "gpt-6-luna" || sel.Haiku != "gpt-6-luna" || sel.SonnetWindow != 1_050_000 {
+		t.Errorf("Sonnet %q (%d), Haiku %q", sel.Sonnet, sel.SonnetWindow, sel.Haiku)
+	}
+	if !strings.Contains(strings.Join(sel.Notes, "|"), "no terra release") {
+		t.Errorf("notes = %v", sel.Notes)
 	}
 }
 
@@ -86,35 +103,34 @@ func TestPickHiddenNeverNewest(t *testing.T) {
 		m("gpt-7-astra", 1, true), // hidden: must not become Fable
 		m("gpt-6-astra", 1_050_000, false),
 		m("gpt-6-sol", 1_050_000, false),
+		m("gpt-7-terra", 1, true),
+		m("gpt-6-terra", 1_050_000, false),
 		m("gpt-6-luna", 1_050_000, false),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.Fable != "gpt-6-astra" {
-		t.Errorf("Fable = %q", sel.Fable)
+	if sel.Fable != "gpt-6-astra" || sel.Sonnet != "gpt-6-terra" {
+		t.Errorf("Fable = %q, Sonnet = %q", sel.Fable, sel.Sonnet)
 	}
 }
 
-func TestPickSingleLunaAndUnknownWindow(t *testing.T) {
+func TestPickUnknownWindow(t *testing.T) {
 	sel, err := Pick([]Model{
 		m("gpt-6-astra", 0, false),
 		m("gpt-6-sol", 0, false),
+		m("gpt-6-terra", 0, false),
 		m("gpt-6-luna", 0, false),
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if sel.Haiku != "gpt-6-luna" {
-		t.Errorf("Haiku = %q", sel.Haiku)
 	}
 	for name, w := range map[string]int64{"fable": sel.FableWindow, "opus": sel.OpusWindow, "sonnet": sel.SonnetWindow, "haiku": sel.HaikuWindow} {
 		if w != DefaultContextWindow {
 			t.Errorf("%s window = %d, want the default %d", name, w, DefaultContextWindow)
 		}
 	}
-	notes := strings.Join(sel.Notes, "|")
-	if !strings.Contains(notes, "only one luna release") || !strings.Contains(notes, "gives no context window for gpt-6-sol") {
+	if !strings.Contains(strings.Join(sel.Notes, "|"), "gives no context window for gpt-6-sol") {
 		t.Errorf("notes = %v", sel.Notes)
 	}
 }
@@ -123,6 +139,10 @@ func TestPickMissingTier(t *testing.T) {
 	_, err := Pick([]Model{m("gpt-6-sol", 1, false), m("gpt-6-luna", 1, false)})
 	if err == nil || !strings.Contains(err.Error(), "astra") {
 		t.Fatalf("err = %v, want missing astra", err)
+	}
+	_, err = Pick([]Model{m("gpt-6-astra", 1, false), m("gpt-6-sol", 1, false), m("gpt-6-terra", 1, false)})
+	if err == nil || !strings.Contains(err.Error(), "luna (Haiku)") {
+		t.Fatalf("err = %v, want missing luna", err)
 	}
 }
 

@@ -170,7 +170,7 @@ const DefaultContextWindow = 272_000
 // of the two is used.
 const Gpt6InputLimit = 922_000
 
-var gpt6Re = regexp.MustCompile(`^gpt-(\d+(?:\.\d+)*)-(astra|sol|luna)$`)
+var gpt6Re = regexp.MustCompile(`^gpt-(\d+(?:\.\d+)*)-(astra|sol|terra|luna)$`)
 
 type release struct {
 	slug    string
@@ -184,8 +184,8 @@ type release struct {
 //
 //	Fable  -> newest astra
 //	Opus   -> newest sol
-//	Sonnet -> newest luna
-//	Haiku  -> luna of the release before the newest luna
+//	Sonnet -> newest terra (newest luna when there is no terra)
+//	Haiku  -> newest luna
 func Pick(models []Model) (Selection, error) {
 	tiers := map[string][]release{}
 	for _, m := range models {
@@ -209,15 +209,6 @@ func Pick(models []Model) (Selection, error) {
 	newest := func(tier string) (release, bool) {
 		for _, r := range tiers[tier] {
 			if !r.hidden {
-				return r, true
-			}
-		}
-		return release{}, false
-	}
-	// before: the highest release of a tier older than ref; hidden ones count.
-	before := func(tier string, ref release) (release, bool) {
-		for _, r := range tiers[tier] {
-			if cmpVersion(r.version, ref.version) < 0 {
 				return r, true
 			}
 		}
@@ -247,16 +238,19 @@ func Pick(models []Model) (Selection, error) {
 	} else {
 		missing = append(missing, "sol (Opus)")
 	}
-	if r, ok := newest("luna"); ok {
+	luna, hasLuna := newest("luna")
+	if r, ok := newest("terra"); ok {
 		sel.Sonnet, sel.SonnetWindow = r.slug, windowOf(r)
-		prev, hasPrev := before("luna", r)
-		if !hasPrev {
-			prev = r
-			sel.Notes = append(sel.Notes, "only one luna release is available: Haiku uses the same model as Sonnet")
-		}
-		sel.Haiku, sel.HaikuWindow = prev.slug, windowOf(prev)
+	} else if hasLuna {
+		sel.Sonnet, sel.SonnetWindow = luna.slug, windowOf(luna)
+		sel.Notes = append(sel.Notes, "no terra release is available: Sonnet uses the newest luna, like Haiku")
 	} else {
-		missing = append(missing, "luna (Sonnet, Haiku)")
+		missing = append(missing, "terra (Sonnet)")
+	}
+	if hasLuna {
+		sel.Haiku, sel.HaikuWindow = luna.slug, windowOf(luna)
+	} else {
+		missing = append(missing, "luna (Haiku)")
 	}
 	if len(missing) > 0 {
 		return sel, fmt.Errorf("catalog has no %s model", strings.Join(missing, ", "))
