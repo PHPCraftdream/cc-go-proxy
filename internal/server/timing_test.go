@@ -11,7 +11,8 @@ import (
 
 func TestSlowStreamIsLoggedWithTiming(t *testing.T) {
 	old := slowHeaders
-	slowHeaders = time.Nanosecond
+	// 0, not 1ns: on Windows the clock moves in ticks, so a local reply can take 0.
+	slowHeaders = 0
 	t.Cleanup(func() { slowHeaders = old })
 
 	events := []string{

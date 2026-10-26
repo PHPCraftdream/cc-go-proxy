@@ -11,8 +11,8 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 )
 
-// A stream is logged as slow when the backend's reply headers take longer
-// than slowHeaders or the whole reply takes longer than slowTotal.
+// A stream is logged as slow when the backend's reply headers take at least
+// slowHeaders or the whole reply at least slowTotal.
 var (
 	slowHeaders = 20 * time.Second
 	slowTotal   = 2 * time.Minute
@@ -62,7 +62,7 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 func (u *upstreamTrace) slow(end time.Time) bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return (!u.headers.IsZero() && u.headers.Sub(u.start) > slowHeaders) || end.Sub(u.start) > slowTotal
+	return (!u.headers.IsZero() && u.headers.Sub(u.start) >= slowHeaders) || end.Sub(u.start) >= slowTotal
 }
 
 // summary describes the call: the connection, the waits from the start of the
