@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,5 +163,69 @@ func TestUpstreamErrorEventIsLoggedRaw(t *testing.T) {
 		if !strings.Contains(stream, want) {
 			t.Errorf("stream log %q lacks %q", stream, want)
 		}
+	}
+}
+
+func overloadBackend(calls *atomic.Int32, overloadedCalls int32) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		created := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"
+		if calls.Add(1) <= overloadedCalls {
+			_, _ = w.Write([]byte(created + "data: {\"type\":\"error\",\"error\":{\"type\":\"service_unavailable_error\",\"code\":\"server_is_overloaded\",\"message\":\"overloaded\"}}\n\n"))
+			return
+		}
+		_, _ = w.Write([]byte(created +
+			"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"m\",\"type\":\"message\"}}\n\n" +
+			"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"m\",\"delta\":\"hi\"}\n\n" +
+			"data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"m\",\"type\":\"message\"}}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\"}}\n\n"))
+	})
+}
+
+func fastRetries(t *testing.T, n int) {
+	old := overloadBackoff
+	overloadBackoff = make([]time.Duration, n)
+	for i := range overloadBackoff {
+		overloadBackoff[i] = time.Millisecond
+	}
+	t.Cleanup(func() { overloadBackoff = old })
+}
+
+func TestOverloadedBackendIsAskedAgain(t *testing.T) {
+	fastRetries(t, 2)
+	var calls atomic.Int32
+	status, body, _, stream := codexCall(t, overloadBackend(&calls, 1), time.Minute)
+	if status != fiber.StatusOK || strings.Contains(body, "event: error") || !strings.Contains(body, "message_stop") {
+		t.Fatalf("status %d, body %q: want a complete stream", status, body)
+	}
+	if strings.Count(body, "event: message_start") != 1 || !strings.Contains(body, "event: ping") {
+		t.Errorf("body %q: want one message_start and a ping", body)
+	}
+	if calls.Load() != 2 || !strings.Contains(stream, "upstream retry 1/2 in 1ms") || !strings.Contains(stream, "server_is_overloaded") {
+		t.Errorf("calls %d, log %q", calls.Load(), stream)
+	}
+	if strings.Contains(stream, "stream failed") {
+		t.Errorf("a retried stream is logged as failed: %q", stream)
+	}
+}
+
+func TestOverloadRetriesRunOut(t *testing.T) {
+	fastRetries(t, 1)
+	var calls atomic.Int32
+	_, body, _, stream := codexCall(t, overloadBackend(&calls, 10), time.Minute)
+	if !strings.Contains(body, "event: error") || !strings.Contains(body, "server_is_overloaded") {
+		t.Fatalf("body %q: want the overload error after the retries", body)
+	}
+	if calls.Load() != 2 || !strings.Contains(stream, "upstream retry 1/1") || !strings.Contains(stream, "stream failed") {
+		t.Errorf("calls %d, log %q", calls.Load(), stream)
+	}
+}
+
+func TestLogStreamCanceledLine(t *testing.T) {
+	var b bytes.Buffer
+	logStreamCanceled(&b, time.Now().Add(-3*time.Second), "codex", "a -> b", "conn reused (idle 1s)")
+	if got := b.String(); !strings.Contains(got, "stream canceled by client after 3") || !strings.HasSuffix(got, "[codex] a -> b: conn reused (idle 1s)\n") {
+		t.Errorf("line %q", got)
 	}
 }

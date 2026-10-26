@@ -4,11 +4,16 @@ import (
 	"bufio"
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 )
+
+// ErrRetry ends Run when the backend failed in a way worth one more try
+// (overloaded) before any content was sent; see Translator.AllowRetry.
+var ErrRetry = errors.New("codex: backend failed before output, retry")
 
 // Emit receives one Anthropic SSE event (name + payload).
 type Emit func(event string, data any)
@@ -81,12 +86,19 @@ type Translator struct {
 	FirstDelta time.Time
 	// Usage is the token count of the finished response (zero when none was sent).
 	Usage Usage
+	// AllowRetry makes an overloaded backend end Run with ErrRetry instead of
+	// failing the stream, while no content block has been sent; Retry then
+	// holds the reason. The caller sends the request again and runs the new
+	// stream through the same Translator.
+	AllowRetry bool
+	Retry      string
 
 	started bool
 	next    int
 	open    map[string]*block // item id -> open block
 	toolUse bool
 	done    bool
+	retry   bool
 }
 
 // Run consumes the upstream SSE body until completion or EOF.
@@ -112,6 +124,10 @@ func (t *Translator) Run(r io.Reader) error {
 			t.Detail = data
 		}
 		t.handle(&ev)
+		if t.retry {
+			t.retry = false
+			return ErrRetry
+		}
 		if t.done {
 			return nil
 		}
@@ -209,17 +225,44 @@ func (t *Translator) handle(ev *event) {
 		if ev.Response != nil && ev.Response.Error != nil {
 			code, msg = ev.Response.Error.Code, ev.Response.Error.Message
 		}
-		t.fail(describeError(code, msg, "response failed"))
+		t.failOrRetry(overloaded(code, ""), describeError(code, msg, "response failed"))
 
 	case "error":
-		code, msg := ev.Code, ev.Message
+		code, msg, typ := ev.Code, ev.Message, ""
 		if ev.Error != nil {
+			typ = ev.Error.Type
 			code = cmp.Or(code, ev.Error.Code, ev.Error.Type)
 			msg = cmp.Or(msg, ev.Error.Message)
 		}
-		t.fail(describeError(code, msg, "upstream error"))
+		t.failOrRetry(overloaded(code, typ), describeError(code, msg, "upstream error"))
 	}
 }
+
+// overloaded reports whether an upstream error says the backend could not take
+// the request right now, so the same request may succeed a moment later.
+func overloaded(code, typ string) bool {
+	switch code {
+	case "server_is_overloaded", "server_error", "service_unavailable":
+		return true
+	}
+	return typ == "service_unavailable_error" || typ == "server_error"
+}
+
+// failOrRetry fails the stream, or marks it for a retry when the failure is
+// worth one, retries are allowed and no content was sent yet.
+func (t *Translator) failOrRetry(worth bool, msg string) {
+	if worth && t.AllowRetry && t.next == 0 && !t.done {
+		t.Retry, t.retry = msg, true
+		return
+	}
+	t.fail(msg)
+}
+
+// Started reports whether message_start has been sent.
+func (t *Translator) Started() bool { return t.started }
+
+// Fail ends the stream with an error event for the client (unless it already ended).
+func (t *Translator) Fail(msg string) { t.fail(msg) }
 
 // describeError joins an upstream error code and message; fallback names the
 // failure when the message is missing.

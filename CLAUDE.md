@@ -22,7 +22,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client |
-| `internal/connpool` | upstream transport: active window of lanes (fewest in flight; `connections.active`, default 7), pools renewed every 10 min at staggered times, old pools drained and capped with the active ones by `connections.total` (default 10; renewal waits, running requests are never cut), one retry when the connection breaks before the reply |
+| `internal/connpool` | upstream transport: active window of lanes (fewest in flight; `connections.active`, default 7), pools renewed every 10 min at staggered times, old pools drained and capped with the active ones by `connections.total` (default 10; renewal waits, running requests are never cut), next pool warmed up in the background before a lane switches (`warm.go`), a connect failure goes to a lane with a working connection, one retry when the connection breaks before the reply |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) between Claude Code config dirs; `StripThinking` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload |
 | `internal/angel` | detached background process, `/health`-based control |

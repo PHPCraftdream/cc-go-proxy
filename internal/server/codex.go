@@ -49,6 +49,44 @@ func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detai
 		time.Since(started).Round(time.Millisecond), profile, model, line)
 }
 
+// overloadBackoff is the pause before each retry of an overloaded backend.
+var overloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
+
+// callAfter waits, then calls; a non-2xx reply is an error.
+func callAfter(ctx context.Context, wait time.Duration, call func() (*http.Response, error)) (*http.Response, error) {
+	select {
+	case <-time.After(wait):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	resp, err := call()
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("retry: HTTP %d: %s", resp.StatusCode, codex.ErrorMessage(b))
+	}
+	return resp, nil
+}
+
+// logUpstreamRetry prints the line for a stream sent again after an overload.
+func logUpstreamRetry(w io.Writer, profile, model string, attempt int, wait time.Duration, reason, detail, ids string) {
+	line := oneLine(reason, maxLogErr)
+	if detail != "" {
+		line += " | upstream event: " + oneLine(detail, maxLogDetail)
+	}
+	_, _ = fmt.Fprintf(w, "[%s] upstream retry %d/%d in %s [%s] %s: %s\n", time.Now().Format("15:04:05"),
+		attempt, len(overloadBackoff), wait, profile, model, joinNonEmpty(line, ids))
+}
+
+// logStreamCanceled prints the line for a stream the client left.
+func logStreamCanceled(w io.Writer, started time.Time, profile, model, extra string) {
+	_, _ = fmt.Fprintf(w, "[%s] stream canceled by client after %s [%s] %s: %s\n", started.Format("15:04:05"),
+		time.Since(started).Round(time.Millisecond), profile, model, extra)
+}
+
 // logSlowStream prints the timing line of a stream that completed slowly.
 func logSlowStream(w io.Writer, started time.Time, profile, model, summary string) {
 	_, _ = fmt.Fprintf(w, "[%s] slow stream %s [%s] %s: %s\n", started.Format("15:04:05"),
@@ -155,21 +193,45 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer release()
 		defer cancel()
-		defer func() { _ = resp.Body.Close() }()
+		upstream := resp
+		defer func() { _ = upstream.Body.Close() }()
 		tr := &codex.Translator{Model: probe.Model, Emit: func(ev string, data any) {
 			writeSSEEvent(w, ev, data)
 			if err := w.Flush(); err != nil {
 				cancel() // client gone: abort upstream
 			}
 		}}
-		_ = tr.Run(resp.Body)
+		// An overloaded backend that has sent no content yet is asked again
+		// after a pause; the client only waits longer.
+		for attempt := 0; ; attempt++ {
+			tr.AllowRetry = attempt < len(overloadBackoff)
+			if err := tr.Run(upstream.Body); !errors.Is(err, codex.ErrRetry) {
+				break
+			}
+			wait := overloadBackoff[attempt]
+			logUpstreamRetry(logOut, profile, mapped, attempt+1, wait, tr.Retry, tr.Detail, upstreamIDs(upstream.Header))
+			tr.Detail = ""
+			if tr.Started() {
+				tr.Emit("ping", map[string]any{"type": "ping"})
+			}
+			next, err := callAfter(ctx, wait, func() (*http.Response, error) { return codex.Call(ctx, baseURL, s, req) })
+			if err != nil {
+				tr.Fail(err.Error())
+				break
+			}
+			_ = upstream.Body.Close()
+			upstream = next
+		}
 		end := time.Now()
+		ids := upstreamIDs(upstream.Header)
 		switch {
+		case tr.Failed != "" && ctx.Err() != nil:
+			logStreamCanceled(logOut, started, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
 		case tr.Failed != "":
 			logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
-				joinNonEmpty(upstreamIDs(resp.Header), trace.summary(tr, end, bodyBytes)))
+				joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
 		case trace.slow(end):
-			logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), upstreamIDs(resp.Header)))
+			logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 		}
 	})
 	return nil

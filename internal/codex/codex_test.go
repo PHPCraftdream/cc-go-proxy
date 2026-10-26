@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -410,5 +411,53 @@ func TestConvertRequestCorrectsIdentityInSystemRoleMessages(t *testing.T) {
 	all := mustJSON(t, req.Input)
 	if strings.Contains(all, "Sonnet 5.5. The exact") || !strings.Contains(all, "named gpt-6-luna") {
 		t.Errorf("system-role message not corrected: %s", all)
+	}
+}
+
+const overloadedEvent = `{"type":"error","sequence_number":3,"error":{"message":"Our servers are currently overloaded.","type":"service_unavailable_error","code":"server_is_overloaded"}}`
+
+func TestTranslatorRetriesOverloadBeforeOutput(t *testing.T) {
+	created := `{"type":"response.created","response":{"id":"r"}}`
+	var events []string
+	tr := &Translator{Model: "m", AllowRetry: true, Emit: func(ev string, _ any) { events = append(events, ev) }}
+	if err := tr.Run(strings.NewReader(sseBody(created, overloadedEvent))); !errors.Is(err, ErrRetry) {
+		t.Fatalf("Run = %v, want ErrRetry", err)
+	}
+	if tr.Failed != "" || !strings.Contains(tr.Retry, "server_is_overloaded") || !strings.Contains(tr.Detail, "overloaded") {
+		t.Fatalf("Failed %q, Retry %q, Detail %q", tr.Failed, tr.Retry, tr.Detail)
+	}
+	if !tr.Started() || strings.Join(events, ",") != "message_start" {
+		t.Fatalf("events before the retry = %v", events)
+	}
+	if err := tr.Run(strings.NewReader(upstreamStream)); err != nil || tr.Failed != "" {
+		t.Fatalf("second Run = %v, Failed %q", err, tr.Failed)
+	}
+	if n := strings.Count(strings.Join(events, ","), "message_start"); n != 1 {
+		t.Errorf("message_start sent %d times", n)
+	}
+	if events[len(events)-1] != "message_stop" {
+		t.Errorf("stream did not complete: %v", events)
+	}
+}
+
+func TestTranslatorDoesNotRetry(t *testing.T) {
+	created := `{"type":"response.created","response":{"id":"r"}}`
+	text := `{"type":"response.output_item.added","item":{"id":"m","type":"message"}}`
+	tests := []struct {
+		name  string
+		allow bool
+		body  string
+	}{
+		{"retries not allowed", false, sseBody(created, overloadedEvent)},
+		{"content already sent", true, sseBody(created, text, overloadedEvent)},
+		{"not an overload", true, sseBody(created, `{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Translator{Model: "m", AllowRetry: tt.allow, Emit: func(string, any) {}}
+			if err := tr.Run(strings.NewReader(tt.body)); errors.Is(err, ErrRetry) || tr.Failed == "" {
+				t.Fatalf("Run = %v, Failed %q: want a failed stream", err, tr.Failed)
+			}
+		})
 	}
 }

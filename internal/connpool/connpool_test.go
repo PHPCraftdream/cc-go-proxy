@@ -2,10 +2,13 @@ package connpool
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -324,5 +327,167 @@ func TestRetiredConnectionClosesWhenItsRequestEnds(t *testing.T) {
 	}
 	if n := closed.Load(); n != 1 {
 		t.Fatalf("closed = %d, want 1 (the retired connection only)", n)
+	}
+}
+
+type timeoutErr struct{ msg string }
+
+func (e timeoutErr) Error() string   { return e.msg }
+func (e timeoutErr) Timeout() bool   { return true }
+func (e timeoutErr) Temporary() bool { return true }
+
+func TestConnectFailuresAreRetryable(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodPost, "https://example.com/x", bytes.NewReader([]byte("b")))
+	for _, err := range []error{
+		&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")},
+		timeoutErr{"net/http: TLS handshake timeout"},
+		&connectError{errors.New("TLS handshake timeout")},
+	} {
+		if !connectFailure(err) || !retryable(req, err) {
+			t.Errorf("%v: not a retryable connect failure", err)
+		}
+	}
+	if retryable(req, timeoutErr{"net/http: timeout awaiting response headers"}) {
+		t.Error("a header timeout is retried")
+	}
+}
+
+// failingDials returns a pool factory whose dial number n (1-based) fails.
+func failingDials(dials *atomic.Int32, n int32, base func() *http.Transport) func() *http.Transport {
+	return func() *http.Transport {
+		tr := base()
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if dials.Add(1) == n {
+				return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("refused")}
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}
+		return tr
+	}
+}
+
+func okServer(t *testing.T) *httptest.Server {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func get(t *testing.T, c *http.Client, url string) {
+	t.Helper()
+	resp, err := c.Post(url, "text/plain", bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+func TestConnectFailureGoesToALiveLane(t *testing.T) {
+	srv := okServer(t)
+	var dials atomic.Int32
+	tr := New(time.Hour, 2, 2, failingDials(&dials, 2, plain))
+	client := &http.Client{Transport: tr}
+	get(t, client, srv.URL) // one lane connects
+	get(t, client, srv.URL) // the other cannot: sent over the first lane's connection
+	if n := dials.Load(); n != 2 {
+		t.Fatalf("dials = %d, want 2 (no new dial for the retry)", n)
+	}
+}
+
+func TestConnectFailureWithoutALiveLaneTriesAFreshPool(t *testing.T) {
+	srv := okServer(t)
+	var dials atomic.Int32
+	tr := New(time.Hour, 1, 1, failingDials(&dials, 1, plain))
+	get(t, &http.Client{Transport: tr}, srv.URL)
+	if n := dials.Load(); n != 2 {
+		t.Fatalf("dials = %d, want 2", n)
+	}
+}
+
+// tlsServer counts the connections it accepts.
+func tlsServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	var conns atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	return srv, &conns
+}
+
+func TestLaneSwitchesToAWarmPool(t *testing.T) {
+	srv, conns := tlsServer(t)
+	base := srv.Client().Transport.(*http.Transport)
+	tr := New(time.Minute, 1, 3, base.Clone)
+	c := withClock(tr)
+	tr.spawn = func(f func()) { f() }
+	client := &http.Client{Transport: tr}
+
+	get(t, client, srv.URL)
+	first := tr.lanes[0].cur
+	c.t = c.t.Add(time.Minute)
+	get(t, client, srv.URL) // due: the next pool warms up, this request stays on the old one
+	if tr.lanes[0].cur != first || tr.lanes[0].warming == nil || !tr.lanes[0].warming.ready {
+		t.Fatal("no warm next pool while the old one serves")
+	}
+	if n := conns.Load(); n != 2 {
+		t.Fatalf("connections = %d, want 2 (old + warm)", n)
+	}
+	get(t, client, srv.URL) // switches and uses the warm connection
+	if tr.lanes[0].cur == first || tr.lanes[0].warming != nil {
+		t.Fatal("lane did not switch to the warm pool")
+	}
+	if n := conns.Load(); n != 2 {
+		t.Fatalf("connections = %d, want 2: the request did not use the warm connection", n)
+	}
+}
+
+func TestFailedWarmUpSwitchesAfterWait(t *testing.T) {
+	srv, _ := tlsServer(t)
+	base := srv.Client().Transport.(*http.Transport)
+	var dials atomic.Int32
+	tr := New(time.Minute, 1, 3, failingDials(&dials, 2, base.Clone))
+	c := withClock(tr)
+	tr.spawn = func(f func()) { f() }
+	client := &http.Client{Transport: tr}
+
+	get(t, client, srv.URL)
+	first := tr.lanes[0].cur
+	c.t = c.t.Add(time.Minute)
+	get(t, client, srv.URL) // the warm-up (dial 2) fails
+	if w := tr.lanes[0].warming; w == nil || !w.failed {
+		t.Fatal("failed warm-up not recorded")
+	}
+	get(t, client, srv.URL)
+	if tr.lanes[0].cur != first || dials.Load() != 2 {
+		t.Fatalf("switched before warmWait (dials %d)", dials.Load())
+	}
+	c.t = c.t.Add(warmWait)
+	get(t, client, srv.URL)
+	if tr.lanes[0].cur == first || dials.Load() != 3 {
+		t.Fatalf("no direct switch after warmWait (dials %d)", dials.Load())
+	}
+}
+
+func TestNoWarmUpThroughAProxy(t *testing.T) {
+	target := &url.URL{Scheme: "https", Host: "example.com"}
+	p := &pool{t: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return url.Parse("http://proxy:8080") }}}
+	installWarmDialer(p, target)
+	if p.warm != nil || p.t.DialTLSContext != nil {
+		t.Fatal("warm dialer installed behind a proxy")
+	}
+	q := &pool{t: &http.Transport{}}
+	installWarmDialer(q, target)
+	if q.warm == nil || q.t.DialTLSContext == nil {
+		t.Fatal("no warm dialer without a proxy")
 	}
 }

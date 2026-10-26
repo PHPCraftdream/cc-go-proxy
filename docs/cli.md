@@ -32,6 +32,10 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
 - `stream failed after …`: the stream broke after it started. The reason, then the raw backend event that ended it
   (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
+- `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
+- `upstream retry N/M in …`: the backend said it is overloaded (`server_is_overloaded` and similar) before sending
+  any content, so ccgp sends the request again after the pause (2 s, then 5 s); Claude Code just waits longer.
+  Only when the retries run out does the stream fail.
 
 The timing: `conn new (dns, connect, tls)` or `conn reused (idle …)` and the number of upstream calls when there was
 more than one (a retry after a broken connection, a token refresh); then, from the start of the call, `headers`,

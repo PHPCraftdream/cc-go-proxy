@@ -6,12 +6,14 @@
 // request in flight, and many requests on one connection also slow each other
 // down. Transport works like a flowing pond. An active window of lanes, each its
 // own pool, takes new requests; a request goes to the lane with the fewest in
-// flight. Each lane renews its pool every maxAge, the lanes at staggered times;
-// the old pool takes nothing new, its requests finish there and its connections
-// close with the last one. The total limit caps active and draining pools
-// together: a renewal waits for room, a running request is never cut. A request
-// whose connection breaks before the reply starts is sent once more on a fresh
-// pool. Callers see none of it.
+// flight. Each lane renews its pool every maxAge, the lanes at staggered times:
+// the next pool opens its connection in the background (warm.go) and takes over
+// once it is up; the old pool takes nothing new, its requests finish there and
+// its connections close with the last one. The total limit caps active,
+// warming and draining pools together: a renewal waits for room, a running
+// request is never cut. A request whose connection could not be opened goes to
+// a lane that has a working one; a request whose connection breaks before the
+// reply starts is sent once more on a fresh pool. Callers see none of it.
 package connpool
 
 import (
@@ -19,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,7 +30,7 @@ import (
 
 // Defaults: pools take new requests for DefaultMaxAge (well under the 30
 // minutes after which connections to chatgpt.com were seen to drop), DefaultActive
-// lanes take new requests, DefaultTotal caps active plus draining pools.
+// lanes take new requests, DefaultTotal caps active plus warming and draining pools.
 const (
 	DefaultMaxAge = 10 * time.Minute
 	DefaultActive = 7
@@ -38,23 +41,31 @@ const (
 // was never closed, so a leak cannot block renewals for good.
 const forgetAfter = 3 * DefaultMaxAge
 
+// warmWait is how long a lane keeps its old pool while the next one cannot
+// open its connection; then it switches anyway and requests connect themselves.
+const warmWait = time.Minute
+
 // Transport is an http.RoundTripper over a window of renewed pools.
 type Transport struct {
 	maxAge time.Duration
 	newT   func() *http.Transport
 	now    func() time.Time
+	spawn  func(func()) // runs a warm-up; tests run it inline
 
 	mu       sync.Mutex
 	lanes    []*lane // the active window
 	draining []*pool // retired, still serving their requests
 	total    int
 	next     int
+	target   *url.URL // scheme and host of the latest https request: what to warm up
 }
 
 // lane is one slot of the active window.
 type lane struct {
-	cur  *pool
-	born time.Time
+	cur       *pool
+	born      time.Time
+	warming   *pool // the next pool, opening its connection
+	warmSince time.Time
 }
 
 // pool is one http.Transport (its own connections) and its requests in flight.
@@ -62,6 +73,9 @@ type pool struct {
 	t        *http.Transport
 	inflight int
 	retired  time.Time // zero while in a lane
+	ready    bool      // has a working connection: served a reply or holds a warm one
+	failed   bool      // its warm-up could not connect
+	warm     *warmSlot // nil: no warm-up possible (no https target yet, or a proxy)
 }
 
 // New returns a Transport whose pools come from newT (nil: a clone of
@@ -74,7 +88,7 @@ func New(maxAge time.Duration, active, total int, newT func() *http.Transport) *
 	if newT == nil {
 		newT = func() *http.Transport { return http.DefaultTransport.(*http.Transport).Clone() }
 	}
-	t := &Transport{maxAge: maxAge, newT: newT, now: time.Now}
+	t := &Transport{maxAge: maxAge, newT: newT, now: time.Now, spawn: func(f func()) { go f() }}
 	t.SetLimits(active, total)
 	return t
 }
@@ -109,6 +123,9 @@ func (t *Transport) SetLimits(active, total int) {
 		if l.cur != nil {
 			idle = t.retireLocked(l.cur, now, idle)
 		}
+		if l.warming != nil {
+			idle = append(idle, l.warming)
+		}
 	}
 	for i := len(t.lanes); i < active; i++ {
 		// A new lane counts as older by its offset, so the lanes renew in turn.
@@ -117,6 +134,27 @@ func (t *Transport) SetLimits(active, total int) {
 	t.total = total
 	t.mu.Unlock()
 	closeIdle(idle)
+}
+
+// newPoolLocked builds a pool; with an https target known and no proxy in the
+// way it can take a connection opened ahead (see warm.go).
+func (t *Transport) newPoolLocked() *pool {
+	p := &pool{t: t.newT()}
+	if t.target != nil {
+		installWarmDialer(p, t.target)
+	}
+	return p
+}
+
+// poolsLocked counts the pools that hold connections: lanes, warming, draining.
+func (t *Transport) poolsLocked() int {
+	n := len(t.lanes) + len(t.draining)
+	for _, l := range t.lanes {
+		if l.warming != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // retireLocked moves p out of the window: a pool with requests keeps draining,
@@ -145,14 +183,44 @@ func (t *Transport) sweepLocked(now time.Time, idle []*pool) []*pool {
 	return idle
 }
 
+// renewLocked looks after a lane whose pool is due: it switches to a warm next
+// pool, starts warming one when there is room, or, without a warm-up (or after
+// warmWait), switches to a fresh pool directly. It returns a warm-up to start.
+func (t *Transport) renewLocked(l *lane, now time.Time, idle []*pool) ([]*pool, func()) {
+	room := l.cur.inflight == 0 || t.poolsLocked() < t.total
+	switch {
+	case l.warming != nil && l.warming.ready:
+		idle = t.retireLocked(l.cur, now, idle)
+		l.cur, l.born, l.warming = l.warming, now, nil
+	case l.warming != nil:
+		if now.Sub(l.warmSince) >= warmWait {
+			idle = append(idle, l.warming)
+			l.warming = nil
+			idle = t.retireLocked(l.cur, now, idle)
+			l.cur, l.born = t.newPoolLocked(), now
+		}
+	case room:
+		next := t.newPoolLocked()
+		if next.warm == nil {
+			idle = t.retireLocked(l.cur, now, idle)
+			l.cur, l.born = next, now
+			break
+		}
+		l.warming, l.warmSince = next, now
+		target := *t.target
+		return idle, func() { t.warmUp(l, next, &target) }
+	}
+	return idle, nil
+}
+
 // acquire takes a request slot. failed is the pool a request just broke on: its
 // lane gets a fresh pool even without room. Otherwise the request goes to the
-// lane with the fewest in flight (ties round-robin), renewed first when due and
-// there is room.
+// lane with the fewest in flight (ties round-robin), renewed first when due.
 func (t *Transport) acquire(failed *pool) *pool {
 	t.mu.Lock()
 	now := t.now()
 	idle := t.sweepLocked(now, nil)
+	var warm func()
 	var l *lane
 	if failed != nil {
 		for _, c := range t.lanes {
@@ -164,7 +232,7 @@ func (t *Transport) acquire(failed *pool) *pool {
 	}
 	if l != nil {
 		idle = t.retireLocked(l.cur, now, idle)
-		l.cur, l.born = &pool{t: t.newT()}, now
+		l.cur, l.born = t.newPoolLocked(), now
 	} else {
 		t.next++
 		for i := range t.lanes {
@@ -175,16 +243,38 @@ func (t *Transport) acquire(failed *pool) *pool {
 		}
 		switch {
 		case l.cur == nil:
-			l.cur = &pool{t: t.newT()}
-		case now.Sub(l.born) >= t.maxAge && (l.cur.inflight == 0 || len(t.lanes)+len(t.draining) < t.total):
-			idle = t.retireLocked(l.cur, now, idle)
-			l.cur, l.born = &pool{t: t.newT()}, now
+			l.cur = t.newPoolLocked()
+		case now.Sub(l.born) >= t.maxAge:
+			idle, warm = t.renewLocked(l, now, idle)
 		}
 	}
 	p := l.cur
 	p.inflight++
 	t.mu.Unlock()
 	closeIdle(idle)
+	if warm != nil {
+		t.spawn(warm)
+	}
+	return p
+}
+
+// acquireLive takes a slot after failed could not open a connection: on the
+// least busy lane whose pool has a working one, else on a fresh pool.
+func (t *Transport) acquireLive(failed *pool) *pool {
+	t.mu.Lock()
+	var best *lane
+	for _, l := range t.lanes {
+		if l.cur != nil && l.cur != failed && l.cur.ready && (best == nil || l.load() < best.load()) {
+			best = l
+		}
+	}
+	if best == nil {
+		t.mu.Unlock()
+		return t.acquire(failed)
+	}
+	p := best.cur
+	p.inflight++
+	t.mu.Unlock()
 	return p
 }
 
@@ -216,12 +306,28 @@ func (t *Transport) release(p *pool) {
 
 func closeIdle(ps []*pool) {
 	for _, p := range ps {
+		if p.warm != nil {
+			p.warm.close()
+		}
 		p.t.CloseIdleConnections()
 	}
 }
 
+// learn remembers req's https host as the warm-up target.
+func (t *Transport) learn(req *http.Request) {
+	if req.URL == nil || req.URL.Scheme != "https" {
+		return
+	}
+	t.mu.Lock()
+	if t.target == nil || t.target.Host != req.URL.Host {
+		t.target = &url.URL{Scheme: "https", Host: req.URL.Host}
+	}
+	t.mu.Unlock()
+}
+
 // RoundTrip implements http.RoundTripper.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.learn(req)
 	p := t.acquire(nil)
 	resp, err := p.t.RoundTrip(req)
 	if err != nil && retryable(req, err) {
@@ -234,7 +340,12 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			again.Body = rb
 		}
-		q := t.acquire(p)
+		var q *pool
+		if connectFailure(err) {
+			q = t.acquireLive(p)
+		} else {
+			q = t.acquire(p)
+		}
 		t.release(p)
 		p = q
 		resp, err = p.t.RoundTrip(again)
@@ -243,6 +354,9 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.release(p)
 		return nil, err
 	}
+	t.mu.Lock()
+	p.ready = true
+	t.mu.Unlock()
 	resp.Body = &body{ReadCloser: resp.Body, done: func() { t.release(p) }}
 	return resp, nil
 }
@@ -258,7 +372,9 @@ func (t *Transport) CloseIdleConnections() {
 	}
 	ps = append(ps, t.draining...)
 	t.mu.Unlock()
-	closeIdle(ps)
+	for _, p := range ps {
+		p.t.CloseIdleConnections()
+	}
 }
 
 // body calls done once after the response body is closed.
@@ -274,14 +390,32 @@ func (b *body) Close() error {
 	return err
 }
 
-// retryable reports whether req failed because its connection broke before a
-// reply, and can be sent again.
+// connectFailure reports whether err means no connection could be opened, so
+// the request was never sent.
+func connectFailure(err error) bool {
+	var ce *connectError
+	if errors.As(err, &ce) {
+		return true
+	}
+	var oe *net.OpError
+	if errors.As(err, &oe) && oe.Op == "dial" {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "tls handshake timeout") || strings.Contains(msg, "proxyconnect")
+}
+
+// retryable reports whether req failed because its connection could not be
+// opened or broke before a reply, and can be sent again.
 func retryable(req *http.Request, err error) bool {
 	if req.Context().Err() != nil {
 		return false
 	}
 	if req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
 		return false
+	}
+	if connectFailure(err) {
+		return true // nothing was sent
 	}
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
