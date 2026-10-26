@@ -145,7 +145,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if pr := cfg.Providers[cfg.ProviderName]; pr != nil {
 		baseURL = pr.BaseURL
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(ctx, trace.clientTrace()), trace.observer())
 	resp, err := codex.Call(ctx, baseURL, s, req)

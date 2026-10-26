@@ -13,6 +13,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 // models implements `ccgp --models [apply] [-v] [profile]`.
@@ -219,6 +220,7 @@ func managedProfiles(cfg *config.Config, only []string) ([]*config.Profile, erro
 }
 
 func loadCatalog(ctx context.Context, cfg *config.Config, provider string) (*providerCatalog, error) {
+	ctx = proxydial.WithChoice(ctx, cfg.ProviderProxyChoice(provider))
 	store, err := credsStore()
 	if err != nil {
 		return nil, err

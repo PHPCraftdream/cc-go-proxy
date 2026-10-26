@@ -25,6 +25,11 @@ listen.max_body_mb: 256
 ## `ccgp --connections` shows and sets them.
 connections.active: 7
 connections.total: 10
+## Send every outbound connection through a proxy (models, logins, catalog, update):
+## socks5://[user:pass@]host:port, socks5h://…, http://… or https://… (CONNECT).
+## Without it HTTPS_PROXY / HTTP_PROXY from the environment apply.
+## `ccgp --connections proxy URL|off` sets and removes it.
+# connections.proxy: socks5://127.0.0.1:1080
 
 providers: [
     ## "codex": your ChatGPT subscription via OAuth (`ccgp --login codex`, or `--device` for device code).
@@ -68,11 +73,14 @@ providers: [
 ## (--model, ANTHROPIC_MODEL or settings.json "model"; default sonnet). A
 ## profile-level `context_window: N` overrides that; `compact_percent: 70`
 ## compacts earlier. The last rule `match: *` catches every other model name.
+##
+## proxy: a profile may have its own line `proxy: <URL>` (a different proxy) or `proxy: none` (no proxy at
+## all); without it the global `connections.proxy` above applies. `ccgp --connections proxy … profile NAME`.
 profiles: [
     {
         name: codex
         provider: codex
-        ## Fable -> astra, Opus -> sol, Sonnet -> luna, Haiku -> previous luna.
+        ## Fable -> astra, Opus -> sol, Sonnet -> terra, Haiku -> luna.
         ## Run `ccgp --models apply codex` to refresh these to the newest releases.
         ## ccgp:managed-models begin codex
         models: [
@@ -83,22 +91,22 @@ profiles: [
             }
             {
                 match: *opus*
-                model: gpt-6-sol
+                model: gpt-6.1-sol
                 context_window: 922000
             }
             {
                 match: *sonnet*
-                model: gpt-6-luna
+                model: gpt-6.1-terra
                 context_window: 922000
             }
             {
                 match: *haiku*
-                model: gpt-5.6-luna
-                context_window: 272000
+                model: gpt-6-luna
+                context_window: 922000
             }
             {
                 match: *
-                model: gpt-6-luna
+                model: gpt-6.1-terra
                 context_window: 922000
             }
         ]

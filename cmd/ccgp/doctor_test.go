@@ -20,6 +20,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 // fakeDoctorEnv returns an all-ok doctor env that touches no real state.
@@ -38,7 +39,7 @@ func fakeDoctorEnv() *doctorEnv {
 		store:        creds.Store{Dir: "D"},
 		loginStateFn: func(creds.Store, *config.Provider) string { return "API key saved" },
 		refreshAge:   func(creds.Store, *config.Provider) (time.Time, bool) { return time.Time{}, false },
-		probe:        func(string) (int, error) { return 200, nil },
+		probe:        func(string, proxydial.Choice) (int, error) { return 200, nil },
 		stat:         func(string) (fs.FileInfo, error) { return fakeFileInfo{mode: 0o700}, nil },
 		windows:      false,
 		logPath:      func() (string, error) { return filepath.Join("L", "server.log"), nil },
@@ -176,7 +177,7 @@ func TestDoctorLoginChecks(t *testing.T) {
 
 func TestDoctorBackendChecks(t *testing.T) {
 	env := fakeDoctorEnv()
-	env.probe = func(string) (int, error) { return 404, nil }
+	env.probe = func(string, proxydial.Choice) (int, error) { return 404, nil }
 	cfg := &config.Config{Providers: map[string]*config.Provider{
 		"p": {Name: "p", Type: config.ProviderTypeCodexAPI, BaseURL: "http://example"},
 	}}
@@ -184,14 +185,14 @@ func TestDoctorBackendChecks(t *testing.T) {
 	if len(checks) != 1 || checks[0].Status != "ok" || !bytes.Contains([]byte(checks[0].Detail), []byte("reachable (HTTP 404)")) {
 		t.Fatalf("404: %+v", checks)
 	}
-	env.probe = func(string) (int, error) { return 0, errors.New("boom") }
+	env.probe = func(string, proxydial.Choice) (int, error) { return 0, errors.New("boom") }
 	checks = checkBackends(env, cfg)
 	if checks[0].Status != "warn" || !bytes.Contains([]byte(checks[0].Detail), []byte("unreachable")) {
 		t.Fatalf("unreachable: %+v", checks)
 	}
 	// codex without base URL probes codex.DefaultBaseURL.
 	var probed string
-	env.probe = func(u string) (int, error) { probed = u; return 200, nil }
+	env.probe = func(u string, _ proxydial.Choice) (int, error) { probed = u; return 200, nil }
 	cfg = &config.Config{Providers: map[string]*config.Provider{
 		"c":  {Name: "c", Type: config.ProviderTypeCodex},
 		"no": {Name: "no", Type: config.ProviderTypeCodexAPI},
@@ -205,7 +206,7 @@ func TestDoctorBackendChecks(t *testing.T) {
 	}
 	// offline skips backend checks and never probes; online probes once.
 	calls := 0
-	env.probe = func(string) (int, error) { calls++; return 200, nil }
+	env.probe = func(string, proxydial.Choice) (int, error) { calls++; return 200, nil }
 	cfg = &config.Config{ConfigFile: "x", Providers: map[string]*config.Provider{
 		"p": {Name: "p", Type: config.ProviderTypeCodexAPI, BaseURL: "http://example"},
 	}}
@@ -480,13 +481,13 @@ func TestProbeURLReachable(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
-	code, err := probeURL(srv.URL)
+	code, err := probeURL(srv.URL, proxydial.Choice{})
 	if err != nil || code != http.StatusNotFound {
 		t.Fatalf("probe: code %d, err %v", code, err)
 	}
 	u := srv.URL
 	srv.Close()
-	if _, err := probeURL(u); err == nil {
+	if _, err := probeURL(u, proxydial.Choice{}); err == nil {
 		t.Fatal("closed server: want error")
 	}
 }

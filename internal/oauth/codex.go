@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 const (
@@ -53,7 +55,7 @@ func (c *Client) http() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return proxydial.HTTPClient(30 * time.Second)
 }
 
 func (c *Client) issuer() string {

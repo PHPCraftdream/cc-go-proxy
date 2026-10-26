@@ -37,7 +37,7 @@ func commands() []command {
 		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
 		{name: "--profile", args: "add|list [--json]|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
-		{name: "--connections", args: "[active N] [total N] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total)", ensureConfig: true, run: connectionsCmd},
+		{name: "--connections", args: "[active N] [total N] [proxy URL|off [profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd},
 		{name: "--which", args: "<profile> <model> [--json]", desc: "Show where a Claude model is routed in a profile (offline)", ensureConfig: true, run: whichCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
 		{name: "--restart", args: "", desc: "Stop and start the background server", ensureConfig: true, run: restartCmd},

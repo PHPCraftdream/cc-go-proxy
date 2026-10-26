@@ -114,7 +114,7 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --doctor [--offline] [--json]` | Check `claude`, config, server, logins, backend reachability and permissions |
 | `ccgp --serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
 | `ccgp --config reset` | Back up the config and write the default one |
-| `ccgp --connections [active N] [total N]` | Show or set the connections kept to each backend (default 7 active, 10 total) |
+| `ccgp --connections [active N] [total N] [proxy URL|off [profile NAME]]` | Show or set the connections kept to each backend (default 7 active, 10 total) and the SOCKS5 / HTTP proxy: global, with a different one or none per profile |
 | `ccgp --update [--check]` | Update ccgp and ccgpy from the latest GitHub release (checksum verified) |
 | `ccgp --completion bash\|zsh\|powershell` | Print a shell completion script |
 | `ccgp --version` | Print the version |

@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -876,7 +877,7 @@ func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config) (*h
 	apiURL := cfg.OpenAIBaseURL + "/chat/completions"
 
 	// Create HTTP request
-	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
+	httpReq, err := http.NewRequestWithContext(upstreamCtx(context.Background(), cfg), "POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -973,7 +974,7 @@ func callOpenAIInternal(req *models.OpenAIRequest, cfg *config.Config) (*models.
 	apiURL := cfg.OpenAIBaseURL + "/chat/completions"
 
 	// Create HTTP request
-	httpReq, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
+	httpReq, err := http.NewRequestWithContext(upstreamCtx(context.Background(), cfg), "POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

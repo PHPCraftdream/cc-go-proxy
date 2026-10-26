@@ -26,6 +26,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 // Defaults: pools take new requests for DefaultMaxAge (well under the 30
@@ -57,7 +59,9 @@ type Transport struct {
 	draining []*pool // retired, still serving their requests
 	total    int
 	next     int
-	target   *url.URL // scheme and host of the latest https request: what to warm up
+	target   *url.URL         // scheme and host of the latest https request: what to warm up
+	choice   proxydial.Choice // the way out of every pool of this Transport
+	counts   counters
 }
 
 // lane is one slot of the active window.
@@ -103,17 +107,22 @@ func (t *Transport) Limits() (active, total int) {
 	return len(t.lanes), t.total
 }
 
-// SetLimits resizes the active window (0: DefaultActive) and sets the total
-// limit (0: DefaultTotal; never below active). Lanes leaving the window drain
-// like renewed pools.
-func (t *Transport) SetLimits(active, total int) {
+// normalizeLimits fills the defaults in and keeps total at or above active.
+func normalizeLimits(active, total int) (int, int) {
 	if active <= 0 {
 		active = DefaultActive
 	}
 	if total <= 0 {
 		total = DefaultTotal
 	}
-	total = max(total, active)
+	return active, max(total, active)
+}
+
+// SetLimits resizes the active window (0: DefaultActive) and sets the total
+// limit (0: DefaultTotal; never below active). Lanes leaving the window drain
+// like renewed pools.
+func (t *Transport) SetLimits(active, total int) {
+	active, total = normalizeLimits(active, total)
 	t.mu.Lock()
 	var idle []*pool
 	now := t.now()
@@ -140,8 +149,9 @@ func (t *Transport) SetLimits(active, total int) {
 // way it can take a connection opened ahead (see warm.go).
 func (t *Transport) newPoolLocked() *pool {
 	p := &pool{t: t.newT()}
+	proxydial.Apply(p.t, t.choice)
 	if t.target != nil {
-		installWarmDialer(p, t.target)
+		installWarmDialer(p, t.target, &t.counts)
 	}
 	return p
 }
@@ -345,8 +355,10 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		var q *pool
 		if connectFailure(err) {
+			t.counts.connectRetries.Add(1)
 			q = t.acquireLive(p)
 		} else {
+			t.counts.breakRetries.Add(1)
 			q = t.acquire(p)
 		}
 		t.release(p)

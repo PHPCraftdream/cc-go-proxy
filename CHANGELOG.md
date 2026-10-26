@@ -9,6 +9,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Changed
+- Codex model mapping follows the GPT-6.1 line-up: Sonnet goes to the newest `terra` (was the newest `luna`), Haiku
+  to the newest `luna` (was the `luna` of the release before). Fable stays on `astra`, Opus on `sol`. Run
+  `ccgp --models apply` to rewrite a profile's mapping.
+
 ### Fixed
 - Requests no longer fail together when the backend (or a proxy on the way) cuts a connection after a fixed lifetime:
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
@@ -29,6 +34,16 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   busy connection does not slow down the others.
 
 ### Added
+- `connections.proxy` in config.ktav and `ccgp --connections proxy URL|off`: all outbound connections (model
+  requests, model catalog, login and token refresh, `--doctor`, `--update`) can go through a SOCKS5 (`socks5://`,
+  `socks5h://`, optional user and password) or HTTP/HTTPS `CONNECT` proxy. The new connections are warmed up through
+  it too; a change applies without a restart, and the password is shown as `***`.
+- Proxy settings cascade: a profile's own `proxy:` (a proxy URL, or `none` for no proxy at all) overrides the global
+  `connections.proxy`; a profile without one inherits it. `ccgp --connections proxy URL|none|inherit profile NAME`
+  edits it. Every way out keeps its own connections; login, the model catalog and the `--doctor` probe use the proxy
+  their provider's profiles agree on.
+- Every 10 minutes the server logs `upstream stats` per upstream client: connections opened and their protocol
+  (h2 or http/1.1), warm-ups opened/used/failed, retries.
 - A slow Codex answer (reply headers after 20 s or the whole answer over 2 minutes) gets a `slow stream` log line
   with the timing: new or reused connection (DNS, connect, TLS), time to headers, to the first token and in total,
   request size and tokens. Broken streams carry the same timing. See

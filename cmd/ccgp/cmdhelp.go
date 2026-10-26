@@ -147,7 +147,7 @@ Edit the new file to configure providers, profiles and model names.
 Example:
   ccgp --config reset
 `,
-	"--connections": `ccgp --connections [active N] [total N] [--json]
+	"--connections": `ccgp --connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]
 
 Show or set how many connections ccgp keeps to each backend (config.ktav:
 connections.active, connections.total). Active connections take new
@@ -159,11 +159,23 @@ cut. The running server applies changes on its next request.
 
   active N   connections taking new requests (default 7, 0: default)
   total N    limit for active plus finishing (default 10, at least active)
+  proxy URL  send every upstream request (models, logins, catalog) through a
+             proxy: socks5://[user:pass@]host:port (socks5h too: the proxy
+             resolves names), http://… or https://… (CONNECT); off: none
+  proxy V profile NAME
+             a proxy of one profile; it replaces the global one for it.
+             V: a proxy URL; none (or off): no proxy at all for the profile;
+             inherit: remove the override, the global proxy applies again
   --json     print the values as JSON
 
 Examples:
   ccgp --connections
   ccgp --connections active 7 total 10
+  ccgp --connections proxy socks5://127.0.0.1:1080
+  ccgp --connections proxy off
+  ccgp --connections proxy socks5://10.0.0.2:1080 profile work
+  ccgp --connections proxy none profile home
+  ccgp --connections proxy inherit profile work
 `,
 	"--update": `ccgp --update [--check]
 

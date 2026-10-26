@@ -18,7 +18,7 @@ The config is **yours**: ccgp reads it and changes it only on your command.
   overwrite each other's backup).
 - `ccgp --models apply`, and the refresh after a fresh `ccgp --login codex`, rewrite only the lines between a
   profile's `ccgp:managed-models` markers ([below](#generated-model-mappings)); no backup is made.
-- `ccgp --connections active N total N` rewrites (or adds) the `connections.active` / `connections.total` lines the
+- `ccgp --connections active N total N proxy URL|off` rewrites (or adds, or removes) the `connections.*` lines the
   same way, with a backup.
 - `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
@@ -35,6 +35,7 @@ listen.max_body_mb: 256
 
 connections.active: 7
 connections.total: 10
+# connections.proxy: socks5://127.0.0.1:1080
 
 providers: [
     {
@@ -62,12 +63,12 @@ profiles: [
         models: [
             {
                 match: *opus*
-                model: gpt-6-sol
+                model: gpt-6.1-sol
                 context_window: 922000
             }
             {
                 match: *
-                model: gpt-6-luna
+                model: gpt-6.1-terra
                 context_window: 922000
             }
         ]
@@ -92,6 +93,54 @@ killing every request on them); the old one finishes its requests and closes wit
 still finishing connections: at the limit a replacement waits, a running request is never cut. `total` must not be
 below `active`. A running server applies a change on its next request. `ccgp --connections` shows the values,
 `ccgp --connections active 7 total 10` sets them.
+
+`connections.proxy` (optional, default none) sends every outbound connection of ccgp through a proxy: model requests,
+the model catalog, `--login` and the token refresh, `--doctor` probes and `--update`. Forms:
+
+| URL | |
+| --- | --- |
+| `socks5://[user:pass@]host:port` | SOCKS5; the user name and password (RFC 1929) are optional |
+| `socks5h://…` | the same; the proxy always resolves the backend's name (ccgp sends names to a SOCKS5 proxy either way) |
+| `http://[user:pass@]host:port` | HTTP `CONNECT` tunnel, Basic auth if a user is given |
+| `https://…` | `CONNECT` over TLS to the proxy |
+
+Without it ccgp follows `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the environment, like any Go program. The
+connections to the proxy are renewed and warmed up like the direct ones. A change applies on the next request, with
+no restart; `ccgp --connections proxy socks5://127.0.0.1:1080` sets it, `ccgp --connections proxy off` removes it.
+
+**A proxy per profile.** `connections.proxy` is the global setting; a profile may override it with `proxy:` in its
+object, and the profile's setting wins:
+
+| In the profile | The profile's requests go |
+| --- | --- |
+| no `proxy` line | through the global `connections.proxy` (else the environment's) |
+| `proxy: socks5://other:1080` | through that proxy, whatever the global one is |
+| `proxy: none` | directly, the global proxy and the environment's are both ignored |
+
+```
+connections.proxy: socks5://10.0.0.2:1080       # everybody
+
+profiles: [
+    {
+        name: work
+        provider: codex
+        proxy: http://corp-proxy:3128      # work goes through the corporate proxy
+    }
+    {
+        name: home
+        provider: codex2
+        proxy: none                        # home goes out directly
+    }
+]
+```
+
+`ccgp --connections proxy URL profile work` sets a profile's proxy, `proxy none profile home` sets `none`,
+`proxy inherit profile work` removes the line; `ccgp --connections` lists the profiles that have their own. Each way
+out has its own set of connections (up to `connections.active` / `total` each). Things that belong to a provider,
+not to a request, use the proxy that all the profiles of the provider agree on, and the global one when they differ:
+`--login`, the model catalog of `--models`, the backend probe of `--doctor`. `--update` uses the global proxy.
+The password lives in `config.ktav` (every ccgp write of it is owner-only); `ccgp --connections` and the server log
+show it as `***`.
 
 ### `providers[]`
 

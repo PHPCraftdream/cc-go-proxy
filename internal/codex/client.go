@@ -28,7 +28,7 @@ const ResponseHeaderTimeout = 90 * time.Second
 var HTTPClient = newClient(ResponseHeaderTimeout)
 
 func newClient(headerTimeout time.Duration) *http.Client {
-	return &http.Client{Transport: connpool.New(0, 0, 0, func() *http.Transport {
+	return &http.Client{Transport: connpool.NewRouter(0, 0, 0, func() *http.Transport {
 		t := http.DefaultTransport.(*http.Transport).Clone()
 		t.ResponseHeaderTimeout = headerTimeout
 		return t

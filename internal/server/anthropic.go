@@ -19,10 +19,10 @@ import (
 )
 
 // upstreamClient has no overall timeout: responses stream for minutes.
-var upstreamClient = &http.Client{Transport: connpool.New(0, 0, 0, nil)}
+var upstreamClient = &http.Client{Transport: connpool.NewRouter(0, 0, 0, nil)}
 
 // openAITransport carries the OpenAI-compatible requests.
-var openAITransport = connpool.New(0, 0, 0, nil)
+var openAITransport = connpool.NewRouter(0, 0, 0, nil)
 
 // forwardedResponseHeaders are copied from the upstream reply to the client.
 var forwardedResponseHeaders = []string{
@@ -93,7 +93,7 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 	}
 	c.Locals(localsModel, requested+" -> "+backend)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(pr.BaseURL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		cancel()

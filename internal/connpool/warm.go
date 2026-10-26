@@ -66,7 +66,7 @@ func (w *warmSlot) close() {
 // installWarmDialer makes p's transport open its TLS connections itself, so a
 // connection opened ahead for target can be handed to it. Pools with their own
 // TLS dialer or a proxy for target keep the transport's dialing.
-func installWarmDialer(p *pool, target *url.URL) {
+func installWarmDialer(p *pool, target *url.URL, counts *counters) {
 	tr := p.t
 	if tr.DialTLSContext != nil || tr.DialTLS != nil { //nolint:staticcheck // DialTLS still counts
 		return
@@ -92,10 +92,17 @@ func installWarmDialer(p *pool, target *url.URL) {
 	}
 	handshake := tr.TLSHandshakeTimeout
 	w := &warmSlot{dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return dialTLS(ctx, netDial, network, addr, cfg, handshake)
+		c, err := dialTLS(ctx, netDial, network, addr, cfg, handshake)
+		if tc, ok := c.(*tls.Conn); ok && counts != nil {
+			counts.dialed(tc.ConnectionState().NegotiatedProtocol)
+		}
+		return c, err
 	}}
 	tr.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if c, opened := w.take(addr); c != nil {
+			if counts != nil {
+				counts.warmUsed.Add(1)
+			}
 			if o := observer(ctx); o != nil && o.WarmConn != nil {
 				o.WarmConn(time.Since(opened))
 			}
@@ -165,9 +172,11 @@ func (t *Transport) warmUp(l *lane, p *pool, target *url.URL) {
 		return
 	}
 	if err != nil {
+		t.counts.warmFailed.Add(1)
 		p.failed = true
 		return
 	}
+	t.counts.warmOpened.Add(1)
 	p.warm.put(addr, c)
 	p.ready = true
 }

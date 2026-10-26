@@ -12,6 +12,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 	"golang.org/x/term"
 )
 
@@ -35,7 +36,7 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 	}
 	switch pr.Type {
 	case config.ProviderTypeCodex:
-		fresh, err := loginCodex(store, pr.Name, force, device)
+		fresh, err := loginCodex(store, pr.Name, force, device, cfg.ProviderProxyChoice(pr.Name))
 		if err == nil && fresh {
 			autoApplyModels(cfg, pr.Name)
 		}
@@ -55,7 +56,7 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 
 // loginCodex signs in with ChatGPT OAuth: browser callback flow by default,
 // device-code flow with device=true. The browser is never opened automatically.
-func loginCodex(store creds.Store, provider string, force, device bool) (fresh bool, err error) {
+func loginCodex(store creds.Store, provider string, force, device bool, via proxydial.Choice) (fresh bool, err error) {
 	ts := oauth.Store{Path: store.OAuthPath(provider)}
 	if !force {
 		if _, lerr := ts.Load(); lerr == nil {
@@ -64,7 +65,7 @@ func loginCodex(store creds.Store, provider string, force, device bool) (fresh b
 			return false, lerr
 		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(proxydial.WithChoice(context.Background(), via), os.Interrupt)
 	defer stop()
 
 	var tok *oauth.Tokens

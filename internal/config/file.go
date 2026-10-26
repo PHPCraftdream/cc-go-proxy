@@ -67,8 +67,11 @@ type Profile struct {
 	ContextWindow int64 `json:"context_window"`
 	// CompactPercent lowers the point (percent of the context window) where Claude
 	// Code compacts; 0 keeps its default (about 83%).
-	CompactPercent int64       `json:"compact_percent"`
-	Models         []ModelRule `json:"models"`
+	CompactPercent int64 `json:"compact_percent"`
+	// Proxy overrides connections.proxy for this profile: a proxy URL, or
+	// "none" for no proxy. Absent: the global setting applies.
+	Proxy  string      `json:"proxy"`
+	Models []ModelRule `json:"models"`
 }
 
 // fileConfig is the Ktav config file shape.
@@ -79,8 +82,9 @@ type fileConfig struct {
 		MaxBodyMB int64  `json:"max_body_mb"`
 	} `json:"listen"`
 	Connections struct {
-		Active int64 `json:"active"`
-		Total  int64 `json:"total"`
+		Active int64  `json:"active"`
+		Total  int64  `json:"total"`
+		Proxy  string `json:"proxy"`
 	} `json:"connections"`
 	Providers []Provider `json:"providers"`
 	Profiles  []Profile  `json:"profiles"`
@@ -133,7 +137,7 @@ func (fc *fileConfig) validate() error {
 	if mb := fc.Listen.MaxBodyMB; mb < 0 || mb > maxBodyMBLimit {
 		return fmt.Errorf("listen.max_body_mb must be 0-%d (0: default %d)", maxBodyMBLimit, DefaultMaxBodyMB)
 	}
-	if err := validateConnections(fc.Connections.Active, fc.Connections.Total); err != nil {
+	if err := validateConnections(fc.Connections.Active, fc.Connections.Total, fc.Connections.Proxy); err != nil {
 		return err
 	}
 	providers := map[string]bool{}
@@ -169,6 +173,9 @@ func (fc *fileConfig) validate() error {
 		if pf.CompactPercent < 0 || pf.CompactPercent > 100 {
 			return fmt.Errorf("profile %q: compact_percent must be 0-100", pf.Name)
 		}
+		if err := validateProfileProxy(pf.Name, pf.Proxy); err != nil {
+			return err
+		}
 		if reservedProfiles[pf.Name] {
 			return fmt.Errorf("profiles[%d]: %q is a reserved profile name (claude is the ccgp --send endpoint)", i, pf.Name)
 		}
@@ -203,6 +210,7 @@ func applyFile(cfg *Config, fc *fileConfig) {
 		cfg.MaxBodyMB = fc.Listen.MaxBodyMB
 	}
 	cfg.ConnectionsActive, cfg.ConnectionsTotal = fc.Connections.Active, fc.Connections.Total
+	cfg.ConnectionsProxy = fc.Connections.Proxy
 	cfg.Providers = map[string]*Provider{}
 	for i := range fc.Providers {
 		p := fc.Providers[i]

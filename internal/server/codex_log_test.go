@@ -2,7 +2,9 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,7 +16,10 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
+	"github.com/PHPCraftdream/cc-go-proxy/pkg/models"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -40,12 +45,18 @@ func (s *syncBuf) String() string {
 // against backend and returns the status, body, access log and stream log.
 func codexCall(t *testing.T, backend http.Handler, headerTimeout time.Duration) (status int, body, access, stream string) {
 	t.Helper()
+	return codexCallWith(t, backend, &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: headerTimeout}}, nil)
+}
+
+// codexCallWith is codexCall with the upstream client and a change to the profile's config given.
+func codexCallWith(t *testing.T, backend http.Handler, client *http.Client, tweak func(*config.Config)) (status int, body, access, stream string) {
+	t.Helper()
 	srv := httptest.NewServer(backend)
 	defer srv.Close()
 
 	oldClient, oldLog := codex.HTTPClient, logOut
 	t.Cleanup(func() { codex.HTTPClient, logOut = oldClient, oldLog })
-	codex.HTTPClient = &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: headerTimeout}}
+	codex.HTTPClient = client
 	var sl syncBuf
 	logOut = &sl
 
@@ -58,6 +69,9 @@ func codexCall(t *testing.T, backend http.Handler, headerTimeout time.Duration) 
 		Profile:      "codex",
 		ProviderName: "codex",
 		Providers:    map[string]*config.Provider{"codex": {Name: "codex", Type: "codex", BaseURL: srv.URL}},
+	}
+	if tweak != nil {
+		tweak(cfg)
 	}
 
 	var al syncBuf
@@ -228,5 +242,111 @@ func TestLogStreamCanceledLine(t *testing.T) {
 	logStreamCanceled(&b, time.Now().Add(-3*time.Second), "codex", "a -> b", "conn reused (idle 1s)")
 	if got := b.String(); !strings.Contains(got, "stream canceled by client after 3") || !strings.HasSuffix(got, "[codex] a -> b: conn reused (idle 1s)\n") {
 		t.Errorf("line %q", got)
+	}
+}
+
+// connectProxy is an HTTP CONNECT proxy that counts its tunnels.
+func connectProxy(t *testing.T) (proxyURL string, tunnels *atomic.Int32) {
+	t.Helper()
+	tunnels = &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		tunnels.Add(1)
+		_, _ = io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\n")
+		go func() { _, _ = io.Copy(c, up); _ = c.Close() }()
+		_, _ = io.Copy(up, c)
+		_ = up.Close()
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, tunnels
+}
+
+// A profile uses the global proxy unless it has a proxy of its own, or none.
+func TestCodexRequestsFollowTheProfileProxy(t *testing.T) {
+	var calls atomic.Int32
+	backend := overloadBackend(&calls, 0) // always a complete answer
+	global, viaGlobal := connectProxy(t)
+	own, viaOwn := connectProxy(t)
+
+	run := func(profile string) {
+		t.Helper()
+		router := connpool.NewRouter(0, 1, 1, nil)
+		status, body, _, _ := codexCallWith(t, backend, &http.Client{Transport: router}, func(cfg *config.Config) {
+			cfg.Profile = profile
+			cfg.ConnectionsProxy = global
+			cfg.Profiles = map[string]*config.Profile{
+				"inherits": {Name: "inherits", Provider: "codex"},
+				"direct":   {Name: "direct", Provider: "codex", Proxy: config.ProxyNone},
+				"own":      {Name: "own", Provider: "codex", Proxy: own},
+			}
+		})
+		if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+			t.Fatalf("%s: status %d, body %q", profile, status, body)
+		}
+	}
+	run("inherits")
+	if g, o := viaGlobal.Load(), viaOwn.Load(); g != 1 || o != 0 {
+		t.Fatalf("inherits: tunnels global %d, own %d; want 1 and 0", g, o)
+	}
+	run("direct")
+	if g, o := viaGlobal.Load(), viaOwn.Load(); g != 1 || o != 0 {
+		t.Fatalf("direct: tunnels global %d, own %d; want no new tunnel", g, o)
+	}
+	run("own")
+	if g, o := viaGlobal.Load(), viaOwn.Load(); g != 1 || o != 1 {
+		t.Fatalf("own: tunnels global %d, own %d; want 1 and 1", g, o)
+	}
+}
+
+func TestOpenAIRequestsFollowTheProfileProxy(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer backend.Close()
+	global, viaGlobal := connectProxy(t)
+	oldT := openAITransport
+	t.Cleanup(func() { openAITransport = oldT })
+
+	call := func(profile string, proxy string) {
+		t.Helper()
+		openAITransport = connpool.NewRouter(0, 1, 1, nil)
+		cfg := &config.Config{
+			Profile: profile, OpenAIBaseURL: backend.URL, ConnectionsProxy: global,
+			Profiles: map[string]*config.Profile{profile: {Name: profile, Proxy: proxy}},
+		}
+		if _, err := callOpenAIInternal(&models.OpenAIRequest{Model: "m"}, cfg); err != nil {
+			t.Fatalf("%s: %v", profile, err)
+		}
+	}
+	call("inherits", "")
+	if g := viaGlobal.Load(); g != 1 {
+		t.Fatalf("inherits: tunnels = %d, want 1", g)
+	}
+	call("direct", config.ProxyNone)
+	if g := viaGlobal.Load(); g != 1 {
+		t.Fatalf("direct: tunnels = %d, want no new one", g)
+	}
+}
+
+func TestUpstreamCtxCarriesTheProfileChoice(t *testing.T) {
+	global, _ := proxydial.Parse("socks5://127.0.0.1:1080")
+	cfg := &config.Config{
+		Profile: "p", ConnectionsProxy: global.String(),
+		Profiles: map[string]*config.Profile{"p": {Name: "p", Proxy: config.ProxyNone}},
+	}
+	if c := proxydial.ChoiceFor(upstreamCtx(context.Background(), cfg)); !c.Direct {
+		t.Errorf("profile none: %+v", c)
+	}
+	cfg.Profiles["p"].Proxy = ""
+	if c := proxydial.ChoiceFor(upstreamCtx(context.Background(), cfg)); c.URL == nil || c.URL.Host != "127.0.0.1:1080" {
+		t.Errorf("inheriting profile: %+v", c)
 	}
 }

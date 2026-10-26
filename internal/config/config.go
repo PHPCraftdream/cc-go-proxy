@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 // ProviderType represents the backend provider type
@@ -101,6 +103,8 @@ type Config struct {
 	MaxBodyMB int64
 	// Upstream connections (connections.active / .total); 0: default, see ConnectionLimits.
 	ConnectionsActive, ConnectionsTotal int64
+	// ConnectionsProxy is connections.proxy (socks5/socks5h/http/https URL); "": none.
+	ConnectionsProxy string
 
 	// Env-only mode: single URL token (/call/{token}/...) for profile EnvProfile.
 	// File mode: tokens live in the creds store.
@@ -190,8 +194,11 @@ func Load() (*Config, error) {
 	if fc != nil {
 		applyFile(cfg, fc)
 		cfg.ConfigFile = p
+		// The proxy applies to every outbound connection of the process.
+		proxydial.SetDefault(cfg.ProxyURL())
 		return cfg, nil
 	}
+	proxydial.SetDefault(nil)
 
 	// Env-only mode: one provider + one profile from env.
 	cfg.Providers = map[string]*Provider{
@@ -265,7 +272,6 @@ func (c *Config) IsLocalhost() bool {
 	baseURL := strings.ToLower(c.OpenAIBaseURL)
 	return strings.Contains(baseURL, "localhost") || strings.Contains(baseURL, "127.0.0.1")
 }
-
 
 // GetModelCapabilities retrieves cached capabilities for a (provider, model) combination.
 // Returns nil if no capabilities are cached yet (first request for this model).

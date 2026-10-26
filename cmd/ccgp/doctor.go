@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
@@ -56,7 +58,7 @@ type doctorEnv struct {
 	store        creds.Store
 	loginStateFn func(creds.Store, *config.Provider) string
 	refreshAge   func(creds.Store, *config.Provider) (time.Time, bool)
-	probe        func(string) (int, error)
+	probe        func(rawURL string, via proxydial.Choice) (int, error)
 	stat         func(string) (fs.FileInfo, error)
 	windows      bool
 	logPath      func() (string, error)
@@ -242,7 +244,7 @@ func checkBackends(env *doctorEnv, cfg *config.Config) []check {
 			continue
 		}
 		c := check{Name: "backend " + name, Status: "ok"}
-		if code, err := env.probe(u); err != nil {
+		if code, err := env.probe(u, cfg.ProviderProxyChoice(name)); err != nil {
 			// warn, not fail: the user may simply be offline.
 			c.Status = "warn"
 			c.Detail = fmt.Sprintf("unreachable: %v", err)
@@ -302,8 +304,12 @@ func defaultLogWritable(dir string) error {
 }
 
 // probeURL sends a credential-free GET and returns the status code.
-func probeURL(url string) (int, error) {
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Get(url)
+func probeURL(url string, via proxydial.Choice) (int, error) {
+	req, err := http.NewRequestWithContext(proxydial.WithChoice(context.Background(), via), http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := proxydial.HTTPClient(5 * time.Second).Do(req)
 	if err != nil {
 		return 0, err
 	}

@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
 
@@ -39,8 +41,11 @@ func updateCmd(args []string) error {
 		}
 		check = true
 	}
-	lookup := &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	download := &http.Client{Timeout: 5 * time.Minute}
+	// A configured connections.proxy carries the update too (Load sets it).
+	_, _ = config.Load()
+	lookup := proxydial.HTTPClient(60 * time.Second)
+	lookup.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	download := proxydial.HTTPClient(5 * time.Minute)
 	dir, err := installDir()
 	if err != nil {
 		return err

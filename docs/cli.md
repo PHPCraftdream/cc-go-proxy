@@ -33,6 +33,10 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
   (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
+- `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
+  (`dials 3 (h2 2, http/1.1 1)`: how many and the protocol they agreed on), background warm-ups (`opened`, `used`,
+  `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below
+  `opened`, or `http/1.1` where `h2` is expected, shows a connection problem before it becomes errors.
 - `upstream retry N/M in …`: the backend said it is overloaded (`server_is_overloaded` and similar) before sending
   any content, so ccgp sends the request again after the pause (2 s, then 5 s); Claude Code just waits longer.
   Only when the retries run out does the stream fail.
@@ -90,7 +94,7 @@ after printing the JSON.
 | `--profile add\|list\|rm` | See [configuration](configuration.md#creating-and-removing-profiles) |
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
-| `--connections [active N] [total N] [--json]` | Show or set the connections per backend (default 7 active, 10 total); see [configuration](configuration.md#layout) |
+| `--connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy, global or of one profile (`none` = direct, `inherit` = the global one again); see [configuration](configuration.md#layout) |
 
 ## Sessions
 

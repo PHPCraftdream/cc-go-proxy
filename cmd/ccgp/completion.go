@@ -202,10 +202,18 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 			return []string{"reset"}
 		}
 	case "--connections":
-		if prev == "active" || prev == "total" {
+		switch prev {
+		case "active", "total":
 			return nil
+		case "proxy":
+			return []string{"off", "none", "inherit", "socks5://", "http://"}
+		case "profile":
+			return call(n.profiles)
 		}
-		return []string{"active", "total", "--json"}
+		if len(sub) >= 2 && sub[len(sub)-2] == "proxy" {
+			return []string{"profile"}
+		}
+		return []string{"active", "total", "proxy", "--json"}
 	case "--completion":
 		if len(sub) == 0 {
 			return []string{"bash", "zsh", "powershell"}

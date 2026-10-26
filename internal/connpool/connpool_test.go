@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 type clock struct{ t time.Time }
@@ -258,6 +260,9 @@ func TestRetryWhenConnectionDropsBeforeReply(t *testing.T) {
 	if retried == nil {
 		t.Error("observer not told about the retry")
 	}
+	if st := tr.Stats(); st.BreakRetries != 1 || st.ConnectRetries != 0 {
+		t.Errorf("stats = %+v", st)
+	}
 	b, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if string(b) != "ok" || calls.Load() != 2 {
@@ -414,6 +419,9 @@ func TestConnectFailureGoesToALiveLane(t *testing.T) {
 	if n := dials.Load(); n != 2 {
 		t.Fatalf("dials = %d, want 2 (no new dial for the retry)", n)
 	}
+	if st := tr.Stats(); st.ConnectRetries != 1 || st.BreakRetries != 0 {
+		t.Errorf("stats = %+v", st)
+	}
 }
 
 func TestConnectFailureWithoutALiveLaneTriesAFreshPool(t *testing.T) {
@@ -481,6 +489,12 @@ func TestLaneSwitchesToAWarmPool(t *testing.T) {
 	if n := conns.Load(); n != 2 {
 		t.Fatalf("connections = %d, want 2: the request did not use the warm connection", n)
 	}
+	if st := tr.Stats(); st.Dials != 2 || st.HTTP1 != 2 || st.WarmOpened != 1 || st.WarmUsed != 1 || st.WarmFailed != 0 {
+		t.Errorf("stats = %+v", st)
+	}
+	if st := tr.Stats(); st != (Stats{}) {
+		t.Errorf("stats not reset: %+v", st)
+	}
 }
 
 func TestFailedWarmUpSwitchesAfterWait(t *testing.T) {
@@ -508,18 +522,148 @@ func TestFailedWarmUpSwitchesAfterWait(t *testing.T) {
 	if tr.lanes[0].cur == first || dials.Load() != 3 {
 		t.Fatalf("no direct switch after warmWait (dials %d)", dials.Load())
 	}
+	if st := tr.Stats(); st.WarmFailed != 1 || st.WarmOpened != 0 {
+		t.Errorf("stats = %+v", st)
+	}
 }
 
 func TestNoWarmUpThroughAProxy(t *testing.T) {
 	target := &url.URL{Scheme: "https", Host: "example.com"}
 	p := &pool{t: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return url.Parse("http://proxy:8080") }}}
-	installWarmDialer(p, target)
+	installWarmDialer(p, target, nil)
 	if p.warm != nil || p.t.DialTLSContext != nil {
 		t.Fatal("warm dialer installed behind a proxy")
 	}
 	q := &pool{t: &http.Transport{}}
-	installWarmDialer(q, target)
+	installWarmDialer(q, target, nil)
 	if q.warm == nil || q.t.DialTLSContext == nil {
 		t.Fatal("no warm dialer without a proxy")
+	}
+}
+
+// connectProxy counts the CONNECT tunnels it opens.
+func connectProxy(t *testing.T) (*url.URL, *atomic.Int32) {
+	var tunnels atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
+			return
+		}
+		up, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		tunnels.Add(1)
+		_, _ = io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\n")
+		go func() { _, _ = io.Copy(c, up); _ = c.Close() }()
+		_, _ = io.Copy(up, c)
+		_ = up.Close()
+	}))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	return u, &tunnels
+}
+
+// withChoice returns a request context that goes out the way c says.
+func withChoice(c proxydial.Choice) context.Context {
+	return proxydial.WithChoice(context.Background(), c)
+}
+
+func TestRouterKeepsOneTransportPerWayOut(t *testing.T) {
+	target := okServer(t)
+	proxyA, tunnelsA := connectProxy(t)
+	proxyB, tunnelsB := connectProxy(t)
+	t.Cleanup(func() { proxydial.SetDefault(nil) })
+	r := NewRouter(time.Hour, 1, 2, plain)
+	client := &http.Client{Transport: r}
+
+	get(t, client, target.URL) // no choice, no default: the environment's way, here direct
+	getCtx(t, client, target.URL, withChoice(proxydial.Choice{URL: proxyA}))
+	getCtx(t, client, target.URL, withChoice(proxydial.Choice{URL: proxyA}))
+	getCtx(t, client, target.URL, withChoice(proxydial.Choice{URL: proxyB}))
+	getCtx(t, client, target.URL, withChoice(proxydial.Choice{Direct: true}))
+	if a, b := tunnelsA.Load(), tunnelsB.Load(); a != 1 || b != 1 {
+		t.Fatalf("tunnels A %d, B %d: want 1 and 1 (the second request to A reuses its connection)", a, b)
+	}
+	if n := len(r.ts); n != 4 {
+		t.Errorf("transports = %d, want 4 (env, A, B, direct)", n)
+	}
+
+	// Without a choice on the request the default proxy applies.
+	proxydial.SetDefault(proxyB)
+	get(t, client, target.URL)
+	if b := tunnelsB.Load(); b != 1 {
+		t.Errorf("B tunnels = %d: the default proxy is the same way out as B, which already has its connection", b)
+	}
+	proxydial.SetDefault(nil)
+}
+
+func TestRouterDirectIgnoresTheEnvironmentProxy(t *testing.T) {
+	target := okServer(t)
+	proxy, tunnels := connectProxy(t)
+	t.Setenv("HTTP_PROXY", proxy.String())
+	t.Setenv("http_proxy", proxy.String())
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	base := func() *http.Transport { return &http.Transport{Proxy: http.ProxyURL(proxy)} }
+	r := NewRouter(time.Hour, 1, 2, base)
+	client := &http.Client{Transport: r}
+	getCtx(t, client, target.URL, withChoice(proxydial.Choice{Direct: true}))
+	if n := tunnels.Load(); n != 0 {
+		t.Fatalf("a direct request went through the proxy (%d tunnels)", n)
+	}
+}
+
+func TestRouterLimitsReachEveryTransport(t *testing.T) {
+	r := NewRouter(time.Hour, 3, 5, plain)
+	a := r.transport(proxydial.Choice{})
+	r.SetLimits(2, 4)
+	b := r.transport(proxydial.Choice{Direct: true}) // created after the change
+	for name, tr := range map[string]*Transport{"existing": a, "new": b} {
+		if x, y := tr.Limits(); x != 2 || y != 4 {
+			t.Errorf("%s transport limits = %d/%d, want 2/4", name, x, y)
+		}
+	}
+	if x, y := r.Limits(); x != 2 || y != 4 {
+		t.Errorf("router limits = %d/%d", x, y)
+	}
+	a.counts.dials.Add(2)
+	b.counts.dials.Add(3)
+	if st := r.Stats(); st.Dials != 5 {
+		t.Errorf("stats dials = %d, want 5 (summed)", st.Dials)
+	}
+}
+
+func TestWarmUpGoesThroughTheProxy(t *testing.T) {
+	srv, conns := tlsServer(t)
+	proxy, tunnels := connectProxy(t)
+	base := srv.Client().Transport.(*http.Transport)
+	tr := New(time.Minute, 1, 3, base.Clone)
+	tr.choice = proxydial.Choice{URL: proxy}
+	c := withClock(tr)
+	tr.spawn = func(f func()) { f() }
+	client := &http.Client{Transport: tr}
+	get(t, client, srv.URL)
+	c.t = c.t.Add(time.Minute)
+	get(t, client, srv.URL) // warms the next pool up through the proxy
+	get(t, client, srv.URL) // and uses it
+	if n, m := tunnels.Load(), conns.Load(); n != 2 || m != 2 {
+		t.Fatalf("tunnels %d, server connections %d: want 2 and 2 (first + warm, both proxied)", n, m)
+	}
+}
+
+func TestStatsString(t *testing.T) {
+	if s := (Stats{}).String(); s != "" {
+		t.Errorf("empty stats = %q", s)
+	}
+	s := Stats{Dials: 3, H2: 2, HTTP1: 1, WarmOpened: 2, WarmUsed: 1, ConnectRetries: 1}.String()
+	want := "dials 3 (h2 2, http/1.1 1); warm 2 opened, 1 used, 0 failed; retries 1 after connect failures, 0 after broken connections"
+	if s != want {
+		t.Errorf("String = %q, want %q", s, want)
 	}
 }

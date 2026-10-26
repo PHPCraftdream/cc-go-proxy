@@ -182,6 +182,10 @@ func Start(cfg *config.Config) error {
 	}
 	active, total := applyConnectionLimits(cfg)
 	fmt.Printf("   upstream connections: %d active, %d total\n", active, total)
+	if cfg.ConnectionsProxy != "" {
+		fmt.Printf("   upstream proxy: %s\n", proxyText(cfg))
+	}
+	go logUpstreamStats(logOut)
 
 	return app.Listen(addr)
 }

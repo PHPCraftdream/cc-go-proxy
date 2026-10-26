@@ -299,7 +299,7 @@ func TestStalledBackendFailsAtHeaderTimeout(t *testing.T) {
 }
 
 func TestDefaultClientHasHeaderTimeout(t *testing.T) {
-	tr, ok := HTTPClient.Transport.(*connpool.Transport)
+	tr, ok := HTTPClient.Transport.(*connpool.Router)
 	if !ok || tr.Pool().ResponseHeaderTimeout != ResponseHeaderTimeout {
 		t.Errorf("transport = %#v", HTTPClient.Transport)
 	}
