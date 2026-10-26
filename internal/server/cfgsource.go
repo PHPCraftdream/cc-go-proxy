@@ -10,8 +10,8 @@ import (
 )
 
 // cfgSource reloads config.ktav when it changes, so profiles and mappings
-// edited while the server runs apply without restart. Listen address changes
-// still need a restart.
+// edited while the server runs apply without restart, connection limits
+// included. Listen address changes still need a restart.
 type cfgSource struct {
 	mu  sync.Mutex
 	cfg *config.Config
@@ -44,6 +44,7 @@ func (s *cfgSource) get() *config.Config {
 	}
 	next.Debug, next.SimpleLog = s.cfg.Debug, s.cfg.SimpleLog
 	next.Host, next.Port = s.cfg.Host, s.cfg.Port
+	reapplyConnectionLimits(s.cfg, next)
 	s.cfg, s.mod = next, st.ModTime()
 	return s.cfg
 }

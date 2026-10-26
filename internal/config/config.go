@@ -99,6 +99,8 @@ type Config struct {
 	Port string
 	// MaxBodyMB is the request body cap in MiB (listen.max_body_mb); 0: DefaultMaxBodyMB.
 	MaxBodyMB int64
+	// Upstream connections (connections.active / .total); 0: default, see ConnectionLimits.
+	ConnectionsActive, ConnectionsTotal int64
 
 	// Env-only mode: single URL token (/call/{token}/...) for profile EnvProfile.
 	// File mode: tokens live in the creds store.

@@ -69,6 +69,7 @@ after printing the JSON.
 | `--profile add\|list\|rm` | See [configuration](configuration.md#creating-and-removing-profiles) |
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
+| `--connections [active N] [total N] [--json]` | Show or set the connections per backend (default 7 active, 10 total); see [configuration](configuration.md#layout) |
 
 ## Sessions
 

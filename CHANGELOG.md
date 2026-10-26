@@ -14,8 +14,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose
   connection breaks before the reply is sent again.
-- Parallel requests no longer share one connection: they are spread over 8 connections per backend, so one
+- Parallel requests no longer share one connection: they are spread over 7 connections per backend, so one
   busy connection does not slow down the others.
+
+### Added
+- `connections.active` / `connections.total` in config.ktav (default 7 / 10) and `ccgp --connections [active N]
+  [total N] [--json]` to show and set them: connections taking new requests, and the limit for them plus the ones
+  still finishing older requests. Applied by a running server without a restart.
 
 ## [0.2.0] - 2026-10-25
 

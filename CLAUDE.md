@@ -15,14 +15,14 @@ Guidance for Claude Code when working in this repository.
 | Path | Role |
 | --- | --- |
 | `cmd/ccgpy` | `ccgpy <profile> …`: runs the sibling `ccgp <profile> --dangerously-skip-permissions …`, nothing else |
-| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm`, `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
+| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm`, `--connections`, `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
 | `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`) with backup and loader validation |
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client |
-| `internal/connpool` | upstream transport: lanes (fewest in flight), pools renewed every 10 min at staggered times, old pools drained, one retry when the connection breaks before the reply |
+| `internal/connpool` | upstream transport: active window of lanes (fewest in flight; `connections.active`, default 7), pools renewed every 10 min at staggered times, old pools drained and capped with the active ones by `connections.total` (default 10; renewal waits, running requests are never cut), one retry when the connection breaks before the reply |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) between Claude Code config dirs; `StripThinking` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload |
 | `internal/angel` | detached background process, `/health`-based control |
@@ -31,7 +31,7 @@ Guidance for Claude Code when working in this repository.
 
 - Every model endpoint is under `/call/:token/`; unknown token → 404. Never log tokens
   (`maskToken`).
-- `config.ktav` is written only on the user's command: `ccgp --profile add` / `rm` (surgical edit through
+- `config.ktav` is written only on the user's command: `ccgp --profile add` / `rm` and `ccgp --connections` (surgical edit through
   `config.EditFile`: validated with the real loader, `config.ktav.bak-<timestamp>` backup), `ccgp --models apply`
   and the refresh after `ccgp --login` (only the marked `ccgp:managed-models` block) and `ccgp --config reset` (default
   template, old file backed up). Secrets go through `securefile.WriteFile`.

@@ -180,6 +180,8 @@ func Start(cfg *config.Config) error {
 	if cfg.IsEnvMode() {
 		fmt.Printf("   env-only mode: routing %s\n", getRoutingMode(cfg))
 	}
+	active, total := applyConnectionLimits(cfg)
+	fmt.Printf("   upstream connections: %d active, %d total\n", active, total)
 
 	return app.Listen(addr)
 }

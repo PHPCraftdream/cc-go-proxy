@@ -18,6 +18,14 @@ listen.port: 60093
 ## with 413. Needs a server restart (`ccgp --stop`) to change.
 listen.max_body_mb: 256
 
+## Connections to each backend. `active` ones take new requests, each request
+## goes to the least busy one. Every connection is replaced after 10 minutes,
+## before backends cut it, and the old one closes when its last request ends;
+## `total` caps active plus still finishing ones. Applied without a restart;
+## `ccgp --connections` shows and sets them.
+connections.active: 7
+connections.total: 10
+
 providers: [
     ## "codex": your ChatGPT subscription via OAuth (`ccgp --login codex`, or `--device` for device code).
     {

@@ -17,8 +17,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   tokens. Files are written atomically and are readable only by the current user (Windows: an explicit
   owner-only DACL; Unix: mode `0600`).
 - `config.ktav` holds no secrets. It is written only on your command (`ccgp --profile add` / `rm`,
-  `ccgp --models apply`, `ccgp --config reset`); the profile commands validate the edited text with the real loader
-  and keep a `config.ktav.bak-<timestamp>` backup first.
+  `ccgp --connections`, `ccgp --models apply`, `ccgp --config reset`); the profile and connections commands validate
+  the edited text with the real loader and keep a `config.ktav.bak-<timestamp>` backup first.
 - A rotated OAuth refresh token is persisted **before** it is used.
 
 ## Official Claude credentials never reach a ccgp session

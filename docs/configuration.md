@@ -18,6 +18,8 @@ The config is **yours**: ccgp reads it and changes it only on your command.
   overwrite each other's backup).
 - `ccgp --models apply`, and the refresh after a fresh `ccgp --login codex`, rewrite only the lines between a
   profile's `ccgp:managed-models` markers ([below](#generated-model-mappings)); no backup is made.
+- `ccgp --connections active N total N` rewrites (or adds) the `connections.active` / `connections.total` lines the
+  same way, with a backup.
 - `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
 Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens) lives in the
@@ -30,6 +32,9 @@ A running server picks up config edits without a restart; only a change of the l
 listen.host: 127.0.0.1
 listen.port: 60093
 listen.max_body_mb: 256
+
+connections.active: 7
+connections.total: 10
 
 providers: [
     {
@@ -78,6 +83,15 @@ profiles: [
 whole conversation on every call, and the reasoning signatures of a long session alone take megabytes, so a small cap
 cuts live sessions off with a connection reset. A larger body is answered with `413` and a `rejected` line in the log.
 Changing it needs `ccgp --stop` (like the listen address).
+
+`connections.active` / `connections.total`, default `7` / `10` (absent or `0`: the default): the connections ccgp
+keeps to each backend. Active connections take new requests, each request goes to the least busy one, so parallel
+sessions do not queue on one connection. Every connection takes new requests for 10 minutes and is then replaced,
+the connections in turn, before backends cut it (connections to chatgpt.com were seen to drop after 30 minutes,
+killing every request on them); the old one finishes its requests and closes with the last. `total` caps active plus
+still finishing connections: at the limit a replacement waits, a running request is never cut. `total` must not be
+below `active`. A running server applies a change on its next request. `ccgp --connections` shows the values,
+`ccgp --connections active 7 total 10` sets them.
 
 ### `providers[]`
 

@@ -147,6 +147,24 @@ Edit the new file to configure providers, profiles and model names.
 Example:
   ccgp --config reset
 `,
+	"--connections": `ccgp --connections [active N] [total N] [--json]
+
+Show or set how many connections ccgp keeps to each backend (config.ktav:
+connections.active, connections.total). Active connections take new
+requests; each request goes to the least busy one. Every connection is
+replaced after 10 minutes, before backends cut it, and the old one closes
+when its last request ends; total caps active plus still finishing ones, so
+a replacement waits while the limit is reached. A running request is never
+cut. The running server applies changes on its next request.
+
+  active N   connections taking new requests (default 7, 0: default)
+  total N    limit for active plus finishing (default 10, at least active)
+  --json     print the values as JSON
+
+Examples:
+  ccgp --connections
+  ccgp --connections active 7 total 10
+`,
 	"--update": `ccgp --update [--check]
 
 Update ccgp (and ccgpy, when installed next to it) from the latest GitHub

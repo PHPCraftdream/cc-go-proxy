@@ -201,6 +201,11 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 		if len(sub) == 0 {
 			return []string{"reset"}
 		}
+	case "--connections":
+		if prev == "active" || prev == "total" {
+			return nil
+		}
+		return []string{"active", "total", "--json"}
 	case "--completion":
 		if len(sub) == 0 {
 			return []string{"bash", "zsh", "powershell"}
