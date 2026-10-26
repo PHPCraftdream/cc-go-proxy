@@ -251,7 +251,7 @@ func TestSetProfileProxyText(t *testing.T) {
 		t.Fatalf("add: %q\nwant %q\n%v", got, want, err)
 	}
 	got2, err := SetProfileProxyText(got, "a", "none")
-	if err != nil || !strings.Contains(got2, "        proxy: none\n    }\n    {\n        name: b") || strings.Contains(got2, "socks5") {
+	if err != nil || !strings.Contains(got2, "name: a\n        provider: p\n        proxy: none\n        models: [") || strings.Contains(got2, "socks5") {
 		t.Fatalf("replace: %q, %v", got2, err)
 	}
 	if back, err := SetProfileProxyText(got, "a", ""); err != nil || back != base {

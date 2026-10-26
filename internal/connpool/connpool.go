@@ -47,8 +47,8 @@ const forgetAfter = 3 * DefaultMaxAge
 // A request whose connection could not be opened (it was never sent) is tried
 // again on other connections until retryBudget has passed since its start, with
 // retryBackoff pauses between the attempts; one whose connection broke before
-// the reply is tried again at most maxBreakRetries times. Vars so tests can
-// shorten them.
+// the reply is tried again at most maxBreakRetries times; a refused connection
+// (nobody listens) is tried once more only. Vars so tests can shorten them.
 var (
 	retryBudget     = 30 * time.Second
 	retryBackoff    = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
@@ -352,7 +352,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.learn(req)
 	start := time.Now()
 	p := t.acquire(nil)
-	breaks := 0
+	breaks, refusals := 0, 0
 	for attempt := 0; ; attempt++ {
 		r := req
 		if attempt > 0 {
@@ -375,11 +375,16 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			return resp, nil
 		}
 		connect := connectFailure(err)
-		if !retryable(req, err) || (!connect && breaks >= maxBreakRetries) || time.Since(start) >= retryBudget {
+		refused := connect && connectRefused(err)
+		if !retryable(req, err) || (!connect && breaks >= maxBreakRetries) || (refused && refusals >= 1) ||
+			time.Since(start) >= retryBudget {
 			t.release(p)
 			return nil, err
 		}
-		if !connect {
+		switch {
+		case refused:
+			refusals++ // nobody listens there: one more try, not thirty seconds of them
+		case !connect:
 			breaks++
 		}
 		if attempt > 0 && !sleep(req.Context(), backoff(attempt-1)) {
@@ -465,6 +470,16 @@ func connectFailure(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "tls handshake timeout") || strings.Contains(msg, "proxyconnect")
+}
+
+// connectRefused reports whether err says the far end refused the connection:
+// an answer, not a hiccup of the network, so it is not worth a long wait.
+func connectRefused(err error) bool {
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "connection refused") || strings.Contains(msg, "actively refused")
 }
 
 // retryable reports whether req failed because its connection could not be

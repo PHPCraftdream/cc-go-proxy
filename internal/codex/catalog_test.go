@@ -168,13 +168,14 @@ func TestPickWindowsFollowGenerations(t *testing.T) {
 		mm("gpt-6-astra", 272_000, 872_000, false),
 		mm("gpt-6.1-sol", 500_000, 872_000, false),
 		mm("gpt-6-sol", 272_000, 872_000, false),
-		mm("gpt-6-luna", 272_000, 872_000, false),
-		mm("gpt-5.6-luna", 272_000, 872_000, false),
+		mm("gpt-6-terra", 272_000, 872_000, false),
+		mm("gpt-5.6-terra", 272_000, 872_000, false),
+		mm("gpt-5.6-luna", 272_000, 872_000, false), // the only luna: Haiku is an earlier generation
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sel.Fable != "gpt-6-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6-luna" || sel.Haiku != "gpt-5.6-luna" {
+	if sel.Fable != "gpt-6-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6-terra" || sel.Haiku != "gpt-5.6-luna" {
 		t.Fatalf("selection = %+v", sel)
 	}
 	if sel.FableWindow != Gpt6InputLimit || sel.OpusWindow != Gpt6InputLimit || sel.SonnetWindow != Gpt6InputLimit || Gpt6InputLimit != 922_000 {
@@ -190,7 +191,7 @@ func TestPickKeepsALargerCatalogMax(t *testing.T) {
 	sel, err := Pick([]Model{
 		mm("gpt-6.1-sol", 500_000, 1_050_000, false),
 		mm("gpt-6-astra", 272_000, 1_050_000, false),
-		mm("gpt-6-luna", 272_000, 700_000, false),
+		mm("gpt-6-terra", 272_000, 700_000, false),
 		mm("gpt-5.6-luna", 272_000, 1_050_000, false),
 	})
 	if err != nil {

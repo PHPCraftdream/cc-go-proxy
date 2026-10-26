@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -790,5 +791,42 @@ func TestBackoffGrowsAndSettles(t *testing.T) {
 		if got := backoff(n); got != want {
 			t.Errorf("backoff(%d) = %s, want %s", n, got, want)
 		}
+	}
+}
+
+func TestRefusedConnectionIsTriedOnceMore(t *testing.T) {
+	shortRetries(t, time.Minute) // a long budget: only the refusal rule can stop the retries
+	var dials atomic.Int32
+	tr := New(time.Hour, 1, 1, func() *http.Transport {
+		return &http.Transport{DialContext: func(context.Context, string, string) (net.Conn, error) {
+			dials.Add(1)
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		}}
+	})
+	start := time.Now()
+	resp, err := (&http.Client{Transport: tr}).Post("http://127.0.0.1:1/x", "text/plain", bytes.NewReader([]byte("x")))
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("no error from a refused connection")
+	}
+	if !connectRefused(err) {
+		t.Errorf("err = %v, want the refusal", err)
+	}
+	if n := dials.Load(); n != 2 || time.Since(start) > 5*time.Second {
+		t.Errorf("dials = %d after %s: want the request and one retry", n, time.Since(start))
+	}
+}
+
+func TestConnectRefusedText(t *testing.T) {
+	for _, msg := range []string{
+		"dial tcp 127.0.0.1:1: connect: connection refused",
+		"dial tcp 127.0.0.1:1: connectex: No connection could be made because the target machine actively refused it.",
+	} {
+		if !connectRefused(errors.New(msg)) {
+			t.Errorf("%q is not a refusal", msg)
+		}
+	}
+	if connectRefused(errors.New("net/http: TLS handshake timeout")) || connectRefused(errors.New("dial tcp: i/o timeout")) {
+		t.Error("a timeout counts as a refusal")
 	}
 }
