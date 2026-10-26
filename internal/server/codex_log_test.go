@@ -147,19 +147,20 @@ func TestLogStreamFailureLine(t *testing.T) {
 	}
 }
 
-// An error event from the backend is logged raw, with the request ids.
+// An error event from the backend is logged raw, with the request ids. (Not
+// an overload: that one is retried, see TestOverloadedBackendIsAskedAgain.)
 func TestUpstreamErrorEventIsLoggedRaw(t *testing.T) {
-	ev := `{"type":"error","error":{"type":"server_error","code":"overloaded","message":"try again"},"sequence_number":3}`
+	ev := `{"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long"},"sequence_number":3}`
 	_, body, _, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("X-Request-Id", "req_123")
 		w.Header().Set("Cf-Ray", "ray-ams")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\ndata: " + ev + "\n\n"))
 	}), time.Minute)
-	if !strings.Contains(body, "codex: overloaded: try again") {
+	if !strings.Contains(body, "codex: context_length_exceeded: too long") {
 		t.Errorf("client error lacks the upstream message: %q", body)
 	}
-	for _, want := range []string{"overloaded: try again | upstream event: " + ev, "| x-request-id=req_123 cf-ray=ray-ams | conn new", "| request "} {
+	for _, want := range []string{"context_length_exceeded: too long | upstream event: " + ev, "| x-request-id=req_123 cf-ray=ray-ams | conn new", "| request "} {
 		if !strings.Contains(stream, want) {
 			t.Errorf("stream log %q lacks %q", stream, want)
 		}
