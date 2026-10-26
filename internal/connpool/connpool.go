@@ -17,6 +17,7 @@
 package connpool
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -42,6 +43,17 @@ const (
 // forgetAfter drops a draining pool from the count even if a response body
 // was never closed, so a leak cannot block renewals for good.
 const forgetAfter = 3 * DefaultMaxAge
+
+// A request whose connection could not be opened (it was never sent) is tried
+// again on other connections until retryBudget has passed since its start, with
+// retryBackoff pauses between the attempts; one whose connection broke before
+// the reply is tried again at most maxBreakRetries times. Vars so tests can
+// shorten them.
+var (
+	retryBudget     = 30 * time.Second
+	retryBackoff    = []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
+	maxBreakRetries = 2
+)
 
 // warmWait is how long a lane keeps its old pool while the next one cannot
 // open its connection; then it switches anyway and requests connect themselves.
@@ -338,23 +350,47 @@ func (t *Transport) learn(req *http.Request) {
 // RoundTrip implements http.RoundTripper.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.learn(req)
+	start := time.Now()
 	p := t.acquire(nil)
-	resp, err := p.t.RoundTrip(req)
-	if err != nil && retryable(req, err) {
-		again := req.Clone(req.Context())
-		if req.GetBody != nil {
-			rb, berr := req.GetBody()
-			if berr != nil {
-				t.release(p)
-				return nil, err
+	breaks := 0
+	for attempt := 0; ; attempt++ {
+		r := req
+		if attempt > 0 {
+			r = req.Clone(req.Context())
+			if req.GetBody != nil {
+				rb, berr := req.GetBody()
+				if berr != nil {
+					t.release(p)
+					return nil, berr
+				}
+				r.Body = rb
 			}
-			again.Body = rb
+		}
+		resp, err := p.t.RoundTrip(r)
+		if err == nil {
+			t.mu.Lock()
+			p.ready = true
+			t.mu.Unlock()
+			resp.Body = &body{ReadCloser: resp.Body, done: func() { t.release(p) }}
+			return resp, nil
+		}
+		connect := connectFailure(err)
+		if !retryable(req, err) || (!connect && breaks >= maxBreakRetries) || time.Since(start) >= retryBudget {
+			t.release(p)
+			return nil, err
+		}
+		if !connect {
+			breaks++
+		}
+		if attempt > 0 && !sleep(req.Context(), backoff(attempt-1)) {
+			t.release(p)
+			return nil, err
 		}
 		if o := observer(req.Context()); o != nil && o.Retry != nil {
 			o.Retry(err)
 		}
 		var q *pool
-		if connectFailure(err) {
+		if connect {
 			t.counts.connectRetries.Add(1)
 			q = t.acquireLive(p)
 		} else {
@@ -363,17 +399,28 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		t.release(p)
 		p = q
-		resp, err = p.t.RoundTrip(again)
 	}
-	if err != nil {
-		t.release(p)
-		return nil, err
+}
+
+// backoff is the pause before retry n (0 is the second retry; the first one
+// goes out at once).
+func backoff(n int) time.Duration {
+	if n >= len(retryBackoff) {
+		return retryBackoff[len(retryBackoff)-1]
 	}
-	t.mu.Lock()
-	p.ready = true
-	t.mu.Unlock()
-	resp.Body = &body{ReadCloser: resp.Body, done: func() { t.release(p) }}
-	return resp, nil
+	return retryBackoff[n]
+}
+
+// sleep waits d, false if ctx ended first.
+func sleep(ctx context.Context, d time.Duration) bool {
+	tm := time.NewTimer(d)
+	defer tm.Stop()
+	select {
+	case <-tm.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // CloseIdleConnections closes the idle connections of all pools.

@@ -19,8 +19,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose
   connection breaks before the reply is sent again.
-- A request no longer fails when a new connection cannot be opened in time (`TLS handshake timeout`): it goes out
-  over another connection that works. A replaced connection is opened in the background before it takes requests,
+- A request no longer fails when a new connection cannot be opened in time (`TLS handshake timeout`, a refused or
+  unreachable dial): it goes out over another connection that works, and ccgp keeps trying with growing pauses for up
+  to 30 s before it gives the 502; a connection that broke before the reply is retried up to twice. Before, there was
+  one retry. A replaced connection is opened in the background before it takes requests,
   so no request waits for a handshake.
 - When the Codex backend answers `server_is_overloaded` before sending any content, ccgp asks again after 2 s and
   then 5 s instead of passing the error on; the log shows `upstream retry`.

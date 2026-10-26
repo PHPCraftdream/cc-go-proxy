@@ -667,3 +667,128 @@ func TestStatsString(t *testing.T) {
 		t.Errorf("String = %q, want %q", s, want)
 	}
 }
+
+// shortRetries shrinks the retry budget and pauses so the tests do not wait.
+func shortRetries(t *testing.T, budget time.Duration) {
+	t.Helper()
+	oldBudget, oldBackoff := retryBudget, retryBackoff
+	retryBudget, retryBackoff = budget, []time.Duration{time.Millisecond}
+	t.Cleanup(func() { retryBudget, retryBackoff = oldBudget, oldBackoff })
+}
+
+// failingFirstDials returns a pool factory whose first n dials fail.
+func failingFirstDials(dials *atomic.Int32, n int32, base func() *http.Transport) func() *http.Transport {
+	return func() *http.Transport {
+		tr := base()
+		tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if dials.Add(1) <= n {
+				return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("unreachable")}
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}
+		return tr
+	}
+}
+
+func TestConnectFailuresRetryUntilItWorks(t *testing.T) {
+	shortRetries(t, 10*time.Second)
+	srv := okServer(t)
+	var dials atomic.Int32
+	tr := New(time.Hour, 1, 1, failingFirstDials(&dials, 3, plain))
+	get(t, &http.Client{Transport: tr}, srv.URL)
+	if n := dials.Load(); n != 4 {
+		t.Fatalf("dials = %d, want 4 (three failures, then the one that works)", n)
+	}
+	if st := tr.Stats(); st.ConnectRetries != 3 || st.BreakRetries != 0 {
+		t.Errorf("stats = %+v", st)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if n := tr.lanes[0].load(); n != 0 || len(tr.draining) != 0 {
+		t.Errorf("inflight %d, draining %d after the request", n, len(tr.draining))
+	}
+}
+
+func TestConnectRetriesStopAtTheBudget(t *testing.T) {
+	shortRetries(t, 50*time.Millisecond)
+	srv := okServer(t)
+	var dials atomic.Int32
+	tr := New(time.Hour, 1, 1, failingFirstDials(&dials, 1<<30, plain))
+	start := time.Now()
+	resp, err := (&http.Client{Transport: tr}).Post(srv.URL, "text/plain", bytes.NewReader([]byte("x")))
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("no error although no connection can be opened")
+	}
+	if !connectFailure(err) {
+		t.Errorf("err = %v, want the connect failure", err)
+	}
+	if n := dials.Load(); n < 3 || time.Since(start) > 5*time.Second {
+		t.Errorf("dials = %d after %s: want several attempts within the budget", n, time.Since(start))
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if n := tr.lanes[0].load(); n != 0 {
+		t.Errorf("inflight = %d after the failed request", n)
+	}
+}
+
+func TestBrokenConnectionRetriesAreCapped(t *testing.T) {
+	shortRetries(t, time.Minute)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = c.Close()
+		}
+	}))
+	defer srv.Close()
+	tr := New(0, 1, 1, nil)
+	resp, err := (&http.Client{Transport: tr}).Post(srv.URL, "text/plain", bytes.NewReader([]byte("x")))
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("no error from a server that always drops the connection")
+	}
+	if n := calls.Load(); n != int32(1+maxBreakRetries) {
+		t.Fatalf("calls = %d, want %d (the request and %d retries)", n, 1+maxBreakRetries, maxBreakRetries)
+	}
+	if st := tr.Stats(); st.BreakRetries != int64(maxBreakRetries) {
+		t.Errorf("stats = %+v", st)
+	}
+}
+
+func TestRetryPauseEndsWithTheContext(t *testing.T) {
+	oldBudget, oldBackoff := retryBudget, retryBackoff
+	retryBudget, retryBackoff = time.Hour, []time.Duration{time.Hour}
+	t.Cleanup(func() { retryBudget, retryBackoff = oldBudget, oldBackoff })
+	srv := okServer(t)
+	var dials atomic.Int32
+	tr := New(time.Hour, 1, 1, failingFirstDials(&dials, 1<<30, plain))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, bytes.NewReader([]byte("x")))
+	start := time.Now()
+	resp, err := (&http.Client{Transport: tr}).Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("no error")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("the pause did not end with the context (%s)", time.Since(start))
+	}
+	if n := dials.Load(); n != 2 {
+		t.Errorf("dials = %d, want 2: the immediate retry, then the pause", n)
+	}
+}
+
+func TestBackoffGrowsAndSettles(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Second, 2 * time.Second}
+	t.Cleanup(func() { retryBackoff = old })
+	for n, want := range []time.Duration{time.Second, 2 * time.Second, 2 * time.Second, 2 * time.Second} {
+		if got := backoff(n); got != want {
+			t.Errorf("backoff(%d) = %s, want %s", n, got, want)
+		}
+	}
+}
