@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sync"
 	"time"
@@ -22,28 +23,29 @@ func (e *connectError) Unwrap() error { return e.err }
 
 // warmSlot holds a connection opened ahead of the pool's first request.
 type warmSlot struct {
-	mu   sync.Mutex
-	addr string
-	conn net.Conn
-	dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	mu     sync.Mutex
+	addr   string
+	conn   net.Conn
+	opened time.Time
+	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-// take returns the warm connection to addr, once.
-func (w *warmSlot) take(addr string) net.Conn {
+// take returns the warm connection to addr, once, and when it was opened.
+func (w *warmSlot) take(addr string) (net.Conn, time.Time) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.conn == nil || w.addr != addr {
-		return nil
+		return nil, time.Time{}
 	}
 	c := w.conn
 	w.conn = nil
-	return c
+	return c, w.opened
 }
 
 func (w *warmSlot) put(addr string, c net.Conn) {
 	w.mu.Lock()
 	old := w.conn
-	w.addr, w.conn = addr, c
+	w.addr, w.conn, w.opened = addr, c, time.Now()
 	w.mu.Unlock()
 	if old != nil {
 		_ = old.Close()
@@ -93,7 +95,10 @@ func installWarmDialer(p *pool, target *url.URL) {
 		return dialTLS(ctx, netDial, network, addr, cfg, handshake)
 	}}
 	tr.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if c := w.take(addr); c != nil {
+		if c, opened := w.take(addr); c != nil {
+			if o := observer(ctx); o != nil && o.WarmConn != nil {
+				o.WarmConn(time.Since(opened))
+			}
 			return c, nil
 		}
 		return w.dial(ctx, network, addr)
@@ -102,7 +107,8 @@ func installWarmDialer(p *pool, target *url.URL) {
 }
 
 // dialTLS opens a TCP connection and completes the TLS handshake within
-// handshake (0: no limit of its own).
+// handshake (0: no limit of its own). It reports the handshake to the
+// request's httptrace, as the transport does for its own dials.
 func dialTLS(ctx context.Context, netDial func(context.Context, string, string) (net.Conn, error),
 	network, addr string, cfg *tls.Config, handshake time.Duration) (net.Conn, error) {
 	raw, err := netDial(ctx, network, addr)
@@ -122,7 +128,15 @@ func dialTLS(ctx context.Context, netDial func(context.Context, string, string) 
 		defer cancel()
 	}
 	tc := tls.Client(raw, c)
-	if err := tc.HandshakeContext(hctx); err != nil {
+	trace := httptrace.ContextClientTrace(ctx)
+	if trace != nil && trace.TLSHandshakeStart != nil {
+		trace.TLSHandshakeStart()
+	}
+	err = tc.HandshakeContext(hctx)
+	if trace != nil && trace.TLSHandshakeDone != nil {
+		trace.TLSHandshakeDone(tc.ConnectionState(), err)
+	}
+	if err != nil {
 		_ = raw.Close()
 		if ctx.Err() == nil && errors.Is(hctx.Err(), context.DeadlineExceeded) {
 			err = errors.New("TLS handshake timeout")

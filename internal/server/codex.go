@@ -15,6 +15,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/gofiber/fiber/v2"
@@ -146,7 +147,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	trace := newUpstreamTrace()
-	ctx = httptrace.WithClientTrace(ctx, trace.clientTrace())
+	ctx = connpool.WithObserver(httptrace.WithClientTrace(ctx, trace.clientTrace()), trace.observer())
 	resp, err := codex.Call(ctx, baseURL, s, req)
 	if err != nil {
 		cancel()

@@ -20,6 +20,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - When the Codex backend answers `server_is_overloaded` before sending any content, ccgp asks again after 2 s and
   then 5 s instead of passing the error on; the log shows `upstream retry`.
 - Streams the client left are logged as `stream canceled by client`, apart from real failures.
+- The timing in the log shows the real TLS handshake time of new connections (it read `tls 0s`), marks connections
+  opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
 - A Codex stream that the backend ends with an error event is logged with the backend's code and message, the raw
   event and the `x-request-id` / `cf-ray` of the response; before, such failures read only `upstream error`. The
   code and message of an `error` object inside the event also reach Claude Code now.

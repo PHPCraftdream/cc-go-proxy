@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -65,5 +66,24 @@ func TestSizeString(t *testing.T) {
 		if got := sizeString(n); got != want {
 			t.Errorf("sizeString(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+func TestTraceSummaryWarmConnAndRetry(t *testing.T) {
+	start := time.Unix(1000, 0)
+	u := &upstreamTrace{start: start}
+	ct, o := u.clientTrace(), u.observer()
+	ct.GetConn("h:443")
+	o.Retry(errors.New("unexpected EOF"))
+	ct.GetConn("h:443") // the retry
+	o.WarmConn(45 * time.Second)
+	got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
+	want := "conn warm (opened 45s before), 2 upstream calls, retried after: unexpected EOF | total 1s | request 10 B"
+	if got != want {
+		t.Errorf("summary = %q\nwant      %q", got, want)
+	}
+	ct.GetConn("h:443")
+	if u.warm {
+		t.Error("a new attempt keeps the warm flag of the last one")
 	}
 }

@@ -3,12 +3,16 @@ package connpool
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -244,9 +248,15 @@ func TestRetryWhenConnectionDropsBeforeReply(t *testing.T) {
 	defer srv.Close()
 
 	tr := New(0, 1, 1, nil)
-	resp, err := (&http.Client{Transport: tr}).Post(srv.URL, "text/plain", bytes.NewReader([]byte("payload")))
+	var retried error
+	ctx := WithObserver(context.Background(), &Observer{Retry: func(err error) { retried = err }})
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, bytes.NewReader([]byte("payload")))
+	resp, err := (&http.Client{Transport: tr}).Do(req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if retried == nil {
+		t.Error("observer not told about the retry")
 	}
 	b, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -377,7 +387,16 @@ func okServer(t *testing.T) *httptest.Server {
 
 func get(t *testing.T, c *http.Client, url string) {
 	t.Helper()
-	resp, err := c.Post(url, "text/plain", bytes.NewReader([]byte("x")))
+	getCtx(t, c, url, context.Background())
+}
+
+func getCtx(t *testing.T, c *http.Client, url string, ctx context.Context) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +451,16 @@ func TestLaneSwitchesToAWarmPool(t *testing.T) {
 	tr.spawn = func(f func()) { f() }
 	client := &http.Client{Transport: tr}
 
-	get(t, client, srv.URL)
+	var handshakes []string
+	traced := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+		TLSHandshakeStart: func() { handshakes = append(handshakes, "start") },
+		TLSHandshakeDone:  func(_ tls.ConnectionState, err error) { handshakes = append(handshakes, fmt.Sprint("done ", err)) },
+	})
+	getCtx(t, client, srv.URL, traced) // dialed by connpool's own TLS dialer
+	// The real handshake first; the transport then reports its own, empty one.
+	if !strings.HasPrefix(strings.Join(handshakes, ","), "start,done <nil>") {
+		t.Fatalf("TLS trace = %v, want start and a clean done first", handshakes)
+	}
 	first := tr.lanes[0].cur
 	c.t = c.t.Add(time.Minute)
 	get(t, client, srv.URL) // due: the next pool warms up, this request stays on the old one
@@ -442,7 +470,11 @@ func TestLaneSwitchesToAWarmPool(t *testing.T) {
 	if n := conns.Load(); n != 2 {
 		t.Fatalf("connections = %d, want 2 (old + warm)", n)
 	}
-	get(t, client, srv.URL) // switches and uses the warm connection
+	warmAge := time.Duration(-1)
+	getCtx(t, client, srv.URL, WithObserver(context.Background(), &Observer{WarmConn: func(age time.Duration) { warmAge = age }}))
+	if warmAge < 0 {
+		t.Fatal("observer not told about the warm connection")
+	}
 	if tr.lanes[0].cur == first || tr.lanes[0].warming != nil {
 		t.Fatal("lane did not switch to the warm pool")
 	}

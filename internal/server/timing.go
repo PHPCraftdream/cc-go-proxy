@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 )
 
 // A stream is logged as slow when the backend's reply headers take at least
@@ -29,6 +30,9 @@ type upstreamTrace struct {
 	connect time.Duration
 	tls     time.Duration
 	headers time.Time
+	warm    bool          // the connection was opened ahead (connpool)
+	warmAge time.Duration // how long before
+	retry   string        // why the first attempt was sent again
 
 	dnsStart, connStart, tlsStart time.Time
 }
@@ -42,7 +46,10 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 		u.mu.Unlock()
 	}
 	return &httptrace.ClientTrace{
-		GetConn: func(string) { at(func(time.Time) { u.calls++ }) },
+		GetConn: func(string) {
+			// The connection details describe the last attempt.
+			at(func(time.Time) { u.calls++; u.warm, u.dns, u.connect, u.tls = false, 0, 0, 0 })
+		},
 		GotConn: func(i httptrace.GotConnInfo) {
 			at(func(time.Time) { u.reused, u.idle = i.Reused, i.IdleTime })
 		},
@@ -52,9 +59,27 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 		ConnectDone:       func(string, string, error) { at(func(t time.Time) { u.connect = t.Sub(u.connStart) }) },
 		TLSHandshakeStart: func() { at(func(t time.Time) { u.tlsStart = t }) },
 		TLSHandshakeDone: func(tls.ConnectionState, error) {
-			at(func(t time.Time) { u.tls = t.Sub(u.tlsStart) })
+			// Summed: with connpool's own TLS dialer the transport reports a
+			// second, empty handshake after the real one.
+			at(func(t time.Time) { u.tls += t.Sub(u.tlsStart) })
 		},
 		GotFirstResponseByte: func() { at(func(t time.Time) { u.headers = t }) },
+	}
+}
+
+// observer reports the warm connections and retries of connpool.
+func (u *upstreamTrace) observer() *connpool.Observer {
+	return &connpool.Observer{
+		WarmConn: func(age time.Duration) {
+			u.mu.Lock()
+			u.warm, u.warmAge = true, age
+			u.mu.Unlock()
+		},
+		Retry: func(err error) {
+			u.mu.Lock()
+			u.retry = err.Error()
+			u.mu.Unlock()
+		},
 	}
 }
 
@@ -72,11 +97,17 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	defer u.mu.Unlock()
 	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
 	conn := "conn new (dns " + r(u.dns) + ", connect " + r(u.connect) + ", tls " + r(u.tls) + ")"
-	if u.reused {
+	switch {
+	case u.reused:
 		conn = "conn reused (idle " + r(u.idle) + ")"
+	case u.warm:
+		conn = "conn warm (opened " + r(u.warmAge) + " before)"
 	}
 	if u.calls > 1 {
 		conn += fmt.Sprintf(", %d upstream calls", u.calls)
+	}
+	if u.retry != "" {
+		conn += ", retried after: " + oneLine(u.retry, 200)
 	}
 	waits := []string{}
 	if !u.headers.IsZero() {

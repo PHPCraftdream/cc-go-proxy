@@ -37,8 +37,9 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
   any content, so ccgp sends the request again after the pause (2 s, then 5 s); Claude Code just waits longer.
   Only when the retries run out does the stream fail.
 
-The timing: `conn new (dns, connect, tls)` or `conn reused (idle …)` and the number of upstream calls when there was
-more than one (a retry after a broken connection, a token refresh); then, from the start of the call, `headers`,
+The timing: `conn new (dns, connect, tls)`, `conn reused (idle …)` or `conn warm (opened … before)` (a connection
+opened in the background for this lane), the number of upstream calls when there was more than one (a retry, a
+token refresh) and `retried after: <error>` when the first attempt failed; then, from the start of the call, `headers`,
 `first token` (first thinking, text or tool input) and `total`; the request size; the tokens (input, cached, output,
 reasoning). Long `headers` with a reused connection means the backend was slow to start; a long gap from `headers` to
 `first token` is the model reading a long prompt (input tokens) or thinking (reasoning tokens); a long `total` after

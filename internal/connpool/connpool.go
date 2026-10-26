@@ -340,6 +340,9 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			again.Body = rb
 		}
+		if o := observer(req.Context()); o != nil && o.Retry != nil {
+			o.Retry(err)
+		}
 		var q *pool
 		if connectFailure(err) {
 			q = t.acquireLive(p)
