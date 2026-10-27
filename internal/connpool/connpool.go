@@ -18,6 +18,7 @@ package connpool
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -74,6 +75,7 @@ type Transport struct {
 	target   *url.URL         // scheme and host of the latest https request: what to warm up
 	choice   proxydial.Choice // the way out of every pool of this Transport
 	counts   counters
+	tlsCache tls.ClientSessionCache // TLS sessions of every pool: a new connection resumes one
 }
 
 // lane is one slot of the active window.
@@ -105,7 +107,8 @@ func New(maxAge time.Duration, active, total int, newT func() *http.Transport) *
 	if newT == nil {
 		newT = func() *http.Transport { return http.DefaultTransport.(*http.Transport).Clone() }
 	}
-	t := &Transport{maxAge: maxAge, newT: newT, now: time.Now, spawn: func(f func()) { go f() }}
+	t := &Transport{maxAge: maxAge, newT: newT, now: time.Now, spawn: func(f func()) { go f() },
+		tlsCache: tls.NewLRUClientSessionCache(64)}
 	t.SetLimits(active, total)
 	return t
 }
@@ -166,8 +169,9 @@ func (t *Transport) newPoolLocked() *pool {
 	Harden(p.t, healthPing, healthTimeout)
 	proxydial.Apply(p.t, t.choice)
 	if t.target != nil {
-		installWarmDialer(p, t.target, &t.counts)
+		installWarmDialer(p, t.target, &t.counts, t.tlsCache)
 	}
+	resumeTLS(p.t, t.tlsCache)
 	return p
 }
 

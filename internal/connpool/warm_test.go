@@ -1,6 +1,8 @@
 package connpool
 
 import (
+	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/url"
@@ -181,5 +183,79 @@ func TestWarmUpOfARemovedLaneIsDropped(t *testing.T) {
 	}
 	if next.warm.conn != nil {
 		t.Error("the connection of a dropped warm-up is still held")
+	}
+}
+
+// A new connection resumes the TLS session of an earlier one: the handshake,
+// the slow part on a bad network, is short.
+func TestNewConnectionResumesTheTLSSession(t *testing.T) {
+	srv, _ := tlsServer(t)
+	base := srv.Client().Transport.(*http.Transport)
+	tr := New(time.Minute, 1, 3, base.Clone)
+	c := withClock(tr)
+	tr.spawn = func(f func()) { f() }
+	client := &http.Client{Transport: tr}
+
+	get(t, client, srv.URL) // a full handshake; the server hands out a session ticket
+	if st := tr.Stats(); st.Dials != 1 || st.Resumed != 0 {
+		t.Fatalf("first connection: %+v, want 1 dial, none resumed", st)
+	}
+	c.t = c.t.Add(time.Minute)
+	get(t, client, srv.URL) // the next pool's warm-up opens a second connection
+	if st := tr.Stats(); st.Dials != 1 || st.Resumed != 1 {
+		t.Errorf("second connection: %+v, want 1 dial, resumed", st)
+	}
+}
+
+func TestResumeTLSOnlyWhereItIsSafe(t *testing.T) {
+	cache := tls.NewLRUClientSessionCache(1)
+
+	plain := &http.Transport{}
+	resumeTLS(plain, cache)
+	if plain.TLSClientConfig != nil {
+		t.Error("a transport without a TLS config got one: that would switch HTTP/2 off")
+	}
+
+	h2 := &http.Transport{ForceAttemptHTTP2: true}
+	resumeTLS(h2, cache)
+	if h2.TLSClientConfig == nil || h2.TLSClientConfig.ClientSessionCache != cache {
+		t.Error("an HTTP/2 transport got no session cache")
+	}
+
+	shared := &tls.Config{ServerName: "x"}
+	own := &http.Transport{TLSClientConfig: shared}
+	resumeTLS(own, cache)
+	if own.TLSClientConfig.ClientSessionCache != cache || own.TLSClientConfig.ServerName != "x" {
+		t.Error("an own TLS config lost its settings or got no cache")
+	}
+	if shared.ClientSessionCache != nil {
+		t.Error("the shared config of the base transport was changed")
+	}
+
+	mine := tls.NewLRUClientSessionCache(1)
+	keep := &http.Transport{TLSClientConfig: &tls.Config{ClientSessionCache: mine}}
+	resumeTLS(keep, cache)
+	if keep.TLSClientConfig.ClientSessionCache != mine {
+		t.Error("an own session cache was replaced")
+	}
+
+	dialer := &http.Transport{ForceAttemptHTTP2: true, DialTLSContext: func(context.Context, string, string) (net.Conn, error) { return nil, nil }}
+	resumeTLS(dialer, cache)
+	if dialer.TLSClientConfig != nil {
+		t.Error("a transport with its own TLS dialer was changed")
+	}
+	resumeTLS(&http.Transport{ForceAttemptHTTP2: true}, nil) // no cache: nothing to do, no panic
+}
+
+func TestStatsStringShowsResumedSessions(t *testing.T) {
+	got := Stats{Dials: 4, H2: 4, Resumed: 3}.String()
+	if want := "dials 4 (h2 4, http/1.1 0, 3 resumed)"; got != want {
+		t.Errorf("String = %q, want %q", got, want)
+	}
+	var sum Stats
+	sum.add(Stats{Resumed: 1})
+	sum.add(Stats{Resumed: 2})
+	if sum.Resumed != 3 {
+		t.Errorf("add lost the resumed count: %+v", sum)
 	}
 }

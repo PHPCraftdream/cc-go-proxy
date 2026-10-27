@@ -34,16 +34,19 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
-  (`dials 3 (h2 2, http/1.1 1)`: how many and the protocol they agreed on), background warm-ups (`opened`, `used`,
+  (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below
   `opened`, or `http/1.1` where `h2` is expected, shows a connection problem before it becomes errors.
 - `upstream rate limit: retrying in …`: the backend answered 429 with a `Retry-After` of up to 5 s, so ccgp waited it
   out and asked once more. The line lists the limit headers (`retry-after`, `x-ratelimit-*`, `*reset*`, `x-codex-*`);
   a longer `Retry-After` is passed on to Claude Code in the 429 reply (header included) and the limits go to the log
   line of the 429.
-- `upstream retry N/M in …`: the backend said it is overloaded (`server_is_overloaded` and similar) before sending
-  any content, so ccgp sends the request again after the pause (2 s, then 5 s); Claude Code just waits longer.
-  Only when the retries run out does the stream fail.
+- `upstream retry N/M in …`: the stream failed before ccgp had sent any content to Claude Code, so ccgp sends the
+  request again after a pause and Claude Code just waits longer. Two kinds, each with its own budget: the backend
+  said it is overloaded (`server_is_overloaded` and similar; pauses of 2 s, then 5 s), or the connection broke
+  (`stream read error: unexpected EOF`, `http2: client connection lost`, a stream that ends early; pauses of 0.3 s,
+  then 2 s). Only when the retries run out does the stream fail. A stream that already sent content is never
+  started over, and neither is one the client canceled.
 - `upstream reconnect N after …`: the connection of an attempt failed (could not open, or broke before the reply) and
   ccgp sent the request over another one. One line per retry, with the error and the kind of connection the failed
   try was on; the client sees nothing unless the retries run out. Lines with the same error in a row, or many

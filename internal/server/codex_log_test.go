@@ -120,6 +120,7 @@ func TestUpstreamErrorMessageIsLogged(t *testing.T) {
 }
 
 func TestBrokenStreamIsLogged(t *testing.T) {
+	fastRetries(t, 2)
 	status, body, _, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"))
@@ -200,12 +201,13 @@ func overloadBackend(calls *atomic.Int32, overloadedCalls int32) http.Handler {
 }
 
 func fastRetries(t *testing.T, n int) {
-	old := overloadBackoff
+	old, oldBroken := overloadBackoff, brokenBackoff
 	overloadBackoff = make([]time.Duration, n)
-	for i := range overloadBackoff {
-		overloadBackoff[i] = time.Millisecond
+	brokenBackoff = make([]time.Duration, n)
+	for i := 0; i < n; i++ {
+		overloadBackoff[i], brokenBackoff[i] = time.Millisecond, time.Millisecond
 	}
-	t.Cleanup(func() { overloadBackoff = old })
+	t.Cleanup(func() { overloadBackoff, brokenBackoff = old, oldBroken })
 }
 
 func TestOverloadedBackendIsAskedAgain(t *testing.T) {

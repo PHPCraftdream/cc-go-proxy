@@ -19,8 +19,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose
   connection breaks before the reply is sent again.
-- HTTP/2 connections to the backends send a health ping when they have been quiet for 15 seconds and are closed when
-  it is not answered within 5: a connection that a proxy program or an antivirus killed silently while it was idle no
+- HTTP/2 connections to the backends send a health ping when they have been quiet for 30 seconds and are closed when
+  it is not answered within 15 (shorter limits cut streams that only waited for a slow backend): a connection that a proxy program or an antivirus killed silently while it was idle no
   longer fails the next request (it was one retry each time: `wsasend: An established connection was aborted by the
   software in your host machine`). The log of a retried request says what kind of connection its first try was on.
 - A 429 from the Codex backend with a `Retry-After` of up to 5 seconds is waited out once and the request is sent
@@ -38,6 +38,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
 - The first launch of a profile that has no sessions copies the latest session of the current directory from your
   Claude Code (like `ccgp --import <profile> 1`), so `/resume` and `-c` can continue the work at once.
+- A Codex stream whose connection breaks before ccgp has sent any content to Claude Code (`unexpected EOF`,
+  `http2: client connection lost`, a stream that ends early) is sent again, up to twice after 0.3 s and 2 s, instead
+  of failing; the log shows `upstream retry N/2` with the reason. Streams that already sent content, and canceled
+  ones, are never retried.
+- New TLS connections resume the sessions of earlier ones (a short handshake instead of the full one, which was
+  taking 1 to 4 s on a bad network); `upstream stats` shows how many resumed.
 - A connection opened in the background no longer waits minutes for its first request: the lane switches to it as
   soon as it is open, the next request on equally busy lanes prefers it, and one that has waited over 20 s is
   closed and replaced by a fresh dial. Idle bare-TLS connections were being aborted on the way ("An established

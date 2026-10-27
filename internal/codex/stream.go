@@ -3,6 +3,7 @@ package codex
 import (
 	"bufio"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,6 +93,11 @@ type Translator struct {
 	// stream through the same Translator.
 	AllowRetry bool
 	Retry      string
+	// AllowTransportRetry does the same for a broken connection: a read error or
+	// a stream that ends early, while no content block has been sent.
+	// RetryTransport then tells which kind the last ErrRetry was.
+	AllowTransportRetry bool
+	RetryTransport      bool
 
 	started bool
 	next    int
@@ -133,13 +139,35 @@ func (t *Translator) Run(r io.Reader) error {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		t.fail("stream read error: " + err.Error())
+		msg := "stream read error: " + err.Error()
+		if t.canRetryTransport() && transportError(err) {
+			t.Retry, t.RetryTransport = msg, true
+			return ErrRetry
+		}
+		t.fail(msg)
 		return err
 	}
 	if !t.done {
+		if t.canRetryTransport() {
+			t.Retry, t.RetryTransport = "upstream stream ended before completion", true
+			return ErrRetry
+		}
 		t.fail("upstream stream ended before completion")
 	}
 	return nil
+}
+
+// canRetryTransport reports whether a broken stream may be asked for again:
+// retries are allowed and the client has seen no content yet.
+func (t *Translator) canRetryTransport() bool {
+	return t.AllowTransportRetry && t.next == 0 && !t.done
+}
+
+// transportError reports whether a read error is the connection's fault. A
+// canceled request (the client left) and an oversized line are not.
+func transportError(err error) bool {
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) &&
+		!errors.Is(err, bufio.ErrTooLong) && !strings.Contains(err.Error(), "context canceled")
 }
 
 func (t *Translator) start(id string) {
@@ -252,7 +280,7 @@ func overloaded(code, typ string) bool {
 // worth one, retries are allowed and no content was sent yet.
 func (t *Translator) failOrRetry(worth bool, msg string) {
 	if worth && t.AllowRetry && t.next == 0 && !t.done {
-		t.Retry, t.retry = msg, true
+		t.Retry, t.retry, t.RetryTransport = msg, true, false
 		return
 	}
 	t.fail(msg)

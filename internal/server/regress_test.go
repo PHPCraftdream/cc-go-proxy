@@ -157,7 +157,7 @@ func TestLogLineShapes(t *testing.T) {
 		{"canceled", line(func(w io.Writer) { logStreamCanceled(w, start, "codex", "a -> b", "conn new") }),
 			`^` + hms + `stream canceled by client after \S+ \[codex\] a -> b: conn new\n$`},
 		{"overload retry", line(func(w io.Writer) {
-			logUpstreamRetry(w, "codex", "a -> b", 1, 2*time.Second, "overloaded", `{"x":1}`, "cf-ray=1")
+			logUpstreamRetry(w, "codex", "a -> b", 1, 2, 2*time.Second, "overloaded", `{"x":1}`, "cf-ray=1")
 		}), `^` + hms + `upstream retry 1/2 in 2s \[codex\] a -> b: overloaded \| upstream event: \{"x":1\} \| cf-ray=1\n$`},
 		{"reconnect", line(func(w io.Writer) {
 			logReconnect(w, "codex", "a -> b", 2, 1500*time.Millisecond, "wsasend: aborted", "reused, idle 52s, pool 8m12s")
@@ -180,5 +180,74 @@ func TestProxyTextHidesThePassword(t *testing.T) {
 	}
 	if got := proxyText(&config.Config{}); got != "none" {
 		t.Errorf("no proxy: %q", got)
+	}
+}
+
+// brokenBackend cuts the connection in the middle of the stream on its first
+// brokenCalls calls (after some text when withText), then answers in full.
+func brokenBackend(calls *atomic.Int32, brokenCalls int32, withText bool) http.Handler {
+	full := overloadBackend(new(atomic.Int32), 0)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) > brokenCalls {
+			full.ServeHTTP(w, r)
+			return
+		}
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		out := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"
+		if withText {
+			out += "data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"m\",\"type\":\"message\"}}\n\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"m\",\"delta\":\"half an answ\"}\n\n"
+		}
+		_, _ = w.Write([]byte(out))
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // the connection dies mid-stream
+	})
+}
+
+// A connection that breaks before the client got any content costs the client
+// only a pause: the request is sent again over a new connection.
+func TestBrokenConnectionBeforeContentIsAskedAgain(t *testing.T) {
+	fastRetries(t, 2)
+	var calls atomic.Int32
+	status, body, _, stream := codexCall(t, brokenBackend(&calls, 1, false), time.Minute)
+	if status != fiber.StatusOK || strings.Contains(body, "event: error") || !strings.Contains(body, "message_stop") || !strings.Contains(body, "\"hi\"") {
+		t.Fatalf("status %d, body %q: want a complete stream", status, body)
+	}
+	if strings.Count(body, "event: message_start") != 1 {
+		t.Errorf("body %q: want one message_start", body)
+	}
+	if calls.Load() != 2 || !strings.Contains(stream, "upstream retry 1/2 in 1ms") || !strings.Contains(stream, "stream read error") {
+		t.Errorf("calls %d, log %q", calls.Load(), stream)
+	}
+	if strings.Contains(stream, "stream failed") {
+		t.Errorf("a retried stream is logged as failed: %q", stream)
+	}
+}
+
+// Once the client holds part of the answer the request is not started over.
+func TestBrokenConnectionAfterContentIsNotAskedAgain(t *testing.T) {
+	fastRetries(t, 2)
+	var calls atomic.Int32
+	_, body, _, stream := codexCall(t, brokenBackend(&calls, 10, true), time.Minute)
+	if !strings.Contains(body, "half an answ") || !strings.Contains(body, "event: error") {
+		t.Fatalf("body %q: want the partial answer and the error", body)
+	}
+	if calls.Load() != 1 || strings.Contains(stream, "upstream retry") || !strings.Contains(stream, "stream failed") {
+		t.Errorf("calls %d, log %q", calls.Load(), stream)
+	}
+}
+
+// A backend that keeps cutting the connection gets its two retries, then the
+// client gets the error.
+func TestBrokenConnectionRetriesRunOut(t *testing.T) {
+	fastRetries(t, 2)
+	var calls atomic.Int32
+	_, body, _, stream := codexCall(t, brokenBackend(&calls, 10, false), time.Minute)
+	if !strings.Contains(body, "event: error") {
+		t.Fatalf("body %q: want the error after the retries", body)
+	}
+	if calls.Load() != 3 || !strings.Contains(stream, "upstream retry 2/2") || !strings.Contains(stream, "stream failed") {
+		t.Errorf("calls %d, log %q", calls.Load(), stream)
 	}
 }

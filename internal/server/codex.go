@@ -53,6 +53,10 @@ func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detai
 // overloadBackoff is the pause before each retry of an overloaded backend.
 var overloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
 
+// brokenBackoff is the pause before each retry of a stream whose connection broke
+// before it sent any content. Short: the next try opens another connection.
+var brokenBackoff = []time.Duration{300 * time.Millisecond, 2 * time.Second}
+
 // callAfter waits, then calls; a non-2xx reply is an error.
 func callAfter(ctx context.Context, wait time.Duration, call func() (*http.Response, error)) (*http.Response, error) {
 	select {
@@ -72,14 +76,15 @@ func callAfter(ctx context.Context, wait time.Duration, call func() (*http.Respo
 	return resp, nil
 }
 
-// logUpstreamRetry prints the line for a stream sent again after an overload.
-func logUpstreamRetry(w io.Writer, profile, model string, attempt int, wait time.Duration, reason, detail, ids string) {
+// logUpstreamRetry prints the line for a stream sent again after an overload or
+// a broken connection; attempt counts of max.
+func logUpstreamRetry(w io.Writer, profile, model string, attempt, max int, wait time.Duration, reason, detail, ids string) {
 	line := oneLine(reason, maxLogErr)
 	if detail != "" {
 		line += " | upstream event: " + oneLine(detail, maxLogDetail)
 	}
 	_, _ = fmt.Fprintf(w, "[%s] upstream retry %d/%d in %s [%s] %s: %s\n", time.Now().Format("15:04:05"),
-		attempt, len(overloadBackoff), wait, profile, model, joinNonEmpty(line, ids))
+		attempt, max, wait, profile, model, joinNonEmpty(line, ids))
 }
 
 // logReconnect prints the line for a request ccgp sent again because its
@@ -234,15 +239,28 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 				cancel() // client gone: abort upstream
 			}
 		}}
-		// An overloaded backend that has sent no content yet is asked again
-		// after a pause; the client only waits longer.
-		for attempt := 0; ; attempt++ {
-			tr.AllowRetry = attempt < len(overloadBackoff)
+		// An overloaded backend, or a connection that broke, before any content
+		// was sent: the request is asked again after a pause; the client only
+		// waits longer. Each kind has its own budget.
+		overloads, breaks := 0, 0
+		for {
+			tr.AllowRetry = overloads < len(overloadBackoff)
+			tr.AllowTransportRetry = breaks < len(brokenBackoff)
 			if err := tr.Run(upstream.Body); !errors.Is(err, codex.ErrRetry) {
 				break
 			}
-			wait := overloadBackoff[attempt]
-			logUpstreamRetry(logOut, profile, mapped, attempt+1, wait, tr.Retry, tr.Detail, upstreamIDs(upstream.Header))
+			var wait time.Duration
+			var n, max int
+			if tr.RetryTransport {
+				wait, max = brokenBackoff[breaks], len(brokenBackoff)
+				breaks++
+				n = breaks
+			} else {
+				wait, max = overloadBackoff[overloads], len(overloadBackoff)
+				overloads++
+				n = overloads
+			}
+			logUpstreamRetry(logOut, profile, mapped, n, max, wait, tr.Retry, tr.Detail, upstreamIDs(upstream.Header))
 			tr.Detail = ""
 			if tr.Started() {
 				tr.Emit("ping", map[string]any{"type": "ping"})

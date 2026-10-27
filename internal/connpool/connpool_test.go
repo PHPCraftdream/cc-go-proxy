@@ -535,12 +535,12 @@ func TestFailedWarmUpSwitchesAfterWait(t *testing.T) {
 func TestNoWarmUpThroughAProxy(t *testing.T) {
 	target := &url.URL{Scheme: "https", Host: "example.com"}
 	p := &pool{t: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return url.Parse("http://proxy:8080") }}}
-	installWarmDialer(p, target, nil)
+	installWarmDialer(p, target, nil, nil)
 	if p.warm != nil || p.t.DialTLSContext != nil {
 		t.Fatal("warm dialer installed behind a proxy")
 	}
 	q := &pool{t: &http.Transport{}}
-	installWarmDialer(q, target, nil)
+	installWarmDialer(q, target, nil, nil)
 	if q.warm == nil || q.t.DialTLSContext == nil {
 		t.Fatal("no warm dialer without a proxy")
 	}

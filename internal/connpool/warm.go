@@ -84,7 +84,7 @@ func (w *warmSlot) close() {
 // installWarmDialer makes p's transport open its TLS connections itself, so a
 // connection opened ahead for target can be handed to it. Pools with their own
 // TLS dialer or a proxy for target keep the transport's dialing.
-func installWarmDialer(p *pool, target *url.URL, counts *counters) {
+func installWarmDialer(p *pool, target *url.URL, counts *counters, cache tls.ClientSessionCache) {
 	tr := p.t
 	if tr.DialTLSContext != nil || tr.DialTLS != nil { //nolint:staticcheck // DialTLS still counts
 		return
@@ -97,6 +97,9 @@ func installWarmDialer(p *pool, target *url.URL, counts *counters) {
 	cfg := &tls.Config{}
 	if tr.TLSClientConfig != nil {
 		cfg = tr.TLSClientConfig.Clone()
+	}
+	if cfg.ClientSessionCache == nil {
+		cfg.ClientSessionCache = cache
 	}
 	if len(cfg.NextProtos) == 0 {
 		cfg.NextProtos = []string{"http/1.1"}
@@ -112,7 +115,7 @@ func installWarmDialer(p *pool, target *url.URL, counts *counters) {
 	w := &warmSlot{dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		c, err := dialTLS(ctx, netDial, network, addr, cfg, handshake)
 		if tc, ok := c.(*tls.Conn); ok && counts != nil {
-			counts.dialed(tc.ConnectionState().NegotiatedProtocol)
+			counts.dialed(tc.ConnectionState())
 		}
 		return c, err
 	}}
@@ -129,6 +132,25 @@ func installWarmDialer(p *pool, target *url.URL, counts *counters) {
 		return w.dial(ctx, network, addr)
 	}
 	p.warm = w
+}
+
+// resumeTLS lets tr, when it does its own TLS (no custom TLS dialer), resume the
+// sessions of earlier connections: a new connection then skips most of the
+// handshake, which on a bad network is the slow part. A transport that would not
+// negotiate HTTP/2 with a TLS config of its own is left alone.
+func resumeTLS(tr *http.Transport, cache tls.ClientSessionCache) {
+	if cache == nil || tr.DialTLSContext != nil || tr.DialTLS != nil { //nolint:staticcheck // DialTLS still counts
+		return
+	}
+	switch {
+	case tr.TLSClientConfig != nil:
+		if tr.TLSClientConfig.ClientSessionCache == nil {
+			tr.TLSClientConfig = tr.TLSClientConfig.Clone()
+			tr.TLSClientConfig.ClientSessionCache = cache
+		}
+	case tr.ForceAttemptHTTP2:
+		tr.TLSClientConfig = &tls.Config{ClientSessionCache: cache}
+	}
 }
 
 // dialTLS opens a TCP connection and completes the TLS handshake within
