@@ -38,6 +38,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
 - The first launch of a profile that has no sessions copies the latest session of the current directory from your
   Claude Code (like `ccgp --import <profile> 1`), so `/resume` and `-c` can continue the work at once.
+- A connection opened in the background no longer waits minutes for its first request: the lane switches to it as
+  soon as it is open, the next request on equally busy lanes prefers it, and one that has waited over 20 s is
+  closed and replaced by a fresh dial. Idle bare-TLS connections were being aborted on the way ("An established
+  connection was aborted by the software in your host machine"), costing a retry each time. A lane removed by a
+  config reload while its warm-up ran could be switched to the new pool; it no longer is.
 - Every retry after a connection failure gets its own log line, `upstream reconnect N after …`, with the error and
   the kind of connection the failed try was on; before, a request saved by a retry showed only in the 10-minute
   counters. The timing also shows the age of the connection's pool (`pool 8m12s`), so a dropped connection can be

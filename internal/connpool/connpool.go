@@ -147,6 +147,7 @@ func (t *Transport) SetLimits(active, total int) {
 		}
 		if l.warming != nil {
 			idle = append(idle, l.warming)
+			l.warming = nil // its warm-up must not switch a lane that is gone
 		}
 	}
 	for i := len(t.lanes); i < active; i++ {
@@ -207,16 +208,14 @@ func (t *Transport) sweepLocked(now time.Time, idle []*pool) []*pool {
 	return idle
 }
 
-// renewLocked looks after a lane whose pool is due: it switches to a warm next
-// pool, starts warming one when there is room, or, without a warm-up (or after
-// warmWait), switches to a fresh pool directly. It returns a warm-up to start.
+// renewLocked looks after a lane whose pool is due: it starts warming the next
+// pool when there is room (warmUp then switches the lane), or, without a
+// warm-up (or after warmWait), switches to a fresh pool directly. It returns a
+// warm-up to start.
 func (t *Transport) renewLocked(l *lane, now time.Time, idle []*pool) ([]*pool, func()) {
 	room := l.cur.inflight == 0 || t.poolsLocked() < t.total
 	switch {
-	case l.warming != nil && l.warming.ready:
-		idle = t.retireLocked(l.cur, now, idle)
-		l.cur, l.born, l.warming = l.warming, now, nil
-	case l.warming != nil:
+	case l.warming != nil: // warmUp switches the lane itself once the connection is open
 		if now.Sub(l.warmSince) >= warmWait {
 			idle = append(idle, l.warming)
 			l.warming = nil
@@ -261,7 +260,9 @@ func (t *Transport) acquire(failed *pool) *pool {
 		t.next++
 		for i := range t.lanes {
 			c := t.lanes[(t.next+i)%len(t.lanes)]
-			if l == nil || c.load() < l.load() {
+			// Fewest in flight; among equals the lane holding a fresh warm
+			// connection, so that it is used before it goes stale.
+			if l == nil || c.load() < l.load() || (c.load() == l.load() && c.warmReady() && !l.warmReady()) {
 				l = c
 			}
 		}
@@ -300,6 +301,12 @@ func (t *Transport) acquireLive(failed *pool) *pool {
 	p.inflight++
 	t.mu.Unlock()
 	return p
+}
+
+// warmReady reports whether the lane's pool holds a warm connection that nobody
+// took yet and that is still fresh.
+func (l *lane) warmReady() bool {
+	return l.cur != nil && l.cur.warm != nil && l.cur.warm.fresh()
 }
 
 func (l *lane) load() int {

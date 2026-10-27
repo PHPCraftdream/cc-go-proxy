@@ -472,20 +472,24 @@ func TestLaneSwitchesToAWarmPool(t *testing.T) {
 	}
 	first := tr.lanes[0].cur
 	c.t = c.t.Add(time.Minute)
-	get(t, client, srv.URL) // due: the next pool warms up, this request stays on the old one
-	if tr.lanes[0].cur != first || tr.lanes[0].warming == nil || !tr.lanes[0].warming.ready {
-		t.Fatal("no warm next pool while the old one serves")
+	get(t, client, srv.URL) // due: the next pool warms up and takes the lane at once, this request stays on the old one
+	if tr.lanes[0].cur == first || tr.lanes[0].warming != nil || !tr.lanes[0].cur.ready {
+		t.Fatal("the lane did not switch to the warm pool as soon as it was open")
 	}
 	if n := conns.Load(); n != 2 {
 		t.Fatalf("connections = %d, want 2 (old + warm)", n)
 	}
+	if len(tr.draining) != 0 {
+		t.Fatalf("the old pool still drains after its only request ended: %v", tr.draining)
+	}
+	switched := tr.lanes[0].cur
 	warmAge := time.Duration(-1)
 	getCtx(t, client, srv.URL, WithObserver(context.Background(), &Observer{WarmConn: func(age time.Duration) { warmAge = age }}))
 	if warmAge < 0 {
 		t.Fatal("observer not told about the warm connection")
 	}
-	if tr.lanes[0].cur == first || tr.lanes[0].warming != nil {
-		t.Fatal("lane did not switch to the warm pool")
+	if tr.lanes[0].cur != switched || tr.lanes[0].warming != nil {
+		t.Fatal("the lane left the warm pool")
 	}
 	if n := conns.Load(); n != 2 {
 		t.Fatalf("connections = %d, want 2: the request did not use the warm connection", n)

@@ -30,7 +30,21 @@ type warmSlot struct {
 	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
-// take returns the warm connection to addr, once, and when it was opened.
+// warmMaxAge is how long a warm connection may wait for its first request. A
+// connection that idles as bare TLS carries no HTTP/2 traffic or pings and gets
+// cut (seen: the host's firewall or antivirus aborting it), so a stale one is
+// closed and replaced by a fresh dial.
+var warmMaxAge = 20 * time.Second
+
+// fresh reports whether the slot holds a connection young enough to be used.
+func (w *warmSlot) fresh() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn != nil && time.Since(w.opened) <= warmMaxAge
+}
+
+// take returns the warm connection to addr, once, and when it was opened. A
+// stale connection is closed and not returned.
 func (w *warmSlot) take(addr string) (net.Conn, time.Time) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -39,6 +53,10 @@ func (w *warmSlot) take(addr string) (net.Conn, time.Time) {
 	}
 	c := w.conn
 	w.conn = nil
+	if time.Since(w.opened) > warmMaxAge {
+		_ = c.Close()
+		return nil, time.Time{}
+	}
 	return c, w.opened
 }
 
@@ -153,8 +171,9 @@ func dialTLS(ctx context.Context, netDial func(context.Context, string, string) 
 	return tc, nil
 }
 
-// warmUp opens the connection of l's next pool p to target; the lane switches
-// to p on a later request once it is ready.
+// warmUp opens the connection of l's next pool p to target and, once it is
+// open, switches the lane to p at once: the old pool drains, and the connection
+// does not wait for a request as bare TLS.
 func (t *Transport) warmUp(l *lane, p *pool, target *url.URL) {
 	addr := target.Host
 	if _, _, err := net.SplitHostPort(addr); err != nil {
@@ -164,8 +183,8 @@ func (t *Transport) warmUp(l *lane, p *pool, target *url.URL) {
 	defer cancel()
 	c, err := p.warm.dial(ctx, "tcp", addr)
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if l.warming != p { // given up or the lane is gone
+		t.mu.Unlock()
 		if c != nil {
 			_ = c.Close()
 		}
@@ -174,9 +193,15 @@ func (t *Transport) warmUp(l *lane, p *pool, target *url.URL) {
 	if err != nil {
 		t.counts.warmFailed.Add(1)
 		p.failed = true
+		t.mu.Unlock()
 		return
 	}
 	t.counts.warmOpened.Add(1)
 	p.warm.put(addr, c)
 	p.ready = true
+	now := t.now()
+	idle := t.retireLocked(l.cur, now, nil)
+	l.cur, l.born, l.warming = p, now, nil
+	t.mu.Unlock()
+	closeIdle(idle)
 }
