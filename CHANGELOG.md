@@ -19,6 +19,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose
   connection breaks before the reply is sent again.
+- HTTP/2 connections to the backends send a health ping when they have been quiet for 15 seconds and are closed when
+  it is not answered within 5: a connection that a proxy program or an antivirus killed silently while it was idle no
+  longer fails the next request (it was one retry each time: `wsasend: An established connection was aborted by the
+  software in your host machine`). The log of a retried request says what kind of connection its first try was on.
+- A 429 from the Codex backend with a `Retry-After` of up to 5 seconds is waited out once and the request is sent
+  again; a longer one reaches Claude Code with its `Retry-After` header, and the log line of a 429 lists the limit
+  headers (`retry-after`, `x-ratelimit-*`, `*reset*`).
 - A request no longer fails when a new connection cannot be opened in time (`TLS handshake timeout`, a refused or
   unreachable dial): it goes out over another connection that works, and ccgp keeps trying with growing pauses for up
   to 30 s before it gives the 502; a connection that broke before the reply is retried up to twice. Before, there was

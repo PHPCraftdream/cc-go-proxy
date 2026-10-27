@@ -23,6 +23,9 @@ type Router struct {
 
 // NewRouter returns a Router whose Transports are built like New builds them.
 func NewRouter(maxAge time.Duration, active, total int, newT func() *http.Transport) *Router {
+	if newT == nil {
+		newT = func() *http.Transport { return http.DefaultTransport.(*http.Transport).Clone() }
+	}
 	r := &Router{maxAge: maxAge, newT: newT, ts: map[string]*Transport{}}
 	r.active, r.total = normalizeLimits(active, total)
 	return r

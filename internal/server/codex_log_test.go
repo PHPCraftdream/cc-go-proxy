@@ -85,6 +85,7 @@ func codexCallWith(t *testing.T, backend http.Handler, client *http.Client, twea
 	if err != nil {
 		t.Fatal(err)
 	}
+	lastCodexReply = resp.Header.Clone()
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b), al.String(), sl.String()
@@ -348,5 +349,102 @@ func TestUpstreamCtxCarriesTheProfileChoice(t *testing.T) {
 	cfg.Profiles["p"].Proxy = ""
 	if c := proxydial.ChoiceFor(upstreamCtx(context.Background(), cfg)); c.URL == nil || c.URL.Host != "127.0.0.1:1080" {
 		t.Errorf("inheriting profile: %+v", c)
+	}
+}
+
+// lastCodexReply is the header of the reply codexCallWith got, for tests that read it.
+var lastCodexReply http.Header
+
+func rateLimitBackend(calls *atomic.Int32, retryAfter string, limited int32) http.Handler {
+	ok := overloadBackend(calls, 0)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n := calls.Load(); n < limited {
+			calls.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			w.Header().Set("X-RateLimit-Remaining-Requests", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"message":"Rate limit exceeded"}}`)
+			return
+		}
+		ok.ServeHTTP(w, r)
+	})
+}
+
+func TestShortRateLimitIsWaitedOut(t *testing.T) {
+	var calls atomic.Int32
+	status, body, _, stream := codexCall(t, rateLimitBackend(&calls, "0", 1), time.Minute)
+	if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+		t.Fatalf("status %d, body %q: want the answer of the second call", status, body)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("backend calls = %d, want 2", calls.Load())
+	}
+	for _, want := range []string{"upstream rate limit: retrying in 0s", "retry-after=0", "x-ratelimit-remaining-requests=0"} {
+		if !strings.Contains(stream, want) {
+			t.Errorf("log %q lacks %q", stream, want)
+		}
+	}
+}
+
+func TestLongRateLimitGoesToTheClient(t *testing.T) {
+	var calls atomic.Int32
+	status, body, access, _ := codexCall(t, rateLimitBackend(&calls, "120", 100), time.Minute)
+	if status != fiber.StatusTooManyRequests || !strings.Contains(body, "Rate limit exceeded") {
+		t.Fatalf("status %d, body %q: want the 429", status, body)
+	}
+	if calls.Load() != 1 {
+		t.Errorf("backend calls = %d: a long Retry-After must not be waited out", calls.Load())
+	}
+	if got := lastCodexReply.Get("Retry-After"); got != "120" {
+		t.Errorf("Retry-After for the client = %q, want 120", got)
+	}
+	if !strings.Contains(access, "retry-after=120") || !strings.Contains(access, "x-ratelimit-remaining-requests=0") {
+		t.Errorf("access log %q lacks the limits", access)
+	}
+	if strings.Contains(body, "x-ratelimit") {
+		t.Errorf("the headers leaked into the client's message: %q", body)
+	}
+}
+
+func TestRateLimitWithoutRetryAfterIsNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	status, _, _, _ := codexCall(t, rateLimitBackend(&calls, "", 100), time.Minute)
+	if status != fiber.StatusTooManyRequests || calls.Load() != 1 {
+		t.Fatalf("status %d after %d calls, want a plain 429 after one", status, calls.Load())
+	}
+}
+
+func TestRetryAfterParsing(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		v    string
+		want time.Duration
+		ok   bool
+	}{
+		{"3", 3 * time.Second, true},
+		{"0", 0, true},
+		{"1.5", 1500 * time.Millisecond, true},
+		{now.Add(4 * time.Second).Format(http.TimeFormat), 4 * time.Second, true},
+		{now.Add(-time.Minute).Format(http.TimeFormat), 0, true},
+		{"-1", 0, false},
+		{"soon", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		h := http.Header{}
+		if tc.v != "" {
+			h.Set("Retry-After", tc.v)
+		}
+		got, ok := retryAfter(h, now)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("Retry-After %q = %s, %v; want %s, %v", tc.v, got, ok, tc.want, tc.ok)
+		}
+	}
+	h := http.Header{"Retry-After": {"2"}, "X-Ratelimit-Remaining": {"0"}, "X-Codex-Primary-Reset-After-Seconds": {"31"}, "Content-Type": {"x"}}
+	if got := rateHeaders(h); got != "retry-after=2 x-codex-primary-reset-after-seconds=31 x-ratelimit-remaining=0" {
+		t.Errorf("rateHeaders = %q", got)
 	}
 }

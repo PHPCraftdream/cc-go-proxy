@@ -149,6 +149,19 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	trace := newUpstreamTrace()
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(ctx, trace.clientTrace()), trace.observer())
 	resp, err := codex.Call(ctx, baseURL, s, req)
+	// A short rate limit is waited out here, once; a long one is Claude Code's to handle.
+	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
+		if wait, ok := retryAfter(resp.Header, time.Now()); ok && wait <= rateRetryMax {
+			logRateRetry(logOut, cfg.Profile, probe.Model+" -> "+model, wait, rateHeaders(resp.Header))
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+			_ = resp.Body.Close()
+			if sleepCtx(ctx, wait) {
+				resp, err = codex.Call(ctx, baseURL, s, req)
+			} else {
+				err = ctx.Err()
+			}
+		}
+	}
 	if err != nil {
 		cancel()
 		if errors.Is(err, oauth.ErrNotLoggedIn) || errors.Is(err, oauth.ErrReloginRequired) {
@@ -167,7 +180,16 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			return anthropicError(c, status, "authentication_error",
 				fmt.Sprintf("codex: unauthorized, run `ccgp --login %s`: %s", cfg.ProviderName, codex.ErrorMessage(b)))
 		}
-		return anthropicError(c, status, codex.ErrorType(status), "codex: "+codex.ErrorMessage(b))
+		msg := "codex: " + codex.ErrorMessage(b)
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			c.Set("Retry-After", ra) // Claude Code backs off by it
+		}
+		hdrs := rateHeaders(resp.Header)
+		out := anthropicError(c, status, codex.ErrorType(status), msg)
+		if status == http.StatusTooManyRequests && hdrs != "" {
+			c.Locals(localsErr, msg+" | "+hdrs) // the log gets the limits; the client the message
+		}
+		return out
 	}
 
 	if !wantStream {

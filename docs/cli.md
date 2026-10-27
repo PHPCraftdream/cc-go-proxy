@@ -37,13 +37,20 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
   (`dials 3 (h2 2, http/1.1 1)`: how many and the protocol they agreed on), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below
   `opened`, or `http/1.1` where `h2` is expected, shows a connection problem before it becomes errors.
+- `upstream rate limit: retrying in …`: the backend answered 429 with a `Retry-After` of up to 5 s, so ccgp waited it
+  out and asked once more. The line lists the limit headers (`retry-after`, `x-ratelimit-*`, `*reset*`, `x-codex-*`);
+  a longer `Retry-After` is passed on to Claude Code in the 429 reply (header included) and the limits go to the log
+  line of the 429.
 - `upstream retry N/M in …`: the backend said it is overloaded (`server_is_overloaded` and similar) before sending
   any content, so ccgp sends the request again after the pause (2 s, then 5 s); Claude Code just waits longer.
   Only when the retries run out does the stream fail.
 
 The timing: `conn new (dns, connect, tls)`, `conn reused (idle …)` or `conn warm (opened … before)` (a connection
 opened in the background for this lane), the number of upstream calls when there was more than one (a retry, a
-token refresh) and `retried after: <error>` when the first attempt failed; then, from the start of the call, `headers`,
+token refresh) and `retried after: <error> (the first try was on a new / warm / reused, idle … connection)` when the first attempt
+failed. An error such as `wsasend: An established connection was aborted by the software in your host machine` is
+Windows closing the connection itself (a proxy program or an antivirus); the idle time of the connection shows
+whether it is the long-idle ones that die; then, from the start of the call, `headers`,
 `first token` (first thinking, text or tool input) and `total`; the request size; the tokens (input, cached, output,
 reasoning). Long `headers` with a reused connection means the backend was slow to start; a long gap from `headers` to
 `first token` is the model reading a long prompt (input tokens) or thinking (reasoning tokens); a long `total` after

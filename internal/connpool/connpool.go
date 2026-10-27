@@ -161,6 +161,7 @@ func (t *Transport) SetLimits(active, total int) {
 // way it can take a connection opened ahead (see warm.go).
 func (t *Transport) newPoolLocked() *pool {
 	p := &pool{t: t.newT()}
+	Harden(p.t, healthPing, healthTimeout)
 	proxydial.Apply(p.t, t.choice)
 	if t.target != nil {
 		installWarmDialer(p, t.target, &t.counts)
@@ -506,7 +507,7 @@ func retryable(req *http.Request, err error) bool {
 	for _, s := range []string{
 		"connection reset", "forcibly closed", "connection was aborted", "broken pipe",
 		"connection lost", "goaway", "use of closed network connection", "transport connection broken",
-		"server closed idle connection", "eof",
+		"server closed idle connection", "client conn is closed", "client conn not usable", "eof",
 	} {
 		if strings.Contains(msg, s) {
 			return true

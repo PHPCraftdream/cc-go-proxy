@@ -33,6 +33,7 @@ type upstreamTrace struct {
 	warm    bool          // the connection was opened ahead (connpool)
 	warmAge time.Duration // how long before
 	retry   string        // why the first attempt was sent again
+	first   string        // the first attempt's connection: new, warm or reused (idle for)
 
 	dnsStart, connStart, tlsStart time.Time
 }
@@ -51,7 +52,12 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 			at(func(time.Time) { u.calls++; u.warm, u.dns, u.connect, u.tls = false, 0, 0, 0 })
 		},
 		GotConn: func(i httptrace.GotConnInfo) {
-			at(func(time.Time) { u.reused, u.idle = i.Reused, i.IdleTime })
+			at(func(time.Time) {
+				u.reused, u.idle = i.Reused, i.IdleTime
+				if u.calls == 1 {
+					u.first = u.connKind()
+				}
+			})
 		},
 		DNSStart:          func(httptrace.DNSStartInfo) { at(func(t time.Time) { u.dnsStart = t }) },
 		DNSDone:           func(httptrace.DNSDoneInfo) { at(func(t time.Time) { u.dns = t.Sub(u.dnsStart) }) },
@@ -65,6 +71,18 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 		},
 		GotFirstResponseByte: func() { at(func(t time.Time) { u.headers = t }) },
 	}
+}
+
+// connKind describes the current attempt's connection; the caller holds u.mu.
+func (u *upstreamTrace) connKind() string {
+	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
+	switch {
+	case u.reused:
+		return "reused, idle " + r(u.idle)
+	case u.warm:
+		return "warm, opened " + r(u.warmAge) + " before"
+	}
+	return "new"
 }
 
 // observer reports the warm connections and retries of connpool.
@@ -108,6 +126,9 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	}
 	if u.retry != "" {
 		conn += ", retried after: " + oneLine(u.retry, 200)
+		if u.first != "" {
+			conn += " (the first try was on a " + u.first + " connection)"
+		}
 	}
 	waits := []string{}
 	if !u.headers.IsZero() {

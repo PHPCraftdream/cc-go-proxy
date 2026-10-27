@@ -86,6 +86,18 @@ func logUpstreamStats(w io.Writer) {
 	}
 }
 
+// sleepCtx waits d, false if ctx ended first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // upstreamCtx puts the profile's way out (its own proxy, none, or the global
 // one; see config.ProxyChoice) on the context of an upstream request. The
 // clients' connpool.Router sends the request over the pools of that choice.

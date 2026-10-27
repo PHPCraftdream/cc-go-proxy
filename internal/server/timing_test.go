@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"testing"
 	"time"
@@ -85,5 +86,32 @@ func TestTraceSummaryWarmConnAndRetry(t *testing.T) {
 	ct.GetConn("h:443")
 	if u.warm {
 		t.Error("a new attempt keeps the warm flag of the last one")
+	}
+}
+
+// A retry names the kind of connection the first try was on: whether the ones
+// that fail are the long-idle ones shows in the log.
+func TestTraceSummaryNamesTheFirstConnection(t *testing.T) {
+	start := time.Unix(1000, 0)
+	u := &upstreamTrace{start: start}
+	ct, o := u.clientTrace(), u.observer()
+	ct.GetConn("h:443")
+	ct.GotConn(httptrace.GotConnInfo{Reused: true, IdleTime: 73 * time.Second})
+	o.Retry(errors.New("wsasend: aborted"))
+	ct.GetConn("h:443")
+	ct.GotConn(httptrace.GotConnInfo{})
+	got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
+	want := "conn new (dns 0s, connect 0s, tls 0s), 2 upstream calls, retried after: wsasend: aborted (the first try was on a reused, idle 1m13s connection) | total 1s | request 10 B"
+	if got != want {
+		t.Errorf("summary = %q\nwant      %q", got, want)
+	}
+
+	w := &upstreamTrace{start: start}
+	ct, o = w.clientTrace(), w.observer()
+	ct.GetConn("h:443")
+	o.WarmConn(40 * time.Second)
+	ct.GotConn(httptrace.GotConnInfo{})
+	if w.first != "warm, opened 40s before" {
+		t.Errorf("first = %q", w.first)
 	}
 }

@@ -830,3 +830,107 @@ func TestConnectRefusedText(t *testing.T) {
 		t.Error("a timeout counts as a refusal")
 	}
 }
+
+// blackhole forwards TCP to a server until it is told to swallow everything,
+// leaving the sockets open: a connection that a middlebox silently killed.
+type blackhole struct {
+	ln       net.Listener
+	accepted atomic.Int32
+	dropping atomic.Bool
+}
+
+func newBlackhole(t *testing.T, target string) *blackhole {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &blackhole{ln: ln}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			b.accepted.Add(1)
+			up, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = c.Close()
+				continue
+			}
+			pipe := func(dst, src net.Conn) {
+				buf := make([]byte, 32<<10)
+				for {
+					n, err := src.Read(buf)
+					if n > 0 && !b.dropping.Load() {
+						_, _ = dst.Write(buf[:n])
+					}
+					if err != nil {
+						_ = dst.Close()
+						return
+					}
+				}
+			}
+			go pipe(up, c)
+			go pipe(c, up)
+		}
+	}()
+	return b
+}
+
+func TestHealthPingDropsADeadConnectionBeforeUse(t *testing.T) {
+	oldPing, oldTimeout := healthPing, healthTimeout
+	healthPing, healthTimeout = 100*time.Millisecond, 100*time.Millisecond
+	t.Cleanup(func() { healthPing, healthTimeout = oldPing, oldTimeout })
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		_, _ = io.WriteString(w, "ok")
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	bh := newBlackhole(t, strings.TrimPrefix(srv.URL, "https://"))
+
+	base := srv.Client().Transport.(*http.Transport)
+	tr := New(time.Hour, 1, 1, base.Clone)
+	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	url := "https://" + bh.ln.Addr().String()
+	get(t, client, url)
+	if n := bh.accepted.Load(); n != 1 {
+		t.Fatalf("connections = %d, want 1", n)
+	}
+
+	bh.dropping.Store(true) // the connection dies silently while it is idle
+	time.Sleep(time.Second)
+	bh.dropping.Store(false)
+
+	start := time.Now()
+	get(t, client, url)
+	if n := bh.accepted.Load(); n != 2 {
+		t.Fatalf("connections = %d, want 2: the dead one was reused", n)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the next request took %s", d)
+	}
+}
+
+func TestHardenKeepsOwnHTTP2Settings(t *testing.T) {
+	own := &http.Transport{HTTP2: &http.HTTP2Config{SendPingTimeout: time.Hour}}
+	Harden(own, time.Second, time.Second)
+	if own.HTTP2.SendPingTimeout != time.Hour {
+		t.Errorf("own settings replaced: %+v", own.HTTP2)
+	}
+	plain := &http.Transport{}
+	Harden(plain, 3*time.Second, 2*time.Second)
+	if plain.HTTP2 == nil || plain.HTTP2.SendPingTimeout != 3*time.Second || plain.HTTP2.PingTimeout != 2*time.Second {
+		t.Errorf("settings = %+v", plain.HTTP2)
+	}
+	tr := New(0, 1, 1, nil)
+	p := tr.acquire(nil)
+	if p.t.HTTP2 == nil || p.t.HTTP2.SendPingTimeout != healthPing {
+		t.Errorf("a pool is built without pings: %+v", p.t.HTTP2)
+	}
+	tr.release(p)
+}
