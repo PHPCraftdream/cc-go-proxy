@@ -36,6 +36,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Streams the client left are logged as `stream canceled by client`, apart from real failures.
 - The timing in the log shows the real TLS handshake time of new connections (it read `tls 0s`), marks connections
   opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
+- The first launch of a profile that has no sessions copies the latest session of the current directory from your
+  Claude Code (like `ccgp --import <profile> 1`), so `/resume` and `-c` can continue the work at once.
 - Every retry after a connection failure gets its own log line, `upstream reconnect N after …`, with the error and
   the kind of connection the failed try was on; before, a request saved by a retry showed only in the 10-minute
   counters. The timing also shows the age of the connection's pool (`pool 8m12s`), so a dropped connection can be

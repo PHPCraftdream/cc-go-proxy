@@ -251,3 +251,64 @@ func humanSize(n int64) string {
 	}
 	return fmt.Sprintf("%d B", n)
 }
+
+// seedProfileSessions runs seedFirstSession for a profile about to start; any
+// trouble only prints a note, starting the profile matters more.
+func seedProfileSessions(w io.Writer, cfg *config.Config, profile string) {
+	note := func(err error) { _, _ = fmt.Fprintf(w, "first launch: sessions not copied: %v\n", err) }
+	base, err := claudeHomeBase()
+	if err != nil {
+		note(err)
+		return
+	}
+	official, _, err := officialClaudeDir(base)
+	if err != nil {
+		note(err)
+		return
+	}
+	src, err := resolveEndpoint(cfg, base, official, claudeEndpointLabel)
+	if err != nil {
+		note(err)
+		return
+	}
+	dst, err := resolveEndpoint(cfg, base, official, profile)
+	if err != nil {
+		note(err)
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		note(err)
+		return
+	}
+	seedFirstSession(w, src, dst, cwd)
+}
+
+// seedFirstSession gives a profile that has no sessions at all the latest
+// session of the working directory from the user's own Claude Code, so the
+// first launch can go on with the work (/resume, -c). A profile that already
+// has a session, or a directory without one in Claude, is left alone.
+func seedFirstSession(w io.Writer, src, dst endpoint, cwd string) {
+	if have, err := sessions.List(dst.dir); err != nil || len(have) > 0 {
+		return
+	}
+	project := projectDirName(cwd)
+	list, err := sessions.List(src.dir)
+	if err != nil {
+		return
+	}
+	found := false
+	for _, s := range list {
+		if strings.EqualFold(s.Project, project) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+	opt := sessions.Options{StripThinking: stripThinkingBetween(src, dst), Project: project}
+	if err := copySessions(w, "first launch of "+dst.label, src, dst, 1, opt); err != nil {
+		_, _ = fmt.Fprintf(w, "first launch: sessions not copied: %v\n", err)
+	}
+}

@@ -55,6 +55,7 @@ func launch(profile string, claudeArgs []string) error {
 	if err != nil {
 		return err
 	}
+	seedProfileSessions(os.Stderr, cfg, profile)
 	cmd := exec.Command(claude, claudeArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	cmd.Env = compactEnv(

@@ -24,6 +24,14 @@ directory: Claude Code lists sessions per project directory.
 Every session is announced as `[k/N] project/id  size ...`; one that takes longer than a couple of seconds also
 prints a percentage line every two seconds, so gigabyte transcripts show that they are moving.
 
+## The first launch of a profile
+
+When `ccgp <profile>` starts and the profile has no session at all (a new profile), ccgp copies the one latest
+session of the current directory from your Claude Code first, the same way as `ccgp --import <profile> 1`, so
+`/resume` or `-c` can carry on with the work at once. It happens once: after that the profile has a session and
+nothing is copied at launch. If Claude Code has no session for this directory, nothing is copied and nothing is
+printed. A copy that fails only prints a note on stderr; the profile starts anyway.
+
 ## What is copied
 
 `projects/<project>/<id>.jsonl` and the `<id>/` folder next to it (tool results, subagent transcripts), with the

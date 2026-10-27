@@ -47,7 +47,9 @@ directory at every launch, one way:
   directory are kept, credential files are never copied. Absolute paths in `plugins/*.json` are rewritten to
   point at the copy. Links and junctions are never followed, so a session cannot write into your own directory.
 
-History, sessions and projects stay separate; move chosen ones with [`ccgp --send`](sessions.md).
+History, sessions and projects stay separate; move chosen ones with [`ccgp --send`](sessions.md). The one
+exception is the first launch of a profile without sessions, which copies the latest session of the current
+directory from your Claude Code (read only on your side).
 The only way ccgp writes into your own Claude Code directory is `ccgp --send ... claude` (or its alias
 `ccgp --export`), under `projects/`.
 
