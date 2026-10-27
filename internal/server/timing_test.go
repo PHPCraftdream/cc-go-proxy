@@ -115,3 +115,47 @@ func TestTraceSummaryNamesTheFirstConnection(t *testing.T) {
 		t.Errorf("first = %q", w.first)
 	}
 }
+
+// The pool's age and every retry reach the log: a connection that dies young
+// or after a long quiet spell is a different problem.
+func TestTraceReportsPoolAgeAndEveryRetry(t *testing.T) {
+	start := time.Unix(1000, 0)
+	u := &upstreamTrace{start: start}
+	type hear struct {
+		n    int
+		err  string
+		conn string
+	}
+	var heard []hear
+	u.onRetry = func(n int, err error, _ time.Duration, conn string) {
+		heard = append(heard, hear{n, err.Error(), conn})
+	}
+	ct, o := u.clientTrace(), u.observer()
+
+	o.Pool(8*time.Minute + 12*time.Second + 300*time.Millisecond)
+	ct.GetConn("h:443")
+	ct.GotConn(httptrace.GotConnInfo{Reused: true, IdleTime: 5 * time.Second})
+	o.Retry(errors.New("http2: client conn is closed"))
+	o.Pool(2 * time.Second)
+	ct.GetConn("h:443") // a new connection: the reuse flag of the last attempt must not stay
+	o.Retry(errors.New("TLS handshake timeout"))
+
+	want := []hear{
+		{1, "http2: client conn is closed", "reused, idle 5s, pool 8m12s"},
+		{2, "TLS handshake timeout", "new, pool 2s"},
+	}
+	if len(heard) != len(want) || heard[0] != want[0] || heard[1] != want[1] {
+		t.Fatalf("heard %+v, want %+v", heard, want)
+	}
+
+	ct.GotConn(httptrace.GotConnInfo{})
+	got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
+	if !strings.Contains(got, "conn new (dns 0s, connect 0s, tls 0s, pool 2s)") || !strings.Contains(got, "retried after: TLS handshake timeout") {
+		t.Errorf("summary = %q", got)
+	}
+	// Without connpool there is no pool age and nothing is invented.
+	v := &upstreamTrace{start: start}
+	if s := v.summary(&codex.Translator{}, start, 0); strings.Contains(s, "pool") {
+		t.Errorf("summary without a pool: %q", s)
+	}
+}

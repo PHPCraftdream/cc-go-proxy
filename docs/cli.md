@@ -44,9 +44,14 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
 - `upstream retry N/M in …`: the backend said it is overloaded (`server_is_overloaded` and similar) before sending
   any content, so ccgp sends the request again after the pause (2 s, then 5 s); Claude Code just waits longer.
   Only when the retries run out does the stream fail.
+- `upstream reconnect N after …`: the connection of an attempt failed (could not open, or broke before the reply) and
+  ccgp sent the request over another one. One line per retry, with the error and the kind of connection the failed
+  try was on; the client sees nothing unless the retries run out. Lines with the same error in a row, or many
+  `reused, idle …` ones, point at the network or a program on this machine, not at the backend.
 
-The timing: `conn new (dns, connect, tls)`, `conn reused (idle …)` or `conn warm (opened … before)` (a connection
-opened in the background for this lane), the number of upstream calls when there was more than one (a retry, a
+The timing: `conn new (dns, connect, tls, pool …)`, `conn reused (idle …, pool …)` or `conn warm (opened … before)` (a
+connection opened in the background for this lane). `pool` is the age of the pool the request went to: a connection
+is at most that old, and a `conn new` on an old pool means its earlier connection was lost. Then the number of upstream calls when there was more than one (a retry, a
 token refresh) and `retried after: <error> (the first try was on a new / warm / reused, idle … connection)` when the first attempt
 failed. An error such as `wsasend: An established connection was aborted by the software in your host machine` is
 Windows closing the connection itself (a proxy program or an antivirus); the idle time of the connection shows

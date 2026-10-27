@@ -36,6 +36,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Streams the client left are logged as `stream canceled by client`, apart from real failures.
 - The timing in the log shows the real TLS handshake time of new connections (it read `tls 0s`), marks connections
   opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
+- Every retry after a connection failure gets its own log line, `upstream reconnect N after …`, with the error and
+  the kind of connection the failed try was on; before, a request saved by a retry showed only in the 10-minute
+  counters. The timing also shows the age of the connection's pool (`pool 8m12s`), so a dropped connection can be
+  told from a young or an old one.
 - A Codex stream that the backend ends with an error event is logged with the backend's code and message, the raw
   event and the `x-request-id` / `cf-ray` of the response; before, such failures read only `upstream error`. The
   code and message of an `error` object inside the event also reach Claude Code now.

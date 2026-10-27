@@ -12,6 +12,10 @@ type Observer struct {
 	WarmConn func(age time.Duration)
 	// Retry: the first attempt failed with err and the request is sent again.
 	Retry func(err error)
+	// Pool: the pool the next attempt goes to was opened age ago. Its
+	// connection is at most that old; a new connection on an old pool means
+	// the pool's earlier connection was lost.
+	Pool func(age time.Duration)
 }
 
 type observerKey struct{}

@@ -82,6 +82,13 @@ func logUpstreamRetry(w io.Writer, profile, model string, attempt int, wait time
 		attempt, len(overloadBackoff), wait, profile, model, joinNonEmpty(line, ids))
 }
 
+// logReconnect prints the line for a request ccgp sent again because its
+// connection failed; the client saw nothing of it unless the retries ran out.
+func logReconnect(w io.Writer, profile, model string, n int, since time.Duration, reason, conn string) {
+	_, _ = fmt.Fprintf(w, "[%s] upstream reconnect %d after %s [%s] %s: %s | the failed try was on a %s connection\n",
+		time.Now().Format("15:04:05"), n, since.Round(time.Millisecond), profile, model, oneLine(reason, maxLogErr), conn)
+}
+
 // logStreamCanceled prints the line for a stream the client left.
 func logStreamCanceled(w io.Writer, started time.Time, profile, model, extra string) {
 	_, _ = fmt.Fprintf(w, "[%s] stream canceled by client after %s [%s] %s: %s\n", started.Format("15:04:05"),
@@ -147,6 +154,9 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
+	trace.onRetry = func(n int, err error, since time.Duration, conn string) {
+		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn)
+	}
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(ctx, trace.clientTrace()), trace.observer())
 	resp, err := codex.Call(ctx, baseURL, s, req)
 	// A short rate limit is waited out here, once; a long one is Claude Code's to handle.

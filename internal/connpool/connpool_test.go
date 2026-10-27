@@ -934,3 +934,27 @@ func TestHardenKeepsOwnHTTP2Settings(t *testing.T) {
 	}
 	tr.release(p)
 }
+
+// The observer hears how old the pool of every attempt is: a new connection on
+// an old pool tells that the pool's earlier connection was lost.
+func TestObserverHearsPoolAge(t *testing.T) {
+	srv := okServer(t)
+	tr := New(0, 1, 1, nil)
+	base := time.Now()
+	var offset atomic.Int64
+	tr.now = func() time.Time { return base.Add(time.Duration(offset.Load())) }
+
+	var ages []time.Duration
+	ctx := WithObserver(context.Background(), &Observer{Pool: func(age time.Duration) { ages = append(ages, age) }})
+	client := &http.Client{Transport: tr}
+	getCtx(t, client, srv.URL, ctx)
+	offset.Store(int64(90 * time.Second))
+	getCtx(t, client, srv.URL, ctx)
+
+	if len(ages) != 2 {
+		t.Fatalf("heard %d pool ages, want one per attempt: %v", len(ages), ages)
+	}
+	if ages[0] > time.Second || ages[1] < 90*time.Second || ages[1] > 91*time.Second {
+		t.Errorf("ages = %v, want about 0 and about 90s", ages)
+	}
+}

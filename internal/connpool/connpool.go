@@ -89,6 +89,7 @@ type pool struct {
 	t        *http.Transport
 	inflight int
 	retired  time.Time // zero while in a lane
+	created  time.Time
 	ready    bool      // has a working connection: served a reply or holds a warm one
 	failed   bool      // its warm-up could not connect
 	warm     *warmSlot // nil: no warm-up possible (no https target yet, or a proxy)
@@ -160,7 +161,7 @@ func (t *Transport) SetLimits(active, total int) {
 // newPoolLocked builds a pool; with an https target known and no proxy in the
 // way it can take a connection opened ahead (see warm.go).
 func (t *Transport) newPoolLocked() *pool {
-	p := &pool{t: t.newT()}
+	p := &pool{t: t.newT(), created: t.now()}
 	Harden(p.t, healthPing, healthTimeout)
 	proxydial.Apply(p.t, t.choice)
 	if t.target != nil {
@@ -367,6 +368,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 				r.Body = rb
 			}
 		}
+		t.reportPool(req, p)
 		resp, err := p.t.RoundTrip(r)
 		if err == nil {
 			t.mu.Lock()
@@ -405,6 +407,13 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 		t.release(p)
 		p = q
+	}
+}
+
+// reportPool tells the request's observer how old p is.
+func (t *Transport) reportPool(req *http.Request, p *pool) {
+	if o := observer(req.Context()); o != nil && o.Pool != nil {
+		o.Pool(t.now().Sub(p.created))
 	}
 }
 

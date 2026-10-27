@@ -34,6 +34,13 @@ type upstreamTrace struct {
 	warmAge time.Duration // how long before
 	retry   string        // why the first attempt was sent again
 	first   string        // the first attempt's connection: new, warm or reused (idle for)
+	retries int           // attempts sent again
+	pool    time.Duration // age of the pool the attempt went to
+	hasPool bool
+
+	// onRetry hears every retry: its number, the error, the time since the start
+	// of the call and the connection the failed attempt was on.
+	onRetry func(n int, err error, since time.Duration, conn string)
 
 	dnsStart, connStart, tlsStart time.Time
 }
@@ -49,7 +56,10 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 	return &httptrace.ClientTrace{
 		GetConn: func(string) {
 			// The connection details describe the last attempt.
-			at(func(time.Time) { u.calls++; u.warm, u.dns, u.connect, u.tls = false, 0, 0, 0 })
+			at(func(time.Time) {
+				u.calls++
+				u.warm, u.reused, u.idle, u.dns, u.connect, u.tls = false, false, 0, 0, 0, 0
+			})
 		},
 		GotConn: func(i httptrace.GotConnInfo) {
 			at(func(time.Time) {
@@ -78,11 +88,21 @@ func (u *upstreamTrace) connKind() string {
 	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
 	switch {
 	case u.reused:
-		return "reused, idle " + r(u.idle)
+		return "reused, idle " + r(u.idle) + u.poolText(", ")
 	case u.warm:
 		return "warm, opened " + r(u.warmAge) + " before"
 	}
-	return "new"
+	return "new" + u.poolText(", ")
+}
+
+// poolText is sep and the pool's age, or nothing when it is not known; the
+// caller holds u.mu. A new connection on an old pool means the pool lost its
+// earlier one.
+func (u *upstreamTrace) poolText(sep string) string {
+	if !u.hasPool {
+		return ""
+	}
+	return sep + "pool " + u.pool.Round(time.Second).String()
 }
 
 // observer reports the warm connections and retries of connpool.
@@ -93,10 +113,20 @@ func (u *upstreamTrace) observer() *connpool.Observer {
 			u.warm, u.warmAge = true, age
 			u.mu.Unlock()
 		},
+		Pool: func(age time.Duration) {
+			u.mu.Lock()
+			u.pool, u.hasPool = age, true
+			u.mu.Unlock()
+		},
 		Retry: func(err error) {
 			u.mu.Lock()
 			u.retry = err.Error()
+			u.retries++
+			n, since, conn, hook := u.retries, time.Since(u.start), u.connKind(), u.onRetry
 			u.mu.Unlock()
+			if hook != nil {
+				hook(n, err, since, conn)
+			}
 		},
 	}
 }
@@ -114,10 +144,10 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
-	conn := "conn new (dns " + r(u.dns) + ", connect " + r(u.connect) + ", tls " + r(u.tls) + ")"
+	conn := "conn new (dns " + r(u.dns) + ", connect " + r(u.connect) + ", tls " + r(u.tls) + u.poolText(", ") + ")"
 	switch {
 	case u.reused:
-		conn = "conn reused (idle " + r(u.idle) + ")"
+		conn = "conn reused (idle " + r(u.idle) + u.poolText(", ") + ")"
 	case u.warm:
 		conn = "conn warm (opened " + r(u.warmAge) + " before)"
 	}
