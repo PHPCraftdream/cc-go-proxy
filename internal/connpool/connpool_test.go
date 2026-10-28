@@ -763,6 +763,36 @@ func TestBrokenConnectionRetriesAreCapped(t *testing.T) {
 	}
 }
 
+// A connection that breaks after a long wait is retried although the connect
+// budget has long passed: the budget is for connect failures only.
+func TestBrokenConnectionIsRetriedAfterALongWait(t *testing.T) {
+	shortRetries(t, 20*time.Millisecond)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) > 1 {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		time.Sleep(150 * time.Millisecond) // past the budget
+		if c, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = c.Close()
+		}
+	}))
+	defer srv.Close()
+	tr := New(0, 1, 1, nil)
+	resp, err := (&http.Client{Transport: tr}).Post(srv.URL, "text/plain", bytes.NewReader([]byte("x")))
+	if err != nil {
+		t.Fatalf("the request failed instead of being retried: %v", err)
+	}
+	_ = resp.Body.Close()
+	if n := calls.Load(); n != 2 {
+		t.Errorf("calls = %d, want 2", n)
+	}
+	if st := tr.Stats(); st.BreakRetries != 1 {
+		t.Errorf("stats = %+v", st)
+	}
+}
+
 func TestRetryPauseEndsWithTheContext(t *testing.T) {
 	oldBudget, oldBackoff := retryBudget, retryBackoff
 	retryBudget, retryBackoff = time.Hour, []time.Duration{time.Hour}

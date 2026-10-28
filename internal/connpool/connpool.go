@@ -48,7 +48,8 @@ const forgetAfter = 3 * DefaultMaxAge
 // A request whose connection could not be opened (it was never sent) is tried
 // again on other connections until retryBudget has passed since its start, with
 // retryBackoff pauses between the attempts; one whose connection broke before
-// the reply is tried again at most maxBreakRetries times; a refused connection
+// the reply is tried again at most maxBreakRetries times, however long it had
+// waited (the budget does not apply: no reply came, a retry is safe); a refused connection
 // (nobody listens) is tried once more only. Vars so tests can shorten them.
 var (
 	retryBudget     = 30 * time.Second
@@ -391,7 +392,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		connect := connectFailure(err)
 		refused := connect && connectRefused(err)
 		if !retryable(req, err) || (!connect && breaks >= maxBreakRetries) || (refused && refusals >= 1) ||
-			time.Since(start) >= retryBudget {
+			(connect && time.Since(start) >= retryBudget) {
 			t.release(p)
 			return nil, err
 		}

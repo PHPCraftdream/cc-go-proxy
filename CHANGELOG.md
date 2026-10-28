@@ -31,6 +31,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   to 30 s before it gives the 502; a connection that broke before the reply is retried up to twice. Before, there was
   one retry. A replaced connection is opened in the background before it takes requests,
   so no request waits for a handshake.
+- A connection that broke before the reply is retried even when the request had already waited longer than the 30 s
+  connect budget (a health-ping close after 45 s of silence used to reach Claude Code as a 502).
 - When the Codex backend answers `server_is_overloaded` before sending any content, ccgp asks again after 2 s and
   then 5 s instead of passing the error on; the log shows `upstream retry`.
 - Streams the client left are logged as `stream canceled by client`, apart from real failures.

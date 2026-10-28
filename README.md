@@ -5,6 +5,7 @@
 [![CI](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/ci.yml)
 [![Licenses](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/licenses.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/cc-go-proxy/actions/workflows/licenses.yml)
 [![Release](https://img.shields.io/github/v/release/PHPCraftdream/cc-go-proxy?display_name=tag&sort=semver)](https://github.com/PHPCraftdream/cc-go-proxy/releases)
+[![npm](https://img.shields.io/npm/v/@cc-go-proxy/ccgp?logo=npm)](https://www.npmjs.com/package/@cc-go-proxy/ccgp)
 [![Go version](https://img.shields.io/github/go-mod/go-version/PHPCraftdream/cc-go-proxy)](go.mod)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#install)
@@ -72,7 +73,8 @@ With npm (any platform, Node.js 18 or newer):
 npm install -g @cc-go-proxy/ccgp
 ```
 
-The package `@cc-go-proxy/ccgp` (in the npm organization `cc-go-proxy`) installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
+The package [`@cc-go-proxy/ccgp`](https://www.npmjs.com/package/@cc-go-proxy/ccgp) (in the npm organization
+[`cc-go-proxy`](https://www.npmjs.com/org/cc-go-proxy)) installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
 platform (no install scripts run). Update it with npm, not with `ccgp --update`.
 
 You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the
