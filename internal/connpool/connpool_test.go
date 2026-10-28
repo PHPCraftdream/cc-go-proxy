@@ -992,3 +992,31 @@ func TestObserverHearsPoolAge(t *testing.T) {
 		t.Errorf("ages = %v, want about 0 and about 90s", ages)
 	}
 }
+
+// A pool must not drop a connection for being idle: the default transport does
+// after 90 s, and with a few requests a minute over several lanes most requests
+// then opened a new connection.
+func TestPoolKeepsIdleConnections(t *testing.T) {
+	var conns atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	tr := New(time.Hour, 1, 1, func() *http.Transport {
+		return &http.Transport{IdleConnTimeout: 50 * time.Millisecond} // as http.DefaultTransport has 90 s
+	})
+	c := &http.Client{Transport: tr}
+	get(t, c, srv.URL)
+	time.Sleep(300 * time.Millisecond)
+	get(t, c, srv.URL)
+	if n := conns.Load(); n != 1 {
+		t.Fatalf("server accepted %d connections, want 1: the idle one was closed", n)
+	}
+}

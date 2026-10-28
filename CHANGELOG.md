@@ -37,6 +37,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   to 30 s before it gives the 502; a connection that broke before the reply is retried up to twice. Before, there was
   one retry. A replaced connection is opened in the background before it takes requests,
   so no request waits for a handshake.
+- A pool no longer closes a connection for being idle for 90 s (the default transport's limit also applied to
+  HTTP/2): with a few requests a minute over several lanes up to every second request had opened a new connection and
+  paid ~0.8 s for the TLS handshake. Pools are still renewed every 10 minutes and dead connections dropped by the ping.
 - A connection that broke before the reply is retried even when the request had already waited longer than the 30 s
   connect budget (a health-ping close after 45 s of silence used to reach Claude Code as a 502).
 - When the Codex backend answers `server_is_overloaded` before sending any content, ccgp asks again after 2 s and
@@ -92,7 +95,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   [total N] [--json]` to show and set them: connections taking new requests, and the limit for them plus the ones
   still finishing older requests. Applied by a running server without a restart.
 
-## [0.2.0] - 2026-10-25
+## [0.1.0] - 2026-10-25
 
 First release of ccgp as an independent project.
 
@@ -170,5 +173,5 @@ First release of ccgp as an independent project.
   with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
   config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
 
-[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.2.0
+[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0

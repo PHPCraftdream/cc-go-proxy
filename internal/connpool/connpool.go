@@ -168,6 +168,11 @@ func (t *Transport) SetLimits(active, total int) {
 func (t *Transport) newPoolLocked() *pool {
 	p := &pool{t: t.newT(), created: t.now()}
 	Harden(p.t, healthPing, healthTimeout)
+	// The default transport closes a connection idle for 90 s, which also kills
+	// HTTP/2 ones (pings do not reset it): with a few requests a minute over
+	// several lanes most requests then paid for a new handshake. The pool is
+	// renewed every few minutes and the health ping drops dead connections.
+	p.t.IdleConnTimeout = 0
 	proxydial.Apply(p.t, t.choice)
 	if t.target != nil {
 		installWarmDialer(p, t.target, &t.counts, t.tlsCache)

@@ -177,7 +177,9 @@ The maintainer created the npm organization `cc-go-proxy`, so the packages go th
 `@phpcraftdream`: the main package is **`@cc-go-proxy/ccgp`**, the platform packages `@cc-go-proxy/ccgp-<os>-<cpu>`
 (`w32` for Windows). The command names stay `ccgp` and `ccgpy`. Changed: `NPM_NAME` in `release.yml`, `trust.mjs` and
 its test, release notes, README, CLI help and docs. **Nothing is published**; nothing was ever published under
-`@phpcraftdream`.
+`@phpcraftdream`. The version of the first release is **0.1.0** (not 0.2.0 as planned above): the changelog section,
+the installer examples and the CI install check follow it (the check now asks for the newest published release
+instead of a fixed version). The sections above are history and keep the numbers of their day.
 
 ## Lessons for the next release
 
