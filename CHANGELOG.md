@@ -135,9 +135,9 @@ First release of ccgp as an independent project.
 - `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
   permission prompts off), a second small binary that starts the `ccgp` next to it.
 - Installation: `install.sh` (Linux, macOS) and `install.ps1` (Windows) install `ccgp` and `ccgpy` from the GitHub
-  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `@phpcraftdream/ccgp`
-  (`npm install -g @phpcraftdream/ccgp`, under the author's own scope so that it does not crowd the npm search; the
-  platform packages are `@phpcraftdream/ccgp-<os>-<cpu>`) installs both commands. CI checks that the scripts install the newest release.
+  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `@cc-go-proxy/ccgp`
+  (`npm install -g @cc-go-proxy/ccgp`, in the npm organization `cc-go-proxy`; the
+  platform packages are `@cc-go-proxy/ccgp-<os>-<cpu>`) installs both commands. CI checks that the scripts install the newest release.
 - Releases: binaries for ten platforms with checksums and build-provenance attestations, npm packages (token or
   Trusted Publishing, switched on by the repository variable `NPM_PUBLISH`), third-party license notices; dual
   license check in CI.

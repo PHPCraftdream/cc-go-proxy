@@ -124,7 +124,7 @@ archive for this OS and CPU and `SHA256SUMS`, verifies the checksum before touch
 to `.old` first. Config and credentials are not touched; `--check` only reports whether an update exists. When a
 server is running, restart it afterwards with `ccgp --restart`.
 
-Installed with npm, update with npm instead (`npm install -g @phpcraftdream/ccgp@latest`): `--update` would replace the binary
+Installed with npm, update with npm instead (`npm install -g @cc-go-proxy/ccgp@latest`): `--update` would replace the binary
 inside the npm package, and the next npm install would put the packaged version back.
 
 ## Shell completion

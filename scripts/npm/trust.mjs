@@ -17,12 +17,12 @@ import { parseArgs } from 'node:util';
 import { PLATFORMS } from './build.mjs';
 
 /** @returns {string[]} the main package and the platform packages. */
-export function packageNames(name = '@phpcraftdream/ccgp') {
+export function packageNames(name = '@cc-go-proxy/ccgp') {
   return [name, ...PLATFORMS.map((p) => `${name}-${p.id}`)];
 }
 
 /** @returns {string[][]} one npm argument list per package. */
-export function trustCommands({ name = '@phpcraftdream/ccgp', repo = 'PHPCraftdream/cc-go-proxy', file = 'release.yml', env = 'npm', dryRun = false, list = false } = {}) {
+export function trustCommands({ name = '@cc-go-proxy/ccgp', repo = 'PHPCraftdream/cc-go-proxy', file = 'release.yml', env = 'npm', dryRun = false, list = false } = {}) {
   return packageNames(name).map((pkg) => {
     if (list) return ['trust', 'list', pkg];
     const args = ['trust', 'github', pkg, '--file', file, '--repo', repo, '--env', env, '--yes'];
@@ -34,7 +34,7 @@ export function trustCommands({ name = '@phpcraftdream/ccgp', repo = 'PHPCraftdr
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { values } = parseArgs({
     options: {
-      name: { type: 'string', default: '@phpcraftdream/ccgp' },
+      name: { type: 'string', default: '@cc-go-proxy/ccgp' },
       repo: { type: 'string', default: 'PHPCraftdream/cc-go-proxy' },
       'dry-run': { type: 'boolean', default: false },
       list: { type: 'boolean', default: false },

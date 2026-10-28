@@ -45,7 +45,7 @@ platforms, the main package last. A refusal stops the run there, so a refused Wi
 | `ccgp_<version>_<os>_<arch>.tar.gz` / `.zip` | linux, darwin, windows × amd64, arm64: the binary, `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`, `README.md`, `THIRD_PARTY_LICENSES.md` |
 | `SHA256SUMS` | checksums of all archives |
 | attestations | signed SLSA build provenance for every file, from GitHub Actions |
-| npm `@phpcraftdream/ccgp` + `@phpcraftdream/ccgp-<os>-<cpu>` | the launcher package and six platform packages (the esbuild layout: no install scripts), published with provenance |
+| npm `@cc-go-proxy/ccgp` + `@cc-go-proxy/ccgp-<os>-<cpu>` | the launcher package and six platform packages (the esbuild layout: no install scripts), published with provenance |
 
 Verify a download:
 
@@ -84,12 +84,14 @@ new package name needs a token.
    ```
    The environment variant needs the `npm` environment to exist (*Settings → Environments*); there you can also
    require a reviewer for every publish.
-3. Push the tag. Seven packages appear, all in the author's scope `@phpcraftdream`: `@phpcraftdream/ccgp` and
-   `@phpcraftdream/ccgp-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64`, `-w32-x64`, `-w32-arm64`. (The
+3. Push the tag. Seven packages appear, all in the npm organization `cc-go-proxy`: `@cc-go-proxy/ccgp` and
+   `@cc-go-proxy/ccgp-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64`, `-w32-x64`, `-w32-arm64`. (The
    bare name `ccgp` is refused by npm as too similar to `ncp`, which a scope avoids; npm's spam filter refused names
-   ending in `-win32-<cpu>`, hence `w32`; the commands are still `ccgp` and `ccgpy`.) The scope is the npm user
-   `phpcraftdream`, so no organization has to be created, and scoped packages are published with `--access public`
-   (`publish.mjs` passes it).
+   ending in `-win32-<cpu>`, hence `w32`; the commands are still `ccgp` and `ccgpy`.) Scoped packages are published
+   with `--access public` (`publish.mjs` passes it).
+
+The token of step 1 must belong to a member of the organization with write access to its packages (in a granular
+token pick the organization `cc-go-proxy` or *All packages*).
 
 To publish under another name or scope, change `NPM_NAME` at the top of `release.yml` (for example
 `@yourscope/ccgp`; the platform packages follow as `@yourscope/ccgp-<os>-<cpu>`, with `w32` for Windows). The build

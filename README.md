@@ -69,10 +69,10 @@ macOS and Windows on x86-64 and arm64); on the others use the archive or `instal
 With npm (any platform, Node.js 18 or newer):
 
 ```sh
-npm install -g @phpcraftdream/ccgp
+npm install -g @cc-go-proxy/ccgp
 ```
 
-The package `@phpcraftdream/ccgp` (published under its own scope) installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
+The package `@cc-go-proxy/ccgp` (in the npm organization `cc-go-proxy`) installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
 platform (no install scripts run). Update it with npm, not with `ccgp --update`.
 
 You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the

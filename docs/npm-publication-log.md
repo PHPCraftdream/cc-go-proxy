@@ -171,10 +171,18 @@ for Windows). Only the preparation is done (`NPM_NAME` in `release.yml`, the fla
 names, scripts, tests, docs); **nothing is published**, and the tag, the variable `NPM_PUBLISH` and the npm run wait
 for the maintainer's explicit command. The unscoped `cc-go-proxy*` names are not used any more.
 
+## 2026-10-28: the scope moves to the npm organization
+
+The maintainer created the npm organization `cc-go-proxy`, so the packages go there instead of the personal scope
+`@phpcraftdream`: the main package is **`@cc-go-proxy/ccgp`**, the platform packages `@cc-go-proxy/ccgp-<os>-<cpu>`
+(`w32` for Windows). The command names stay `ccgp` and `ccgpy`. Changed: `NPM_NAME` in `release.yml`, `trust.mjs` and
+its test, release notes, README, CLI help and docs. **Nothing is published**; nothing was ever published under
+`@phpcraftdream`.
+
 ## Lessons for the next release
 
 - A free name on `npm view` is not proof that npm accepts it: the similarity rule ("too similar to `ncp`") and the spam
-  heuristics only show up on the real `PUT`. Check a new name early, not at the tag; a scope (`@phpcraftdream/...`)
+  heuristics only show up on the real `PUT`. Check a new name early, not at the tag; a scope (`@cc-go-proxy/...`)
   avoids the similarity rule.
 - Publish the **main package first** under a throwaway pre-release version, or in a separate earlier step, if there is
   any doubt about the name: the platform-first order is right for users but leaves orphans when the last step fails.
