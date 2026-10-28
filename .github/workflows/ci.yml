@@ -186,9 +186,10 @@ jobs:
       run: |
         set -eu
         docker run --rm busybox sh -c 'ls /etc/ssl/certs 2>&1 | head -1; test -e /etc/ssl/certs/ca-certificates.crt && echo "this image has a CA bundle now" || echo "no CA bundle: as intended"'
-        out="$(docker run --rm -e HOME=/tmp -v "$PWD/out:/o:ro" busybox /o/ccgp-amd64 --update --check 2>&1)" || { echo "$out"; exit 1; }
+        # Any answer from github.com proves the TLS handshake worked; "no release yet" is one.
+        out="$(docker run --rm -e HOME=/tmp -v "$PWD/out:/o:ro" busybox /o/ccgp-amd64 --update --check 2>&1)" || true
         echo "$out"
-        echo "$out" | grep -Eq 'is up to date|update available|is newer than the latest release'
+        echo "$out" | grep -Eq 'is up to date|update available|is newer than the latest release|cannot find the latest release \(got "https://github.com/'
 
   npm-scripts:
     name: npm packaging scripts
