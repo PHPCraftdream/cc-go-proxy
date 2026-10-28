@@ -230,6 +230,10 @@ jobs:
         set -eu
         # The newest published release, asked for by its version.
         want="$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/PHPCraftdream/cc-go-proxy/releases/latest)"
+        case "$want" in
+          */releases/tag/v*) ;;
+          *) echo "::notice::no release is published yet: nothing to install"; exit 0 ;;
+        esac
         ver="${want##*/v}"
         CCGP_VERSION="$ver" sh install.sh
         [ "$("$CCGP_INSTALL_DIR/ccgp" --version)" = "ccgp v$ver" ]
@@ -247,7 +251,13 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         # The newest published release, asked for by its version.
-        $latest = Invoke-RestMethod -UseBasicParsing -Uri 'https://api.github.com/repos/PHPCraftdream/cc-go-proxy/releases/latest' -Headers @{ 'User-Agent' = 'ccgp-ci' }
+        try {
+          $latest = Invoke-RestMethod -UseBasicParsing -Uri 'https://api.github.com/repos/PHPCraftdream/cc-go-proxy/releases/latest' -Headers @{ 'User-Agent' = 'ccgp-ci' }
+        } catch {
+          if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+          Write-Host '::notice::no release is published yet: nothing to install'
+          exit 0
+        }
         $ver = ([string]$latest.tag_name).TrimStart('v')
         $env:CCGP_VERSION = $ver
         ./install.ps1

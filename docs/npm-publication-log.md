@@ -8,11 +8,11 @@ this file is the history of the first attempts and what to do next.
 
 | | State |
 | --- | --- |
-| GitHub Releases `v0.1.0`, `v0.1.1`, `v0.2.0` | `v0.1.0`, `v0.1.1` to be deleted, `v0.2.0` released again from the current `main` (section 7) |
+| GitHub Releases `v0.1.0`, `v0.1.1`, `v0.2.0` | all three deleted with their tags on 2026-10-28; the first release is published again as `v0.1.0` (section 7, on the maintainer's command) |
 | npm `cc-go-proxy-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64` `@0.1.1` | deleted on 2026-10-25 (`unpublish`) |
 | npm `cc-go-proxy-win32-x64`, `cc-go-proxy-win32-arm64` | never published: npm spam detection refuses `*-win32-<cpu>` names |
 | npm `ccgp-<os>-<cpu>` (the first attempt) | deleted (`unpublish`), all six return 404 |
-| Next | Windows packages renamed to `cc-go-proxy-w32-x64` / `-w32-arm64`; all seven published as `0.2.0` |
+| Next | Windows packages renamed to `w32`; the seven packages are published under the npm organization `@cc-go-proxy` as `0.1.0` |
 
 The npm package layout is the esbuild one: a main package (`cc-go-proxy`, a small JS launcher, commands `ccgp` and
 `ccgpy`) with `optionalDependencies` on six platform packages (`cc-go-proxy-<os>-<cpu>`), each holding two prebuilt
@@ -133,8 +133,8 @@ Commit `9ba5e3d`: `NPM_NAME: cc-go-proxy` in `release.yml`, `trust.mjs` and its 
 
 The items below were written on 2026-10-23, before section 7; what is still open after it:
 
-- dry-run the release with the `w32` names (Actions → Release → Run workflow, version `0.2.0`);
-- after the 24-hour wait: delete the old releases and tags, set `NPM_PUBLISH=true`, tag `v0.2.0`;
+- dry-run the release with the `w32` names (Actions → Release → Run workflow, version `0.1.0`) - done, green;
+- old releases and tags deleted on 2026-10-28; open: set `NPM_PUBLISH=true`, tag `v0.1.0`;
 - if `cc-go-proxy-w32-*` is refused too, use the support ticket below with the new names.
 
 
