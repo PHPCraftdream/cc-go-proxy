@@ -85,6 +85,9 @@ func accessLog(w io.Writer) fiber.Handler {
 		if m, _ := c.Locals(localsErr).(string); m != "" && status >= 400 {
 			profile += ": " + oneLine(m, maxLogErr)
 		}
+		if m, _ := c.Locals(localsConn).(string); m != "" {
+			profile += " | " + m
+		}
 		_, _ = fmt.Fprintf(w, "[%s] %d - %s %s %s%s\n", start.Format("15:04:05"),
 			status, time.Since(start), c.Method(), maskToken(c.Path()), profile)
 		return err

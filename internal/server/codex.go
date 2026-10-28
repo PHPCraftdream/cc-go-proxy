@@ -183,8 +183,13 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			return anthropicError(c, fiber.StatusUnauthorized, "authentication_error",
 				fmt.Sprintf("%v (ccgp --login %s)", err, cfg.ProviderName))
 		}
-		return anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
+		out := anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
+		if hint := trace.pingHint(err, time.Now()); hint != "" {
+			c.Locals(localsErr, err.Error()+" "+hint) // the log gets the hint; the client the message
+		}
+		return out
 	}
+	c.Locals(localsConn, trace.newConnText())
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		_ = resp.Body.Close()

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 )
 
 func TestSlowStreamIsLoggedWithTiming(t *testing.T) {
@@ -157,5 +158,81 @@ func TestTraceReportsPoolAgeAndEveryRetry(t *testing.T) {
 	v := &upstreamTrace{start: start}
 	if s := v.summary(&codex.Translator{}, start, 0); strings.Contains(s, "pool") {
 		t.Errorf("summary without a pool: %q", s)
+	}
+}
+
+// Only a connection opened for the request is marked in the request line; the
+// share of them is what the warm-up should keep near zero.
+func TestNewConnText(t *testing.T) {
+	u := &upstreamTrace{start: time.Unix(1000, 0)}
+	ct, o := u.clientTrace(), u.observer()
+	if got := u.newConnText(); got != "" {
+		t.Errorf("before any attempt = %q", got)
+	}
+	ct.GetConn("h:443")
+	ct.GotConn(httptrace.GotConnInfo{})
+	if got := u.newConnText(); got != "conn new (tls 0s)" {
+		t.Errorf("new = %q", got)
+	}
+	o.Pool(21 * time.Minute)
+	if got := u.newConnText(); got != "conn new (tls 0s, pool 21m0s)" {
+		t.Errorf("new on a pool = %q", got)
+	}
+	ct.GetConn("h:443")
+	ct.GotConn(httptrace.GotConnInfo{Reused: true, IdleTime: time.Second})
+	if got := u.newConnText(); got != "" {
+		t.Errorf("reused = %q", got)
+	}
+	ct.GetConn("h:443")
+	o.WarmConn(10 * time.Second)
+	ct.GotConn(httptrace.GotConnInfo{})
+	if got := u.newConnText(); got != "" {
+		t.Errorf("warm = %q", got)
+	}
+}
+
+func TestAccessLineMarksANewConnection(t *testing.T) {
+	_, _, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range []string{
+			`{"type":"response.created","response":{"id":"r"}}`,
+			`{"type":"response.completed","response":{"id":"r","usage":{"input_tokens":1,"output_tokens":1}}}`,
+		} {
+			_, _ = w.Write([]byte("data: " + e + "\n\n"))
+		}
+	}), time.Minute)
+	if !strings.Contains(access, " 200 - ") || !strings.Contains(access, " | conn new (tls ") {
+		t.Errorf("access log = %q", access)
+	}
+}
+
+// A "connection lost" after one health-ping limit of silence is named, others not.
+func TestPingHint(t *testing.T) {
+	now := time.Unix(5000, 0)
+	lost := errors.New(`Post "https://x": http2: client connection lost`)
+	limit := connpool.HealthLimit()
+	for _, c := range []struct {
+		name string
+		err  error
+		ran  time.Duration
+		want bool
+	}{
+		{"at the limit", lost, limit, true},
+		{"a second over", lost, limit + time.Second, true},
+		{"too early", lost, 10 * time.Second, false},
+		{"too late", lost, limit + 10*time.Second, false},
+		{"other error", errors.New("unexpected EOF"), limit, false},
+		{"no error", nil, limit, false},
+	} {
+		u := &upstreamTrace{}
+		u.clientTrace().GetConn("h:443")
+		u.attempt = now.Add(-c.ran)
+		got := u.pingHint(c.err, now)
+		if (got != "") != c.want {
+			t.Errorf("%s: hint = %q, want hint %v", c.name, got, c.want)
+		}
+		if c.want && !strings.Contains(got, "health-ping") {
+			t.Errorf("%s: hint = %q", c.name, got)
+		}
 	}
 }

@@ -15,6 +15,7 @@ const (
 	localsCfg   = "ccgp.cfg"
 	localsModel = "ccgp.model" // "requested -> backend", shown in the request log
 	localsErr   = "ccgp.err"   // error message of a failed request, shown in the request log
+	localsConn  = "ccgp.conn"  // "conn new …" when the request opened a connection, shown in the request log
 )
 
 // profileBuilder returns the per-request config for a profile.

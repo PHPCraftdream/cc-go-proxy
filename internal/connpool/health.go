@@ -19,6 +19,10 @@ var (
 	healthTimeout = 15 * time.Second // no answer this long: close the connection
 )
 
+// HealthLimit is how long a connection can be silent before a health ping
+// closes it: a failure after about this long on a quiet connection is that.
+func HealthLimit() time.Duration { return healthPing + healthTimeout }
+
 // Harden turns on the health pings for tr's HTTP/2 connections, unless tr
 // already carries its own HTTP/2 settings.
 func Harden(tr *http.Transport, ping, timeout time.Duration) {

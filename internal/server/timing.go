@@ -37,6 +37,7 @@ type upstreamTrace struct {
 	retries int           // attempts sent again
 	pool    time.Duration // age of the pool the attempt went to
 	hasPool bool
+	attempt time.Time // start of the last attempt
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -56,8 +57,9 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 	return &httptrace.ClientTrace{
 		GetConn: func(string) {
 			// The connection details describe the last attempt.
-			at(func(time.Time) {
+			at(func(t time.Time) {
 				u.calls++
+				u.attempt = t
 				u.warm, u.reused, u.idle, u.dns, u.connect, u.tls = false, false, 0, 0, 0, 0
 			})
 		},
@@ -129,6 +131,34 @@ func (u *upstreamTrace) observer() *connpool.Observer {
 			}
 		},
 	}
+}
+
+// newConnText describes the last attempt's connection for the request line when
+// it was opened for the request (not reused, not warmed up ahead); else "".
+func (u *upstreamTrace) newConnText() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.calls == 0 || u.reused || u.warm {
+		return ""
+	}
+	return "conn new (tls " + u.tls.Round(time.Millisecond).String() + u.poolText(", ") + ")"
+}
+
+// pingHint marks a "connection lost" failure whose last attempt ended about one
+// health-ping limit after it began: Go does not say that its ping closed the
+// connection, so the time is the only sign. "" for any other failure.
+func (u *upstreamTrace) pingHint(err error, now time.Time) string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if err == nil || u.attempt.IsZero() || !strings.Contains(err.Error(), "client connection lost") {
+		return ""
+	}
+	limit := connpool.HealthLimit()
+	d := now.Sub(u.attempt)
+	if d < limit-2*time.Second || d > limit+2*time.Second {
+		return ""
+	}
+	return "(after " + d.Round(100*time.Millisecond).String() + " of silence: the time of a health-ping close, limit " + limit.String() + ")"
 }
 
 // slow reports whether a reply that ended at end is worth a log line.

@@ -14,6 +14,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   to the newest `luna` (was the `luna` of the release before). Fable stays on `astra`, Opus on `sol`. Run
   `ccgp --models apply` to rewrite a profile's mapping.
 
+### Added
+- The request line of a Codex request that opened its own connection ends with `| conn new (tls …, pool …)`, so the
+  share of such requests can be counted (warm and reused connections stay unmarked).
+- A 502 `http2: client connection lost` that came after about one health-ping limit (45 s) of silence says so in the
+  log: Go does not report that its ping closed the connection, the time is the only sign.
+
 ### Fixed
 - Requests no longer fail together when the backend (or a proxy on the way) cuts a connection after a fixed lifetime:
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
