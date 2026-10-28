@@ -236,3 +236,24 @@ func TestPingHint(t *testing.T) {
 		}
 	}
 }
+
+// The time the request took to leave tells a slow upload from a slow backend.
+func TestSummaryShowsHowLongTheRequestTookToWrite(t *testing.T) {
+	start := time.Unix(1000, 0)
+	u := &upstreamTrace{start: start}
+	ct := u.clientTrace()
+	ct.GetConn("h:443")
+	ct.GotConn(httptrace.GotConnInfo{Reused: true})
+	if got := u.summary(&codex.Translator{}, start.Add(time.Second), 10); strings.Contains(got, "written in") {
+		t.Errorf("summary before the request was written = %q", got)
+	}
+	ct.WroteRequest(httptrace.WroteRequestInfo{})
+	u.got, u.wrote = start.Add(time.Second), start.Add(4*time.Second+500*time.Millisecond)
+	if got := u.summary(&codex.Translator{}, start.Add(30*time.Second), 5<<20); !strings.Contains(got, "| request 5.0 MiB (written in 3.5s)") {
+		t.Errorf("summary = %q", got)
+	}
+	ct.GetConn("h:443") // a new attempt forgets the last one's times
+	if !u.got.IsZero() || !u.wrote.IsZero() {
+		t.Error("a new attempt keeps the write times of the last one")
+	}
+}

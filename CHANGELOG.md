@@ -17,6 +17,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ### Added
 - The request line of a Codex request that opened its own connection ends with `| conn new (tls …, pool …)`, so the
   share of such requests can be counted (warm and reused connections stay unmarked).
+- The timing of a slow or failed stream shows how long the request took to leave (`request 5.4 MiB (written in 3.2s)`),
+  so a slow upload can be told from a slow backend.
 - A 502 `http2: client connection lost` that came after about one health-ping limit (45 s) of silence says so in the
   log: Go does not report that its ping closed the connection, the time is the only sign.
 

@@ -38,6 +38,8 @@ type upstreamTrace struct {
 	pool    time.Duration // age of the pool the attempt went to
 	hasPool bool
 	attempt time.Time // start of the last attempt
+	got     time.Time // the last attempt got its connection
+	wrote   time.Time // the last attempt's request was written out
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -60,11 +62,13 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 			at(func(t time.Time) {
 				u.calls++
 				u.attempt = t
+				u.got, u.wrote = time.Time{}, time.Time{}
 				u.warm, u.reused, u.idle, u.dns, u.connect, u.tls = false, false, 0, 0, 0, 0
 			})
 		},
 		GotConn: func(i httptrace.GotConnInfo) {
-			at(func(time.Time) {
+			at(func(t time.Time) {
+				u.got = t
 				u.reused, u.idle = i.Reused, i.IdleTime
 				if u.calls == 1 {
 					u.first = u.connKind()
@@ -81,6 +85,7 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 			// second, empty handshake after the real one.
 			at(func(t time.Time) { u.tls += t.Sub(u.tlsStart) })
 		},
+		WroteRequest:         func(httptrace.WroteRequestInfo) { at(func(t time.Time) { u.wrote = t }) },
 		GotFirstResponseByte: func() { at(func(t time.Time) { u.headers = t }) },
 	}
 }
@@ -198,7 +203,11 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 		waits = append(waits, "first token "+r(tr.FirstDelta.Sub(u.start)))
 	}
 	waits = append(waits, "total "+r(end.Sub(u.start)))
-	parts := []string{conn, strings.Join(waits, ", "), "request " + sizeString(bodyBytes)}
+	req := "request " + sizeString(bodyBytes)
+	if !u.got.IsZero() && !u.wrote.IsZero() {
+		req += " (written in " + r(u.wrote.Sub(u.got)) + ")"
+	}
+	parts := []string{conn, strings.Join(waits, ", "), req}
 	if us := tr.Usage; us != (codex.Usage{}) {
 		parts = append(parts, fmt.Sprintf("tokens in %d (cached %d) out %d (reasoning %d)", us.Input, us.Cached, us.Output, us.Reasoning))
 	}
