@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/${repo}/main/install.sh | CCGP_VERS
 \$env:CCGP_VERSION='${version}'; irm https://raw.githubusercontent.com/${repo}/main/install.ps1 | iex
 
 # npm (any platform)
-npm install -g cc-go-proxy@${version}
+npm install -g @phpcraftdream/ccgp@${version}
 
 # Go
 go install github.com/${repo}/cmd/ccgp@v${version}

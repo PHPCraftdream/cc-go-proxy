@@ -21,6 +21,10 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
+
+	// Root certificates for HTTPS when the system has none (busybox, scratch and
+	// other minimal containers): used only as a fallback, never over the system store.
+	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 var version = "ccgp v" + server.ProxyVersion

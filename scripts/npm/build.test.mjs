@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { build, PLATFORMS } from './build.mjs';
+import { build, dirName, PLATFORMS } from './build.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const work = mkdtempSync(join(tmpdir(), 'ccgp-npm-'));
@@ -72,10 +72,41 @@ test('the package name is configurable', () => {
   const bin = join(work, 'bin2');
   fakeBinaries(bin);
   const out = join(work, 'out2');
-  build({ version: '0.1.0-rc.1', bin, out, name: '@acme/ccgp' });
-  const main = json(out, '@acme/ccgp', 'package.json');
+  const dirs = build({ version: '0.1.0-rc.1', bin, out, name: '@acme/ccgp' });
+  const main = json(out, 'acme__ccgp', 'package.json');
   assert.equal(main.name, '@acme/ccgp');
   assert.ok('@acme/ccgp-w32-x64' in main.optionalDependencies);
+  assert.equal(dirs.at(-1), join(out, 'acme__ccgp'));
+  assert.equal(json(out, 'acme__ccgp-w32-x64', 'package.json').name, '@acme/ccgp-w32-x64');
+});
+
+// publish.mjs walks the output directory one level deep: a scoped build must not nest.
+test('a scoped build keeps the output flat', () => {
+  const bin = join(work, 'bin2b');
+  fakeBinaries(bin);
+  const out = join(work, 'out2b');
+  build({ version: '1.0.0', bin, out, name: '@acme/ccgp' });
+  const entries = readdirSync(out);
+  assert.equal(entries.length, PLATFORMS.length + 1);
+  for (const e of entries) {
+    assert.ok(!e.startsWith('@'), `${e} nests packages`);
+    assert.ok(existsSync(join(out, e, 'package.json')), `${e} has no package.json`);
+  }
+  assert.equal(dirName('@acme/ccgp'), 'acme__ccgp');
+  assert.equal(dirName('ccgp'), 'ccgp');
+});
+
+// A scoped package lives in node_modules/@scope/: the launcher must find it there.
+test('the launcher finds a scoped platform package', { skip: process.platform === 'win32' }, () => {
+  const dir = join(work, 'runscoped');
+  const pkgDir = join(dir, 'node_modules', '@acme', `ccgp-${process.platform}-${process.arch}`, 'bin');
+  mkdirSync(pkgDir, { recursive: true });
+  symlinkSync(process.execPath, join(pkgDir, 'ccgp'));
+  const src = readFileSync(join(HERE, 'launcher.js'), 'utf8').replaceAll('__PREFIX__', '@acme/ccgp');
+  writeFileSync(join(dir, 'ccgp.js'), src);
+  const r = spawnSync(process.execPath, [join(dir, 'ccgp.js'), '-e', 'console.log("scoped"); process.exit(5)'], { encoding: 'utf8' });
+  assert.equal(r.status, 5, r.stderr);
+  assert.match(r.stdout, /scoped/);
 });
 
 test('rejects a bad version and a missing binary', () => {

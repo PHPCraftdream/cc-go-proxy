@@ -54,12 +54,18 @@ latest_version() {
 case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
+  FreeBSD) os=freebsd ;;
   *) die "unsupported OS $(uname -s); on Windows use install.ps1" ;;
 esac
 case "$(uname -m)" in
   x86_64 | amd64) arch=amd64 ;;
   aarch64 | arm64) arch=arm64 ;;
+  armv6* | armv7* | armhf) arch=arm ;; # one 32-bit ARM build, made for armv6 and runs on armv7
+  riscv64) arch=riscv64 ;;
   *) die "unsupported CPU $(uname -m)" ;;
+esac
+case "${os}/${arch}" in
+  darwin/arm | darwin/riscv64 | freebsd/arm | freebsd/riscv64) die "no build for ${os}/${arch}" ;;
 esac
 
 version=${CCGP_VERSION:-}

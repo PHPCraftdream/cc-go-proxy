@@ -105,7 +105,7 @@ jobs:
         version: v2.15.0
         args: --timeout=5m
 
-  # The release builds six platforms; type-check all of them on every push so a
+  # The release builds ten platforms; type-check all of them on every push so a
   # darwin or arm64 break shows up here and not on release day.
   cross:
     name: Vet ${{ matrix.target }}
@@ -114,7 +114,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ linux/arm64, darwin/amd64, darwin/arm64, windows/arm64 ]
+        target: [ linux/arm64, linux/arm, linux/riscv64, freebsd/amd64, freebsd/arm64, darwin/amd64, darwin/arm64, windows/arm64 ]
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
@@ -129,7 +129,66 @@ jobs:
         CGO_ENABLED: '0'
       run: |
         target='${{ matrix.target }}'
-        GOOS="${target%/*}" GOARCH="${target#*/}" go vet ./cmd/... ./internal/...
+        GOOS="${target%/*}" GOARCH="${target#*/}" GOARM=6 go vet ./cmd/... ./internal/...
+
+  # "Works everywhere": the Linux binaries have no libc dependency, so one build
+  # serves glibc and musl systems alike. This checks it instead of assuming it:
+  # no dynamic loader or shared library, and real runs on Alpine (musl), old
+  # Debian and Ubuntu (glibc), and a container with no root certificates at all.
+  portable:
+    name: Portable Linux binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.26'
+
+    - name: Build
+      env:
+        CGO_ENABLED: '0'
+      run: |
+        set -eu
+        for arch in amd64 arm64 arm riscv64; do
+          GOOS=linux GOARCH=$arch GOARM=6 go build -trimpath -ldflags "-s -w" -o "out/ccgp-$arch" ./cmd/ccgp
+        done
+
+    - name: Statically linked
+      run: |
+        set -eu
+        for f in out/ccgp-*; do
+          if readelf -l "$f" | grep -q INTERP; then echo "$f asks for a dynamic loader"; exit 1; fi
+          if readelf -d "$f" 2>/dev/null | grep -q NEEDED; then echo "$f needs shared libraries"; exit 1; fi
+          echo "static: $f"
+        done
+
+    - name: Runs on musl and on old glibc
+      run: |
+        set -eu
+        for image in alpine:3.19 debian:bullseye-slim ubuntu:20.04 busybox; do
+          echo "== $image"
+          docker run --rm -v "$PWD/out:/o:ro" "$image" /o/ccgp-amd64 --version
+        done
+
+    - name: Runs on other CPUs
+      run: |
+        set -eu
+        docker run --privileged --rm tonistiigi/binfmt --install arm64,arm >/dev/null
+        docker run --rm --platform linux/arm64 -v "$PWD/out:/o:ro" alpine:3.19 /o/ccgp-arm64 --version
+        docker run --rm --platform linux/arm/v7 -v "$PWD/out:/o:ro" alpine:3.19 /o/ccgp-arm --version
+
+    # busybox has no root certificates; HTTPS must still work through the bundled ones.
+    - name: HTTPS without a certificate store
+      run: |
+        set -eu
+        docker run --rm busybox sh -c 'ls /etc/ssl/certs 2>&1 | head -1; test -e /etc/ssl/certs/ca-certificates.crt && echo "this image has a CA bundle now" || echo "no CA bundle: as intended"'
+        out="$(docker run --rm -e HOME=/tmp -v "$PWD/out:/o:ro" busybox /o/ccgp-amd64 --update --check 2>&1)" || { echo "$out"; exit 1; }
+        echo "$out"
+        echo "$out" | grep -Eq 'is up to date|update available|is newer than the latest release'
 
   npm-scripts:
     name: npm packaging scripts

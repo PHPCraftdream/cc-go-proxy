@@ -2,7 +2,7 @@ name: Release
 
 # Push a tag vMAJOR.MINOR.PATCH[-prerelease] to release. The tag must be on main.
 #
-#   tests -> binaries for 6 platforms -> GitHub Release (archives, SHA256SUMS,
+#   tests -> binaries for 10 platforms -> GitHub Release (archives, SHA256SUMS,
 #   build-provenance attestations) -> npm packages
 #
 # Run it by hand (Actions -> Release -> Run workflow) for a dry run: everything
@@ -37,7 +37,7 @@ env:
   GO_VERSION: '1.26'
   MODULE: github.com/PHPCraftdream/cc-go-proxy
   # npm package name; the platform packages are <name>-<os>-<cpu>.
-  NPM_NAME: cc-go-proxy   # "ccgp" is refused by npm (too similar to "ncp")
+  NPM_NAME: '@phpcraftdream/ccgp'   # scoped: the bare "ccgp" is refused by npm (too similar to "ncp")
 
 jobs:
   meta:
@@ -149,10 +149,16 @@ jobs:
         - { goos: darwin,  goarch: arm64, npm: darwin-arm64, ext: tar.gz }
         - { goos: windows, goarch: amd64, npm: w32-x64,      ext: zip }
         - { goos: windows, goarch: arm64, npm: w32-arm64,    ext: zip }
+        # Archives and install.sh only: no npm package (the launcher says so and points here).
+        - { goos: linux,   goarch: arm,     goarm: '6',      ext: tar.gz }   # Raspberry Pi 1 and later, 32-bit ARM
+        - { goos: linux,   goarch: riscv64,                  ext: tar.gz }
+        - { goos: freebsd, goarch: amd64,                    ext: tar.gz }
+        - { goos: freebsd, goarch: arm64,                    ext: tar.gz }
     env:
       VERSION: ${{ needs.meta.outputs.version }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
+      GOARM: ${{ matrix.goarm }}
       CGO_ENABLED: '0'
     steps:
     - uses: actions/checkout@v7
@@ -206,7 +212,8 @@ jobs:
         if-no-files-found: error
 
     # The bare binary is what the npm platform package ships.
-    - uses: actions/upload-artifact@v7
+    - if: matrix.npm != ''
+      uses: actions/upload-artifact@v7
       with:
         name: bin-${{ matrix.npm }}
         path: out/ccgp*

@@ -4,7 +4,7 @@ A release is a tag `vMAJOR.MINOR.PATCH` (or `-rc.1`-style pre-release) on `main`
 [Release workflow](../.github/workflows/release.yml) does the rest:
 
 ```
-tag ─▶ tests (Linux, Windows) ─▶ 6 binaries ─▶ GitHub Release ─▶ npm packages
+tag ─▶ tests (Linux, Windows) ─▶ 10 binaries ─▶ GitHub Release ─▶ npm packages
                                   + THIRD_PARTY_LICENSES        │
                                                                 └ archives, SHA256SUMS, build-provenance attestations
 ```
@@ -45,7 +45,7 @@ platforms, the main package last. A refusal stops the run there, so a refused Wi
 | `ccgp_<version>_<os>_<arch>.tar.gz` / `.zip` | linux, darwin, windows × amd64, arm64: the binary, `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`, `README.md`, `THIRD_PARTY_LICENSES.md` |
 | `SHA256SUMS` | checksums of all archives |
 | attestations | signed SLSA build provenance for every file, from GitHub Actions |
-| npm `cc-go-proxy` + `cc-go-proxy-<os>-<cpu>` | the launcher package and six platform packages (the esbuild layout: no install scripts), published with provenance |
+| npm `@phpcraftdream/ccgp` + `@phpcraftdream/ccgp-<os>-<cpu>` | the launcher package and six platform packages (the esbuild layout: no install scripts), published with provenance |
 
 Verify a download:
 
@@ -84,13 +84,17 @@ new package name needs a token.
    ```
    The environment variant needs the `npm` environment to exist (*Settings → Environments*); there you can also
    require a reviewer for every publish.
-3. Push the tag. Seven packages appear: `cc-go-proxy` and `cc-go-proxy-linux-x64`, `-linux-arm64`, `-darwin-x64`,
-   `-darwin-arm64`, `-w32-x64`, `-w32-arm64`. (npm refuses the name `ccgp` itself as too similar to `ncp`, and its
-   spam filter refuses names ending in `-win32-<cpu>`, hence `w32`; the commands are still `ccgp` and `ccgpy`.)
+3. Push the tag. Seven packages appear, all in the author's scope `@phpcraftdream`: `@phpcraftdream/ccgp` and
+   `@phpcraftdream/ccgp-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64`, `-w32-x64`, `-w32-arm64`. (The
+   bare name `ccgp` is refused by npm as too similar to `ncp`, which a scope avoids; npm's spam filter refused names
+   ending in `-win32-<cpu>`, hence `w32`; the commands are still `ccgp` and `ccgpy`.) The scope is the npm user
+   `phpcraftdream`, so no organization has to be created, and scoped packages are published with `--access public`
+   (`publish.mjs` passes it).
 
-To publish under another name or a scope, change `NPM_NAME` at the top of `release.yml` (for example
-`@yourscope/cc-go-proxy`; the platform packages follow as `@yourscope/cc-go-proxy-<os>-<cpu>`, with `w32` for
-Windows).
+To publish under another name or scope, change `NPM_NAME` at the top of `release.yml` (for example
+`@yourscope/ccgp`; the platform packages follow as `@yourscope/ccgp-<os>-<cpu>`, with `w32` for Windows). The build
+puts a scoped package in the directory `yourscope__ccgp`, so the output stays flat. The unscoped
+`cc-go-proxy-*` names of the first attempts are left alone (see [npm-publication-log.md](npm-publication-log.md)).
 
 ### 2. Switch to Trusted Publishing
 

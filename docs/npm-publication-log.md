@@ -162,6 +162,15 @@ The items below were written on 2026-10-23, before section 7; what is still open
    (and the badge) back to the README, set up Trusted Publishing with `node scripts/npm/trust.mjs` (see
    [releasing.md](releasing.md)), then delete the `NPM_TOKEN` secret and revoke the token.
 
+## 2026-10-27: the next attempt goes into the own scope
+
+Decision: publish under the author's scope instead of the bare names, so the packages do not crowd the npm search
+and npm's name-similarity rule (which refused `ccgp`) does not apply. The main package is `@phpcraftdream/ccgp`
+(npm itself suggested this name in the `403` above), the platform packages `@phpcraftdream/ccgp-<os>-<cpu>` (`w32`
+for Windows). Only the preparation is done (`NPM_NAME` in `release.yml`, the flat output directories for scoped
+names, scripts, tests, docs); **nothing is published**, and the tag, the variable `NPM_PUBLISH` and the npm run wait
+for the maintainer's explicit command. The unscoped `cc-go-proxy*` names are not used any more.
+
 ## Lessons for the next release
 
 - A free name on `npm view` is not proof that npm accepts it: the similarity rule ("too similar to `ncp`") and the spam

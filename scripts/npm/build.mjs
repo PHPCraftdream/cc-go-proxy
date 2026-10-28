@@ -9,6 +9,8 @@
 //   <out>/<name>/            main package: launcher + optionalDependencies
 //   <out>/<name>-<id>/       one package per platform with the binary
 //
+// A scoped name (@scope/name) gives the directory scope__name, so <out> stays flat.
+//
 // The launcher resolves the platform package at run time (the esbuild layout),
 // so installs work with --ignore-scripts and without a download step.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -29,6 +31,11 @@ export const PLATFORMS = [
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..', '..');
 const LICENSE_FILES = ['LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE'];
+
+/** dirName is the directory of a package inside the output: "@scope/name" becomes "scope__name". */
+export function dirName(pkgName) {
+  return pkgName.startsWith('@') ? pkgName.slice(1).replace('/', '__') : pkgName;
+}
 
 /** @returns {string[]} package directories in publish order: platforms first, main last. */
 export function build({ version, bin, out, name = 'ccgp', repo = 'PHPCraftdream/cc-go-proxy', root = ROOT, licenses }) {
@@ -60,7 +67,7 @@ export function build({ version, bin, out, name = 'ccgp', repo = 'PHPCraftdream/
     const ysrc = join(bin, `bin-${p.id}`, p.yexe);
     if (!existsSync(ysrc)) throw new Error(`missing ccgpy binary for ${p.id}: ${ysrc}`);
     const pkgName = `${name}-${p.id}`;
-    const dir = join(out, pkgName);
+    const dir = join(out, dirName(pkgName));
     mkdirSync(join(dir, 'bin'), { recursive: true });
     copyFileSync(src, join(dir, 'bin', p.exe));
     copyFileSync(ysrc, join(dir, 'bin', p.yexe));
@@ -81,7 +88,7 @@ export function build({ version, bin, out, name = 'ccgp', repo = 'PHPCraftdream/
     dirs.push(dir);
   }
 
-  const main = join(out, name);
+  const main = join(out, dirName(name));
   mkdirSync(join(main, 'bin'), { recursive: true });
   const launcher = readFileSync(join(HERE, 'launcher.js'), 'utf8').replaceAll('__PREFIX__', name);
   // One launcher, two names: it starts the binary that matches its own file name.

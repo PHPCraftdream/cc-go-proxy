@@ -59,13 +59,20 @@ OS and CPU, check it against `SHA256SUMS` and install `ccgp` and `ccgpy` (Linux 
 `CCGP_INSTALL_DIR` to pick the directory; the scripts are short, read them first if you like:
 [install.sh](install.sh), [install.ps1](install.ps1).
 
+Platforms of the release archives: Linux (x86-64, arm64, 32-bit ARM from the Raspberry Pi 1 on, riscv64), macOS
+(Intel, Apple silicon), Windows (x86-64, arm64) and FreeBSD (x86-64, arm64). The binaries are static and need no
+libc, so the same Linux build runs on glibc and on musl systems (Alpine); CI runs it on Alpine, Debian 11 and
+Ubuntu 20.04 and on arm64 and ARM. It carries a fallback set of root certificates, used only when the system has none
+(minimal containers), so HTTPS works there too. The npm package covers the six most common platforms (Linux,
+macOS and Windows on x86-64 and arm64); on the others use the archive or `install.sh`.
+
 With npm (any platform, Node.js 18 or newer):
 
 ```sh
-npm install -g cc-go-proxy
+npm install -g @phpcraftdream/ccgp
 ```
 
-The package `cc-go-proxy` installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
+The package `@phpcraftdream/ccgp` (published under its own scope) installs the same two commands, `ccgp` and `ccgpy`, from a prebuilt binary for your
 platform (no install scripts run). Update it with npm, not with `ccgp --update`.
 
 You also need Claude Code (`claude` on `PATH`). ccgp is one self-contained binary: the
@@ -138,7 +145,7 @@ The response contains only `kind: "ccgp:model-route:v1"`, `requestedModel`, and 
 | Sessions | — | `ccgp --send` copies the current directory's latest sessions between profiles (and your own Claude Code via `--import` / `--export`) |
 | Secrets | `.env` | Separate owner-only credentials directory; OAuth refresh tokens rotate safely |
 | Platforms | Builds for macOS, Linux and Windows | Windows first (owner-only ACLs, detached background process, tested in CI), also Linux and macOS |
-| Distribution | Source builds and release binaries | Binaries for 6 platforms with provenance attestations, install scripts, npm package |
+| Distribution | Source builds and release binaries | Binaries for 10 platforms with provenance attestations, install scripts, npm package |
 
 The Anthropic ↔ OpenAI Chat Completions translation, streaming and adaptive per-model capability detection are
 upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg and contributors.

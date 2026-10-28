@@ -38,6 +38,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
 - The first launch of a profile that has no sessions copies the latest session of the current directory from your
   Claude Code (like `ccgp --import <profile> 1`), so `/resume` and `-c` can continue the work at once.
+- The binary runs everywhere it can: release archives and `install.sh` now also cover Linux 32-bit ARM (built for
+  armv6, so it runs on a Raspberry Pi 1 and later), Linux riscv64 and FreeBSD (x86-64, arm64), besides the six
+  platforms before; the npm package stays at those six. The Linux builds are static (no libc: glibc and musl/Alpine
+  alike) and carry a fallback set of root certificates for systems that have none, such as minimal containers (used
+  only when the system store is empty). A CI job checks that the Linux binaries are static and runs them on Alpine,
+  Debian 11, Ubuntu 20.04, busybox (HTTPS without a certificate store), arm64 and ARM.
 - A Codex stream whose connection breaks before ccgp has sent any content to Claude Code (`unexpected EOF`,
   `http2: client connection lost`, a stream that ends early) is sent again, up to twice after 0.3 s and 2 s, instead
   of failing; the log shows `upstream retry N/2` with the reason. Streams that already sent content, and canceled
@@ -129,9 +135,10 @@ First release of ccgp as an independent project.
 - `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
   permission prompts off), a second small binary that starts the `ccgp` next to it.
 - Installation: `install.sh` (Linux, macOS) and `install.ps1` (Windows) install `ccgp` and `ccgpy` from the GitHub
-  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `cc-go-proxy`
-  (`npm install -g cc-go-proxy`) installs both commands. CI checks that the scripts install the newest release.
-- Releases: binaries for six platforms with checksums and build-provenance attestations, npm packages (token or
+  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `@phpcraftdream/ccgp`
+  (`npm install -g @phpcraftdream/ccgp`, under the author's own scope so that it does not crowd the npm search; the
+  platform packages are `@phpcraftdream/ccgp-<os>-<cpu>`) installs both commands. CI checks that the scripts install the newest release.
+- Releases: binaries for ten platforms with checksums and build-provenance attestations, npm packages (token or
   Trusted Publishing, switched on by the repository variable `NPM_PUBLISH`), third-party license notices; dual
   license check in CI.
 
