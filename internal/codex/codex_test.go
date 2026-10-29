@@ -285,7 +285,7 @@ func TestStalledBackendFailsAtHeaderTimeout(t *testing.T) {
 	defer func() { HTTPClient = old }()
 
 	start := time.Now()
-	resp, err := post(context.Background(), backend.URL, []byte("{}"), &oauth.Tokens{AccessToken: "t"})
+	resp, err := post(context.Background(), backend.URL, []byte("{}"), "", &oauth.Tokens{AccessToken: "t"})
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("stalled backend: no error")

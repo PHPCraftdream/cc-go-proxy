@@ -54,8 +54,15 @@ func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detai
 var overloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
 
 // brokenBackoff is the pause before each retry of a stream whose connection broke
-// before it sent any content. Short: the next try opens another connection.
+// before it sent any content, or of a request the gateway in front of the
+// backend answered with 502/503/504. Short: the next try opens another connection.
 var brokenBackoff = []time.Duration{300 * time.Millisecond, 2 * time.Second}
+
+// edgeError reports whether status is a gateway error: the request got no
+// further than the edge, so asking again is safe.
+func edgeError(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
 
 // callAfter waits, then calls; a non-2xx reply is an error.
 func callAfter(ctx context.Context, wait time.Duration, call func() (*http.Response, error)) (*http.Response, error) {
@@ -162,7 +169,8 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	trace.onRetry = func(n int, err error, since time.Duration, conn string) {
 		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn)
 	}
-	ctx = connpool.WithObserver(httptrace.WithClientTrace(ctx, trace.clientTrace()), trace.observer())
+	trace.wire = &codex.Wire{}
+	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithWire(ctx, trace.wire), trace.clientTrace()), trace.observer())
 	resp, err := codex.Call(ctx, baseURL, s, req)
 	// A short rate limit is waited out here, once; a long one is Claude Code's to handle.
 	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
@@ -176,6 +184,20 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 				err = ctx.Err()
 			}
 		}
+	}
+	// A gateway error (the edge in front of the backend, not the backend) is
+	// asked again after a short pause: nothing ran yet, and the client would
+	// only send the same request itself.
+	for try := 0; err == nil && edgeError(resp.StatusCode) && try < len(brokenBackoff); try++ {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		logUpstreamRetry(logOut, cfg.Profile, probe.Model+" -> "+model, try+1, len(brokenBackoff), brokenBackoff[try],
+			fmt.Sprintf("HTTP %d: %s", resp.StatusCode, codex.ErrorMessage(b)), "", upstreamIDs(resp.Header))
+		if !sleepCtx(ctx, brokenBackoff[try]) {
+			err = ctx.Err()
+			break
+		}
+		resp, err = codex.Call(ctx, baseURL, s, req)
 	}
 	if err != nil {
 		cancel()

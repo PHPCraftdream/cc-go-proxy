@@ -37,9 +37,10 @@ type upstreamTrace struct {
 	retries int           // attempts sent again
 	pool    time.Duration // age of the pool the attempt went to
 	hasPool bool
-	attempt time.Time // start of the last attempt
-	got     time.Time // the last attempt got its connection
-	wrote   time.Time // the last attempt's request was written out
+	attempt time.Time   // start of the last attempt
+	got     time.Time   // the last attempt got its connection
+	wrote   time.Time   // the last attempt's request was written out
+	wire    *codex.Wire // what went on the wire: compressed or not, how big
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -204,8 +205,15 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	}
 	waits = append(waits, "total "+r(end.Sub(u.start)))
 	req := "request " + sizeString(bodyBytes)
+	var notes []string
+	if u.wire != nil && u.wire.Encoding != "" {
+		notes = append(notes, u.wire.Encoding+" "+sizeString(u.wire.Sent))
+	}
 	if !u.got.IsZero() && !u.wrote.IsZero() {
-		req += " (written in " + r(u.wrote.Sub(u.got)) + ")"
+		notes = append(notes, "written in "+r(u.wrote.Sub(u.got)))
+	}
+	if len(notes) > 0 {
+		req += " (" + strings.Join(notes, ", ") + ")"
 	}
 	parts := []string{conn, strings.Join(waits, ", "), req}
 	if us := tr.Usage; us != (codex.Usage{}) {

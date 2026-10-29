@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,7 +50,8 @@ func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (
 	if err != nil {
 		return nil, err
 	}
-	resp, err := post(ctx, strings.TrimRight(baseURL, "/")+"/responses", body, tok)
+	url := strings.TrimRight(baseURL, "/") + "/responses"
+	resp, err := send(ctx, url, body, tok)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
@@ -58,16 +60,20 @@ func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (
 	if tok, err = s.ForceRefresh(ctx, tok.AccessToken); err != nil {
 		return nil, err
 	}
-	return post(ctx, strings.TrimRight(baseURL, "/")+"/responses", body, tok)
+	return send(ctx, url, body, tok)
 }
 
-func post(ctx context.Context, url string, body []byte, tok *oauth.Tokens) (*http.Response, error) {
+// post sends body once; encoding is its Content-Encoding ("" for none).
+func post(ctx context.Context, url string, body []byte, encoding string, tok *oauth.Tokens) (*http.Response, error) {
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "text/event-stream")
+	if encoding != "" {
+		r.Header.Set("Content-Encoding", encoding)
+	}
 	r.Header.Set("Authorization", "Bearer "+tok.AccessToken)
 	if tok.AccountID != "" {
 		r.Header.Set("ChatGPT-Account-ID", tok.AccountID)
@@ -125,8 +131,28 @@ func ErrorMessage(body []byte) string {
 		}
 	}
 	s := strings.TrimSpace(string(body))
+	if m, ok := htmlMessage(s); ok {
+		return m
+	}
 	if len(s) > 500 {
 		s = s[:500]
 	}
 	return s
+}
+
+var htmlTitle = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+// htmlMessage turns an HTML page (an error page of the edge in front of the
+// backend, such as Cloudflare's) into a line: its title, not a screen of markup.
+func htmlMessage(s string) (string, bool) {
+	head := strings.ToLower(s[:min(len(s), 200)])
+	if !strings.Contains(head, "<html") && !strings.Contains(head, "<!doctype html") {
+		return "", false
+	}
+	if m := htmlTitle.FindStringSubmatch(s); m != nil {
+		if title := strings.Join(strings.Fields(m[1]), " "); title != "" {
+			return "html error page: " + title, true
+		}
+	}
+	return "html error page", true
 }
