@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -32,6 +33,9 @@ var encoder = func() *zstd.Encoder {
 	}
 	return e
 }()
+
+// Notice, when set, hears the rare events of the compression (a log line).
+var Notice func(msg string)
 
 // Wire says what Call put on the wire; the caller hands one in with WithWire.
 type Wire struct {
@@ -71,6 +75,7 @@ func send(ctx context.Context, url string, body []byte, tok *oauth.Tokens) (*htt
 	if err != nil || (resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusUnsupportedMediaType) {
 		return resp, err
 	}
+	refused := resp.StatusCode
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	if w != nil {
@@ -78,7 +83,9 @@ func send(ctx context.Context, url string, body []byte, tok *oauth.Tokens) (*htt
 	}
 	resp, err = post(ctx, url, body, "", tok)
 	if err == nil && resp.StatusCode/100 == 2 {
-		noCompress.Store(true)
+		if !noCompress.Swap(true) && Notice != nil {
+			Notice(fmt.Sprintf("codex: the backend refused a compressed body (HTTP %d) and took it plain: no compression from now on", refused))
+		}
 	}
 	return resp, err
 }

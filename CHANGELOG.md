@@ -18,7 +18,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Codex request bodies of 32 KiB and more are sent zstd-compressed (`Content-Encoding: zstd`, as the official Codex
   client does): a long conversation is several MiB of JSON, and sending 6 MiB took 12-17 s on a slow uplink, more
   than half of the wait for the first reply. A backend that answers a compressed body with 400/415 gets the same
-  request again plain, and when that is accepted the compression is off for the rest of the run. The log line of a
+  request again plain, and when that is accepted the compression is off for the rest of the run (the log says so once). The log line of a
   slow or failed stream shows the compressed size: `request 6.2 MiB (zstd 1.1 MiB, written in 2.1s)`.
 - A 502, 503 or 504 from the gateway in front of the Codex backend (`upstream connect error …`, a Cloudflare page)
   is asked again up to twice (0.3 s, 2 s) before Claude Code sees it; the log shows `upstream retry`. The log of an

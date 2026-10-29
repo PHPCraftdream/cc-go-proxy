@@ -144,6 +144,11 @@ func TestCallFallsBackToPlainWhenCompressionIsRefused(t *testing.T) {
 	}))
 	defer backend.Close()
 
+	var notices []string
+	oldNotice := Notice
+	Notice = func(m string) { notices = append(notices, m) }
+	t.Cleanup(func() { Notice = oldNotice })
+
 	s := testSession(t)
 	var wire Wire
 	resp, err := Call(WithWire(context.Background(), &wire), backend.URL, s, bigRequest())
@@ -168,6 +173,9 @@ func TestCallFallsBackToPlainWhenCompressionIsRefused(t *testing.T) {
 	_ = resp.Body.Close()
 	if compressed.Load() != 1 || plain.Load() != 2 {
 		t.Errorf("second call: compressed tries %d, plain tries %d, want 1 and 2", compressed.Load(), plain.Load())
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "refused a compressed body (HTTP 400)") {
+		t.Errorf("notices = %q, want one about the refusal", notices)
 	}
 }
 

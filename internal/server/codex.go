@@ -32,6 +32,12 @@ func anthropicError(c *fiber.Ctx, status int, typ, msg string) error {
 // logOut receives the non-access log lines (rejected bodies, broken streams).
 var logOut io.Writer = os.Stdout
 
+func init() {
+	codex.Notice = func(msg string) {
+		_, _ = fmt.Fprintf(logOut, "[%s] %s\n", time.Now().Format("15:04:05"), msg)
+	}
+}
+
 // maxLogDetail caps the raw upstream event in a stream failure line.
 const maxLogDetail = 1000
 
