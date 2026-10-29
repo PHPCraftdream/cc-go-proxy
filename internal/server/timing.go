@@ -19,6 +19,10 @@ var (
 	slowTotal   = 2 * time.Minute
 )
 
+// A big prompt that the backend did not read from its cache is marked: the
+// first token then takes much longer. Small prompts are never cached anyway.
+const cacheMissMin = 10000
+
 // upstreamTrace records where the time of one upstream call goes.
 type upstreamTrace struct {
 	mu      sync.Mutex
@@ -250,7 +254,11 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	}
 	parts := []string{conn, strings.Join(waits, ", "), req}
 	if us := tr.Usage; us != (codex.Usage{}) {
-		parts = append(parts, fmt.Sprintf("tokens in %d (cached %d) out %d (reasoning %d)", us.Input, us.Cached, us.Output, us.Reasoning))
+		tokens := fmt.Sprintf("tokens in %d (cached %d) out %d (reasoning %d)", us.Input, us.Cached, us.Output, us.Reasoning)
+		if us.Cached == 0 && us.Input >= cacheMissMin {
+			tokens += " | cache miss"
+		}
+		parts = append(parts, tokens)
 	}
 	return strings.Join(parts, " | ")
 }

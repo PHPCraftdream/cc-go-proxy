@@ -257,3 +257,25 @@ func TestSummaryShowsHowLongTheRequestTookToWrite(t *testing.T) {
 		t.Error("a new attempt keeps the write times of the last one")
 	}
 }
+
+// A big prompt with nothing read from the cache is marked; small ones and
+// cached ones are not.
+func TestSummaryMarksACacheMiss(t *testing.T) {
+	start := time.Unix(1000, 0)
+	for _, c := range []struct {
+		name  string
+		usage codex.Usage
+		want  bool
+	}{
+		{"big, nothing cached", codex.Usage{Input: 575000, Cached: 0, Output: 10}, true},
+		{"big, mostly cached", codex.Usage{Input: 575000, Cached: 470000, Output: 10}, false},
+		{"small, nothing cached", codex.Usage{Input: 900, Output: 10}, false},
+		{"at the limit", codex.Usage{Input: cacheMissMin}, true},
+	} {
+		u := &upstreamTrace{start: start}
+		got := u.summary(&codex.Translator{Usage: c.usage}, start.Add(time.Second), 10)
+		if has := strings.Contains(got, "| cache miss"); has != c.want {
+			t.Errorf("%s: cache miss marked = %v, want %v: %q", c.name, has, c.want, got)
+		}
+	}
+}
