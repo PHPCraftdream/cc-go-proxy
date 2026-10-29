@@ -157,6 +157,10 @@ func (t *Translator) Run(r io.Reader) error {
 	return nil
 }
 
+// ContentSent reports whether the client has been sent a content block; after
+// that a broken stream can no longer be asked for again.
+func (t *Translator) ContentSent() bool { return t.next > 0 }
+
 // canRetryTransport reports whether a broken stream may be asked for again:
 // retries are allowed and the client has seen no content yet.
 func (t *Translator) canRetryTransport() bool {

@@ -56,6 +56,15 @@ func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detai
 		time.Since(started).Round(time.Millisecond), profile, model, line)
 }
 
+// notRetriedNote explains a failed stream that ccgp did not ask for again: the
+// client had already got content, so the request is Claude Code's to resend.
+func notRetriedNote(contentSent bool) string {
+	if !contentSent {
+		return ""
+	}
+	return "not retried: content already sent"
+}
+
 // overloadBackoff is the pause before each retry of an overloaded backend.
 var overloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
 
@@ -323,7 +332,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			logStreamCanceled(logOut, started, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
 		case tr.Failed != "":
 			logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
-				joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
+				joinNonEmpty(notRetriedNote(tr.ContentSent()), ids, trace.summary(tr, end, bodyBytes)))
 		case trace.slow(end):
 			logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 		}

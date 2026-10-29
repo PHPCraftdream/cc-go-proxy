@@ -132,6 +132,9 @@ func TestBrokenStreamIsLogged(t *testing.T) {
 		!strings.Contains(stream, "[codex]") {
 		t.Errorf("stream log = %q", stream)
 	}
+	if strings.Contains(stream, "not retried") {
+		t.Errorf("no content was sent, yet the log says it was: %q", stream)
+	}
 }
 
 // The header timeout must not cut a reply that has started: streams run for minutes.
@@ -448,5 +451,14 @@ func TestRetryAfterParsing(t *testing.T) {
 	h := http.Header{"Retry-After": {"2"}, "X-Ratelimit-Remaining": {"0"}, "X-Codex-Primary-Reset-After-Seconds": {"31"}, "Content-Type": {"x"}}
 	if got := rateHeaders(h); got != "retry-after=2 x-codex-primary-reset-after-seconds=31 x-ratelimit-remaining=0" {
 		t.Errorf("rateHeaders = %q", got)
+	}
+}
+
+func TestNotRetriedNote(t *testing.T) {
+	if got := notRetriedNote(true); got != "not retried: content already sent" {
+		t.Errorf("with content = %q", got)
+	}
+	if got := notRetriedNote(false); got != "" {
+		t.Errorf("without content = %q", got)
 	}
 }

@@ -43,6 +43,9 @@ func TestOverloadAfterContentIsNotRetried(t *testing.T) {
 	if strings.Contains(stream, "upstream retry") || !strings.Contains(stream, "stream failed") {
 		t.Errorf("log %q", stream)
 	}
+	if !strings.Contains(stream, "| not retried: content already sent") {
+		t.Errorf("the log does not say why the request was not asked again: %q", stream)
+	}
 }
 
 // The profile and connection settings are read again when config.ktav changes:

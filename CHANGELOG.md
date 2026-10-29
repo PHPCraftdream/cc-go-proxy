@@ -34,6 +34,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   for 44.6s`, `not written out, …` or `no connection after …`. A stuck upload and a silent backend look different.
 - The token part of a call's timing ends with `| cache miss` when a prompt of 10000 tokens or more was not read from the
   backend's cache at all: such a request waits much longer for its first token.
+- A `stream failed` line says `| not retried: content already sent` when the client had got part of the answer: ccgp
+  cannot start such a request over, Claude Code sends it again.
 
 ### Fixed
 - Requests no longer fail together when the backend (or a proxy on the way) cuts a connection after a fixed lifetime:
