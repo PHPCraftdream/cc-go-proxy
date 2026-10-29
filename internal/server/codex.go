@@ -102,9 +102,12 @@ func logUpstreamRetry(w io.Writer, profile, model string, attempt, max int, wait
 
 // logReconnect prints the line for a request ccgp sent again because its
 // connection failed; the client saw nothing of it unless the retries ran out.
-func logReconnect(w io.Writer, profile, model string, n int, since time.Duration, reason, conn string) {
-	_, _ = fmt.Fprintf(w, "[%s] upstream reconnect %d after %s [%s] %s: %s | the failed try was on a %s connection\n",
-		time.Now().Format("15:04:05"), n, since.Round(time.Millisecond), profile, model, oneLine(reason, maxLogErr), conn)
+func logReconnect(w io.Writer, profile, model string, n int, since time.Duration, reason, conn, sent string) {
+	if sent != "" {
+		sent = " | " + sent
+	}
+	_, _ = fmt.Fprintf(w, "[%s] upstream reconnect %d after %s [%s] %s: %s | the failed try was on a %s connection%s\n",
+		time.Now().Format("15:04:05"), n, since.Round(time.Millisecond), profile, model, oneLine(reason, maxLogErr), conn, sent)
 }
 
 // logStreamCanceled prints the line for a stream the client left.
@@ -172,8 +175,8 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
-	trace.onRetry = func(n int, err error, since time.Duration, conn string) {
-		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn)
+	trace.onRetry = func(n int, err error, since time.Duration, conn, sent string) {
+		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)
 	}
 	trace.wire = &codex.Wire{}
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithWire(ctx, trace.wire), trace.clientTrace()), trace.observer())
@@ -212,9 +215,16 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 				fmt.Sprintf("%v (ccgp --login %s)", err, cfg.ProviderName))
 		}
 		out := anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
-		if hint := trace.pingHint(err, time.Now()); hint != "" {
-			c.Locals(localsErr, err.Error()+" "+hint) // the log gets the hint; the client the message
+		// The log gets the hint and how far the request got; the client the message.
+		now := time.Now()
+		msg := err.Error()
+		if hint := trace.pingHint(err, now); hint != "" {
+			msg += " " + hint
 		}
+		if sent := trace.sentText(now); sent != "" {
+			msg += " | " + sent
+		}
+		c.Locals(localsErr, msg)
 		return out
 	}
 	c.Locals(localsConn, trace.newConnText())

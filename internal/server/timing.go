@@ -44,7 +44,8 @@ type upstreamTrace struct {
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
-	onRetry func(n int, err error, since time.Duration, conn string)
+	// sent is sentText of the failed attempt.
+	onRetry func(n int, err error, since time.Duration, conn, sent string)
 
 	dnsStart, connStart, tlsStart time.Time
 }
@@ -131,9 +132,10 @@ func (u *upstreamTrace) observer() *connpool.Observer {
 			u.retry = err.Error()
 			u.retries++
 			n, since, conn, hook := u.retries, time.Since(u.start), u.connKind(), u.onRetry
+			sent := u.sentLocked(time.Now())
 			u.mu.Unlock()
 			if hook != nil {
-				hook(n, err, since, conn)
+				hook(n, err, since, conn, sent)
 			}
 		},
 	}
@@ -148,6 +150,37 @@ func (u *upstreamTrace) newConnText() string {
 		return ""
 	}
 	return "conn new (tls " + u.tls.Round(time.Millisecond).String() + u.poolText(", ") + ")"
+}
+
+// sentText says how far the last attempt got with its request when it failed:
+// no connection, request still going out, or written and unanswered. It tells
+// a stuck upload from a silent backend. "" before any attempt.
+func (u *upstreamTrace) sentText(now time.Time) string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.sentLocked(now)
+}
+
+func (u *upstreamTrace) sentLocked(now time.Time) string {
+	if u.attempt.IsZero() {
+		return ""
+	}
+	r := func(d time.Duration) string { return d.Round(100 * time.Millisecond).String() }
+	size := ""
+	if u.wire != nil && u.wire.Raw > 0 {
+		size = "request " + sizeString(u.wire.Raw)
+		if u.wire.Encoding != "" {
+			size += " (" + u.wire.Encoding + " " + sizeString(u.wire.Sent) + ")"
+		}
+		size += ": "
+	}
+	switch {
+	case u.got.IsZero():
+		return size + "no connection after " + r(now.Sub(u.attempt))
+	case u.wrote.IsZero():
+		return size + "not written out, " + r(now.Sub(u.got)) + " on the connection"
+	}
+	return size + "written in " + r(u.wrote.Sub(u.got)) + ", no reply for " + r(now.Sub(u.wrote))
 }
 
 // pingHint marks a "connection lost" failure whose last attempt ended about one

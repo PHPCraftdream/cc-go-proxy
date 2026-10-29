@@ -128,7 +128,7 @@ func TestTraceReportsPoolAgeAndEveryRetry(t *testing.T) {
 		conn string
 	}
 	var heard []hear
-	u.onRetry = func(n int, err error, _ time.Duration, conn string) {
+	u.onRetry = func(n int, err error, _ time.Duration, conn, _ string) {
 		heard = append(heard, hear{n, err.Error(), conn})
 	}
 	ct, o := u.clientTrace(), u.observer()

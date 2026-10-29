@@ -160,7 +160,7 @@ func TestLogLineShapes(t *testing.T) {
 			logUpstreamRetry(w, "codex", "a -> b", 1, 2, 2*time.Second, "overloaded", `{"x":1}`, "cf-ray=1")
 		}), `^` + hms + `upstream retry 1/2 in 2s \[codex\] a -> b: overloaded \| upstream event: \{"x":1\} \| cf-ray=1\n$`},
 		{"reconnect", line(func(w io.Writer) {
-			logReconnect(w, "codex", "a -> b", 2, 1500*time.Millisecond, "wsasend: aborted", "reused, idle 52s, pool 8m12s")
+			logReconnect(w, "codex", "a -> b", 2, 1500*time.Millisecond, "wsasend: aborted", "reused, idle 52s, pool 8m12s", "")
 		}), `^` + hms + `upstream reconnect 2 after 1\.5s \[codex\] a -> b: wsasend: aborted \| the failed try was on a reused, idle 52s, pool 8m12s connection\n$`},
 		{"rate limit", line(func(w io.Writer) { logRateRetry(w, "codex", "a -> b", 2*time.Second, "retry-after=2") }),
 			`^` + hms + `upstream rate limit: retrying in 2s \[codex\] a -> b: retry-after=2\n$`},

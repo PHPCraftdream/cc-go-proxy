@@ -29,6 +29,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   so a slow upload can be told from a slow backend.
 - A 502 `http2: client connection lost` that came after about one health-ping limit (45 s) of silence says so in the
   log: Go does not report that its ping closed the connection, the time is the only sign.
+- A Codex call that fails before any reply (a 502 such as `timeout awaiting response headers`) and every
+  `upstream reconnect` line now say how far the request got: `request 4.8 MiB (zstd 2.2 MiB): written in 5.4s, no reply
+  for 44.6s`, `not written out, …` or `no connection after …`. A stuck upload and a silent backend look different.
 
 ### Fixed
 - Requests no longer fail together when the backend (or a proxy on the way) cuts a connection after a fixed lifetime:

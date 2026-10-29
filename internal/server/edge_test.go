@@ -118,3 +118,54 @@ func TestSummaryShowsTheCompressedSize(t *testing.T) {
 		t.Errorf("plain summary = %q", got)
 	}
 }
+
+// A call that fails before any reply says how far the request got, so a stuck
+// upload can be told from a backend that took the request and said nothing.
+func TestSilentBackendIsLoggedWithTheWriteTime(t *testing.T) {
+	status, _, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		time.Sleep(400 * time.Millisecond)
+	}), 100*time.Millisecond)
+	if status != fiber.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", status)
+	}
+	for _, want := range []string{"timeout awaiting response headers", " | request ", ": written in ", ", no reply for "} {
+		if !strings.Contains(access, want) {
+			t.Errorf("access log lacks %q: %q", want, access)
+		}
+	}
+}
+
+func TestSentText(t *testing.T) {
+	now := time.Unix(1000, 0)
+	u := &upstreamTrace{}
+	if got := u.sentText(now); got != "" {
+		t.Errorf("before any attempt = %q", got)
+	}
+	u.attempt = now.Add(-20 * time.Second)
+	if got := u.sentText(now); got != "no connection after 20s" {
+		t.Errorf("no connection = %q", got)
+	}
+	u.got = now.Add(-18 * time.Second)
+	if got := u.sentText(now); got != "not written out, 18s on the connection" {
+		t.Errorf("still going out = %q", got)
+	}
+	u.wrote = now.Add(-10 * time.Second)
+	u.wire = &codex.Wire{Raw: 5 << 20, Sent: 2 << 20, Encoding: "zstd"}
+	want := "request 5.0 MiB (zstd 2.0 MiB): written in 8s, no reply for 10s"
+	if got := u.sentText(now); got != want {
+		t.Errorf("written = %q\nwant      %q", got, want)
+	}
+	u.wire = &codex.Wire{Raw: 100, Sent: 100}
+	if got := u.sentText(now); !strings.HasPrefix(got, "request 100 B: written in") {
+		t.Errorf("plain body = %q", got)
+	}
+}
+
+func TestReconnectLineShowsHowFarTheRequestGot(t *testing.T) {
+	var b strings.Builder
+	logReconnect(&b, "codex", "a -> b", 1, 50*time.Second, "http2: client connection lost", "warm, opened 5s before", "request 4.8 MiB (zstd 2.2 MiB): written in 5.4s, no reply for 44.6s")
+	if got := b.String(); !strings.HasSuffix(got, "connection | request 4.8 MiB (zstd 2.2 MiB): written in 5.4s, no reply for 44.6s\n") {
+		t.Errorf("line = %q", got)
+	}
+}
