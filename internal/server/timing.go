@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http/httptrace"
 	"strings"
 	"sync"
@@ -45,6 +46,7 @@ type upstreamTrace struct {
 	got     time.Time   // the last attempt got its connection
 	wrote   time.Time   // the last attempt's request was written out
 	wire    *codex.Wire // what went on the wire: compressed or not, how big
+	read    time.Time   // when the last byte of the reply came in (stamp)
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -68,7 +70,7 @@ func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 			at(func(t time.Time) {
 				u.calls++
 				u.attempt = t
-				u.got, u.wrote = time.Time{}, time.Time{}
+				u.got, u.wrote, u.read = time.Time{}, time.Time{}, time.Time{}
 				u.warm, u.reused, u.idle, u.dns, u.connect, u.tls = false, false, 0, 0, 0, 0
 			})
 		},
@@ -202,6 +204,42 @@ func (u *upstreamTrace) pingHint(err error, now time.Time) string {
 		return ""
 	}
 	return "(after " + d.Round(100*time.Millisecond).String() + " of silence: the time of a health-ping close, limit " + limit.String() + ")"
+}
+
+// stamp wraps a reply body so the trace knows when its last byte came in.
+func (u *upstreamTrace) stamp(rc io.ReadCloser) io.ReadCloser { return &stampedBody{rc, u} }
+
+type stampedBody struct {
+	io.ReadCloser
+	u *upstreamTrace
+}
+
+func (b *stampedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.u.mu.Lock()
+		b.u.read = time.Now()
+		b.u.mu.Unlock()
+	}
+	return n, err
+}
+
+// silenceText says how long the reply had been silent when it failed at end:
+// about one health-ping limit means ccgp's own ping closed a connection the
+// network no longer carried; data right up to the failure means a reset.
+// "" when no byte of the last reply came in.
+func (u *upstreamTrace) silenceText(end time.Time) string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.read.IsZero() {
+		return ""
+	}
+	d := end.Sub(u.read)
+	text := "silent for " + d.Round(100*time.Millisecond).String()
+	if limit := connpool.HealthLimit(); d >= limit-2*time.Second && d <= limit+2*time.Second {
+		text += " (the time of a health-ping close, limit " + limit.String() + ")"
+	}
+	return text
 }
 
 // slow reports whether a reply that ended at end is worth a log line.

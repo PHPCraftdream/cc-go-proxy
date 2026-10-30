@@ -201,7 +201,7 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 		logStreamCanceled(logOut, started, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
 	case tr.Failed != "":
 		logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
-			joinNonEmpty(notRetriedNote(tr.ContentSent()), ids, trace.summary(tr, end, bodyBytes)))
+			joinNonEmpty(notRetriedNote(tr.ContentSent()), trace.silenceText(end), ids, trace.summary(tr, end, bodyBytes)))
 	case trace.slow(end):
 		logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 	}
@@ -314,7 +314,14 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 
 	// The reply is read to its end here, so a failed one can be asked again
 	// (see runUpstream) as well as in a stream.
-	again := func() (*http.Response, error) { return codex.Call(ctx, baseURL, s, req) }
+	resp.Body = trace.stamp(resp.Body)
+	again := func() (*http.Response, error) {
+		next, err := codex.Call(ctx, baseURL, s, req)
+		if err == nil {
+			next.Body = trace.stamp(next.Body)
+		}
+		return next, err
+	}
 	profile, mapped, started, bodyBytes := cfg.Profile, probe.Model+" -> "+model, time.Now(), len(body)
 
 	if !wantStream {

@@ -36,6 +36,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   backend's cache at all: such a request waits much longer for its first token.
 - A `stream failed` line says `| not retried: content already sent` when the client had got part of the answer: ccgp
   cannot start such a request over, Claude Code sends it again.
+- A `stream failed` line says `silent for X`: how long the reply had been quiet before it broke. About 45 s means ccgp's
+  health ping closed a connection the network no longer carried (the line says so); data right up to the end means a
+  reset by the backend or the network.
 
 ### Fixed
 

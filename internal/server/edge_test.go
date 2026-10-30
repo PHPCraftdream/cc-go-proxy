@@ -225,3 +225,22 @@ func TestNonStreamOverloadRunsOut(t *testing.T) {
 		t.Errorf("calls %d, log %q", calls.Load(), log)
 	}
 }
+
+// A stream that dies after content says how long it had been silent.
+func TestFailedStreamLogsHowLongItWasSilent(t *testing.T) {
+	fastRetries(t, 1)
+	_, _, _, log := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n" +
+			"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"m\",\"type\":\"message\"}}\n\n" +
+			"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"m\",\"delta\":\"half\"}\n\n"))
+		w.(http.Flusher).Flush()
+		time.Sleep(200 * time.Millisecond)
+	}), time.Minute)
+	for _, want := range []string{"stream failed after", "not retried: content already sent", " | silent for "} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q: %q", want, log)
+		}
+	}
+}

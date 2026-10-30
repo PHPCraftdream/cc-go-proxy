@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptrace"
 	"strings"
@@ -277,5 +278,48 @@ func TestSummaryMarksACacheMiss(t *testing.T) {
 		if has := strings.Contains(got, "| cache miss"); has != c.want {
 			t.Errorf("%s: cache miss marked = %v, want %v: %q", c.name, has, c.want, got)
 		}
+	}
+}
+
+// How long the reply had been silent when it failed tells a health-ping close
+// (about one limit of silence) from a reset in the middle of the data.
+func TestSilenceText(t *testing.T) {
+	end := time.Unix(9000, 0)
+	limit := connpool.HealthLimit()
+	for _, c := range []struct {
+		name   string
+		silent time.Duration
+		want   string
+		ping   bool
+	}{
+		{"mid data", 300 * time.Millisecond, "silent for 300ms", false},
+		{"a long think", 20 * time.Second, "silent for 20s", false},
+		{"at the limit", limit, "silent for " + limit.String(), true},
+		{"just under", limit - time.Second, "silent for 44s", true},
+		{"far over", limit + 10*time.Second, "silent for 55s", false},
+	} {
+		u := &upstreamTrace{read: end.Add(-c.silent)}
+		got := u.silenceText(end)
+		if !strings.HasPrefix(got, c.want) || strings.Contains(got, "health-ping") != c.ping {
+			t.Errorf("%s: %q, want prefix %q, health-ping hint %v", c.name, got, c.want, c.ping)
+		}
+	}
+	if got := (&upstreamTrace{}).silenceText(end); got != "" {
+		t.Errorf("no byte read = %q, want nothing", got)
+	}
+}
+
+func TestStampedBodyRecordsTheLastRead(t *testing.T) {
+	u := &upstreamTrace{}
+	body := u.stamp(io.NopCloser(strings.NewReader("abc")))
+	if !u.read.IsZero() {
+		t.Fatal("read time set before any read")
+	}
+	if n, _ := body.Read(make([]byte, 2)); n != 2 || u.read.IsZero() {
+		t.Fatalf("after a read: n=%d, read=%v", n, u.read)
+	}
+	u.clientTrace().GetConn("h:443") // a new attempt forgets the last one's reads
+	if !u.read.IsZero() {
+		t.Error("a new attempt keeps the read time of the last one")
 	}
 }
