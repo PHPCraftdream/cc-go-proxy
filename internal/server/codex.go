@@ -154,6 +154,59 @@ func upstreamIDs(h http.Header) string {
 	return strings.Join(ids, " ")
 }
 
+// runUpstream runs tr over the reply. An overloaded backend, or a connection
+// that broke, before any content was sent: the request is asked again after a
+// pause (again), the client only waits longer. Each kind has its own budget.
+// It returns the reply the run ended on; the caller closes it.
+func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, again func() (*http.Response, error), profile, mapped string) *http.Response {
+	overloads, breaks := 0, 0
+	for {
+		tr.AllowRetry = overloads < len(overloadBackoff)
+		tr.AllowTransportRetry = breaks < len(brokenBackoff)
+		if err := tr.Run(up.Body); !errors.Is(err, codex.ErrRetry) {
+			return up
+		}
+		var wait time.Duration
+		var n, max int
+		if tr.RetryTransport {
+			wait, max = brokenBackoff[breaks], len(brokenBackoff)
+			breaks++
+			n = breaks
+		} else {
+			wait, max = overloadBackoff[overloads], len(overloadBackoff)
+			overloads++
+			n = overloads
+		}
+		logUpstreamRetry(logOut, profile, mapped, n, max, wait, tr.Retry, tr.Detail, upstreamIDs(up.Header))
+		tr.Detail = ""
+		if tr.Started() {
+			tr.Emit("ping", map[string]any{"type": "ping"})
+		}
+		next, err := callAfter(ctx, wait, again)
+		if err != nil {
+			tr.Fail(err.Error())
+			return up
+		}
+		_ = up.Body.Close()
+		up = next
+	}
+}
+
+// logUpstreamEnd prints the line for a reply that was cancelled, failed or slow.
+func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTrace, up *http.Response, started time.Time, profile, mapped string, bodyBytes int) {
+	end := time.Now()
+	ids := upstreamIDs(up.Header)
+	switch {
+	case tr.Failed != "" && ctx.Err() != nil:
+		logStreamCanceled(logOut, started, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
+	case tr.Failed != "":
+		logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
+			joinNonEmpty(notRetriedNote(tr.ContentSent()), ids, trace.summary(tr, end, bodyBytes)))
+	case trace.slow(end):
+		logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
+	}
+}
+
 // handleCodexMessages serves /v1/messages via the ChatGPT Codex backend.
 // The upstream call happens before streaming starts so HTTP errors (429, 401)
 // reach Claude Code with their real status.
@@ -259,12 +312,18 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		return out
 	}
 
+	// The reply is read to its end here, so a failed one can be asked again
+	// (see runUpstream) as well as in a stream.
+	again := func() (*http.Response, error) { return codex.Call(ctx, baseURL, s, req) }
+	profile, mapped, started, bodyBytes := cfg.Profile, probe.Model+" -> "+model, time.Now(), len(body)
+
 	if !wantStream {
 		defer cancel()
-		defer func() { _ = resp.Body.Close() }()
 		col := &codex.Collector{}
 		tr := &codex.Translator{Model: probe.Model, Emit: col.Emit}
-		_ = tr.Run(resp.Body)
+		upstream := runUpstream(ctx, tr, resp, again, profile, mapped)
+		defer func() { _ = upstream.Body.Close() }()
+		logUpstreamEnd(ctx, tr, trace, upstream, started, profile, mapped, bodyBytes)
 		out, err := col.Result()
 		if err != nil {
 			return anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
@@ -278,64 +337,19 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	c.Set("X-Accel-Buffering", "no")
 	// The access line is printed when the handler returns, before the stream
 	// ends; a failure inside the stream gets its own line.
-	profile, mapped, started, bodyBytes := cfg.Profile, probe.Model+" -> "+model, time.Now(), len(body)
 	release := deferActive(c)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer release()
 		defer cancel()
-		upstream := resp
-		defer func() { _ = upstream.Body.Close() }()
 		tr := &codex.Translator{Model: probe.Model, Emit: func(ev string, data any) {
 			writeSSEEvent(w, ev, data)
 			if err := w.Flush(); err != nil {
 				cancel() // client gone: abort upstream
 			}
 		}}
-		// An overloaded backend, or a connection that broke, before any content
-		// was sent: the request is asked again after a pause; the client only
-		// waits longer. Each kind has its own budget.
-		overloads, breaks := 0, 0
-		for {
-			tr.AllowRetry = overloads < len(overloadBackoff)
-			tr.AllowTransportRetry = breaks < len(brokenBackoff)
-			if err := tr.Run(upstream.Body); !errors.Is(err, codex.ErrRetry) {
-				break
-			}
-			var wait time.Duration
-			var n, max int
-			if tr.RetryTransport {
-				wait, max = brokenBackoff[breaks], len(brokenBackoff)
-				breaks++
-				n = breaks
-			} else {
-				wait, max = overloadBackoff[overloads], len(overloadBackoff)
-				overloads++
-				n = overloads
-			}
-			logUpstreamRetry(logOut, profile, mapped, n, max, wait, tr.Retry, tr.Detail, upstreamIDs(upstream.Header))
-			tr.Detail = ""
-			if tr.Started() {
-				tr.Emit("ping", map[string]any{"type": "ping"})
-			}
-			next, err := callAfter(ctx, wait, func() (*http.Response, error) { return codex.Call(ctx, baseURL, s, req) })
-			if err != nil {
-				tr.Fail(err.Error())
-				break
-			}
-			_ = upstream.Body.Close()
-			upstream = next
-		}
-		end := time.Now()
-		ids := upstreamIDs(upstream.Header)
-		switch {
-		case tr.Failed != "" && ctx.Err() != nil:
-			logStreamCanceled(logOut, started, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
-		case tr.Failed != "":
-			logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
-				joinNonEmpty(notRetriedNote(tr.ContentSent()), ids, trace.summary(tr, end, bodyBytes)))
-		case trace.slow(end):
-			logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
-		}
+		upstream := runUpstream(ctx, tr, resp, again, profile, mapped)
+		defer func() { _ = upstream.Body.Close() }()
+		logUpstreamEnd(ctx, tr, trace, upstream, started, profile, mapped, bodyBytes)
 	})
 	return nil
 }

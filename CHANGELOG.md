@@ -38,6 +38,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   cannot start such a request over, Claude Code sends it again.
 
 ### Fixed
+
+- A Codex request without streaming (`"stream": false`) is asked again after an overloaded backend or a broken
+  connection before any content, as a stream is. It returned a 502 at once before. Its failure and slow reply are
+  logged like a stream's (`stream failed after …`, `slow stream …`).
 - Requests no longer fail together when the backend (or a proxy on the way) cuts a connection after a fixed lifetime:
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose

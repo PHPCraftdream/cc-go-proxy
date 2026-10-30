@@ -169,3 +169,59 @@ func TestReconnectLineShowsHowFarTheRequestGot(t *testing.T) {
 		t.Errorf("line = %q", got)
 	}
 }
+
+// A reply read to its end (no streaming asked for) is asked again like a
+// stream: an overloaded backend before any content is not the client's error.
+func TestNonStreamOverloadIsAskedAgain(t *testing.T) {
+	fastRetries(t, 2)
+	nonStreamBody(t)
+	var calls atomic.Int32
+	status, body, _, log := codexCall(t, overloadBackend(&calls, 1), time.Minute)
+	if status != fiber.StatusOK || !strings.Contains(body, "\"hi\"") {
+		t.Fatalf("status %d, body %q: want the answer of the second try", status, body)
+	}
+	if calls.Load() != 2 || !strings.Contains(log, "upstream retry 1/2 in 1ms") || !strings.Contains(log, "server_is_overloaded") {
+		t.Errorf("calls %d, log %q", calls.Load(), log)
+	}
+	if strings.Contains(log, "stream failed") {
+		t.Errorf("a retried reply is logged as failed: %q", log)
+	}
+}
+
+// A broken connection before any content is asked again for a reply without
+// streaming, too.
+func TestNonStreamBrokenReplyIsAskedAgain(t *testing.T) {
+	fastRetries(t, 2)
+	nonStreamBody(t)
+	var calls atomic.Int32
+	status, body, _, log := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n")) // ends early
+			return
+		}
+		overloadBackend(new(atomic.Int32), 0).ServeHTTP(w, r)
+	}), time.Minute)
+	if status != fiber.StatusOK || !strings.Contains(body, "\"hi\"") || calls.Load() != 2 {
+		t.Fatalf("status %d, calls %d, body %q", status, calls.Load(), body)
+	}
+	if !strings.Contains(log, "upstream retry 1/2") || !strings.Contains(log, "ended before completion") {
+		t.Errorf("log %q", log)
+	}
+}
+
+// When the retries run out the client gets the 502 and the failure is logged
+// like a stream's, with the reason and the timing.
+func TestNonStreamOverloadRunsOut(t *testing.T) {
+	fastRetries(t, 1)
+	nonStreamBody(t)
+	var calls atomic.Int32
+	status, _, access, log := codexCall(t, overloadBackend(&calls, 10), time.Minute)
+	if status != fiber.StatusBadGateway || !strings.Contains(access, "server_is_overloaded") {
+		t.Fatalf("status %d, access %q: want 502 with the reason", status, access)
+	}
+	if calls.Load() != 2 || !strings.Contains(log, "upstream retry 1/1") || !strings.Contains(log, "stream failed after") {
+		t.Errorf("calls %d, log %q", calls.Load(), log)
+	}
+}

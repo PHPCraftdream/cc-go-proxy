@@ -43,6 +43,15 @@ func (s *syncBuf) String() string {
 
 // codexCall runs one streaming /v1/messages request through handleCodexMessages
 // against backend and returns the status, body, access log and stream log.
+// codexTestBody replaces the request the helpers send (default: a streaming one).
+var codexTestBody string
+
+func nonStreamBody(t *testing.T) {
+	t.Helper()
+	codexTestBody = `{"model":"claude-opus-5-5","max_tokens":10,"stream":false,"messages":[{"role":"user","content":"hi"}]}`
+	t.Cleanup(func() { codexTestBody = "" })
+}
+
 func codexCall(t *testing.T, backend http.Handler, headerTimeout time.Duration) (status int, body, access, stream string) {
 	t.Helper()
 	return codexCallWith(t, backend, &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: headerTimeout}}, nil)
@@ -78,8 +87,11 @@ func codexCallWith(t *testing.T, backend http.Handler, client *http.Client, twea
 	app := fiber.New()
 	app.Use(accessLog(&al))
 	app.Post("/call/:token/v1/messages", func(c *fiber.Ctx) error { return handleCodexMessages(c, cfg, sess) })
-	req := httptest.NewRequest(fiber.MethodPost, "/call/secret/v1/messages", strings.NewReader(
-		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	reqBody := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
+	if codexTestBody != "" {
+		reqBody = codexTestBody
+	}
+	req := httptest.NewRequest(fiber.MethodPost, "/call/secret/v1/messages", strings.NewReader(reqBody))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := app.Test(req, -1)
 	if err != nil {
