@@ -5,14 +5,17 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # A manual run from the Actions tab: the whole suite.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A newer push supersedes older runs of the same ref instead of queueing behind them.
+# A newer pull request push supersedes the older run: its diff covers the older one's.
+# A push to main is tested by its own diff only, so no run may be cancelled in favour of a newer one.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -30,6 +33,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0 # the diff against the previous push picks the tests
 
     # setup-go restores and saves the module and build caches itself.
     - name: Set up Go
@@ -41,17 +46,21 @@ jobs:
       run: go mod download
 
     # ccgp targets Windows first: its DACL, junction and detached-process code only runs there.
+    # Only the packages a change can affect are tested: the changed ones and everything that
+    # imports them (scripts/ci/affected.mjs). The whole suite runs for a manual run, a
+    # change of go.mod, go.sum or CI itself, and when the head commit message of a push
+    # holds "[ci full]". Releases always run it all.
     - name: Run tests
-      run: |
-        if [ "$RUNNER_OS" = "Linux" ]; then
-          go test -v -race -coverprofile=coverage.out ./...
-        else
-          go test -v ./...
-        fi
+      id: tests
+      env:
+        CI_BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        COMMIT_MESSAGE: ${{ github.event_name == 'push' && github.event.head_commit.message || '' }}
+      run: bash scripts/ci/tests.sh
 
+    # A partial run would overwrite the coverage with a fraction of it.
     - name: Upload coverage
       uses: codecov/codecov-action@v7
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && steps.tests.outputs.full == 'true'
       with:
         files: ./coverage.out
         flags: unittests
@@ -203,7 +212,7 @@ jobs:
       with:
         node-version: '24'
 
-    - run: node --test "scripts/npm/*.test.mjs"
+    - run: node --test "scripts/npm/*.test.mjs" "scripts/ci/*.test.mjs"
 
   # The installers download the published release, so this checks them against
   # what users really get: a pinned version and the latest one.

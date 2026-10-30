@@ -59,3 +59,21 @@ go vet ./...
 go test ./...
 make build
 ```
+
+## Which tests CI runs
+
+CI tests what a change can affect, not everything (`scripts/ci/affected.mjs`, run by `scripts/ci/tests.sh`): the packages with
+changed files plus every package that imports them, from the diff of a push (against the previous head) or of a pull
+request (against its base). A change that touches no Go package (docs, npm scripts, other workflows) runs no Go tests.
+
+The whole suite runs in these cases:
+
+- the head commit message of a push holds the marker `[ci full]` (e.g. `git commit -m "release prep [ci full]"`): the
+  explicit trigger, use it for the last commit of a sprint and before a release;
+- a manual run: Actions tab -> CI -> Run workflow;
+- the change touches `go.mod`, `go.sum`, `.github/workflows/ci.yml`, `scripts/ci/`, `.golangci*` or a Go file outside every
+  package, or the diff cannot be computed (new branch, force push);
+- `release.yml` always tests everything.
+
+A partial run skips the coverage upload. Vet, build, lint and cross-compile jobs run in every case. Runs on main are never
+cancelled by a newer push: each push is tested by its own diff.
