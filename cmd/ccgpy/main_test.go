@@ -143,7 +143,7 @@ func TestRunPassesArgumentsAndExitCodeThrough(t *testing.T) {
 
 func TestRunUsageAndMissingCCGP(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := run([]string{"help"}, "", &out, &errOut); code != 0 || !strings.Contains(out.String(), "usage: ccgpy <profile>") {
+	if code := run([]string{"help"}, "", &out, &errOut); code != 0 || !strings.Contains(out.String(), "usage: ccgpy ") {
 		t.Errorf("help: exit %d, out %q", code, out.String())
 	}
 	if code := run(nil, "", &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage:") {

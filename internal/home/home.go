@@ -105,12 +105,12 @@ func Parse(args []string) (Options, []string, error) {
 			val, rest := strings.TrimPrefix(a, "--home="), args[1:]
 			if a == "--home" {
 				if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
-					return o, nil, errors.New("--home needs a directory: ccgp --home <dir> ...")
+					return o, nil, errors.New("--home needs a directory (ccgp --home <dir>)")
 				}
 				val, rest = rest[0], rest[1:]
 			}
 			if val == "" {
-				return o, nil, errors.New("--home needs a directory: ccgp --home <dir> ...")
+				return o, nil, errors.New("--home needs a directory (ccgp --home <dir>)")
 			}
 			o.Dir, args = val, rest
 		default:

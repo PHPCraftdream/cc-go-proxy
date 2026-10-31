@@ -51,15 +51,15 @@ func TestCompleteWords(t *testing.T) {
 		{"empty marker is an empty word", []string{"ccgp", "--profile", emptyWord}, []string{"add", "list", "rm"}},
 		{"program path and .exe", []string{`C:\bin\ccgp.exe`, "--sta"}, []string{"--start", "--status"}},
 		{"ccgpy.exe is ccgpy", []string{"ccgpy.exe", "z"}, []string{"zai"}},
-		{"ccgpy completes profiles only", []string{"ccgpy", ""}, []string{"codex", "codex2", "zai"}},
+		{"ccgpy completes the home flags and profiles", []string{"ccgpy", ""}, []string{"--home", "--local", "codex", "codex2", "zai"}},
 		{"ccgpy: nothing after the profile", []string{"ccgpy", "codex", ""}, nil},
 		{"program only", []string{"ccgp"}, nil},
 	}
 	for _, tt := range tests {
 		got := completeWords(tt.words, testNames)
 		if tt.name == "profiles and commands at the first word" {
-			// Every visible command plus every profile, sorted, no hidden rows.
-			want := append(commandNames(), "codex", "codex2", "zai")
+			// Every visible command, the home flags and every profile, no hidden rows.
+			want := append(commandNames(), "--local", "--home", "codex", "codex2", "zai")
 			if len(got) != len(want) {
 				t.Errorf("%s: %d candidates, want %d", tt.name, len(got), len(want))
 			}
