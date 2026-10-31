@@ -42,6 +42,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- A refused Codex request (any non-2xx status) now logs the backend ids (`x-request-id`, `cf-ray`) and the edge verdict
+  (`cf-mitigated`), and an HTML error page without a title shows the start of its text instead of a bare
+  `html error page`: a 403 from the Cloudflare edge can be told from a challenge or a block.
 - A Codex request without streaming (`"stream": false`) is asked again after an overloaded backend or a broken
   connection before any content, as a stream is. It returned a 502 at once before. Its failure and slow reply are
   logged like a stream's (`stream failed after …`, `slow stream …`).

@@ -140,10 +140,27 @@ func ErrorMessage(body []byte) string {
 	return s
 }
 
-var htmlTitle = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+var (
+	htmlTitle = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	htmlSkip  = regexp.MustCompile(`(?is)<(script|style|head)[^>]*>.*?</(script|style|head)>`)
+	htmlTag   = regexp.MustCompile(`(?s)<[^>]*>`)
+)
+
+// htmlTextAt is how many runes of page text are shown when the page has no title.
+const htmlTextAt = 150
+
+// htmlText is the visible text of a page, cut to htmlTextAt runes.
+func htmlText(s string) string {
+	text := strings.Join(strings.Fields(htmlTag.ReplaceAllString(htmlSkip.ReplaceAllString(s, " "), " ")), " ")
+	if r := []rune(text); len(r) > htmlTextAt {
+		text = string(r[:htmlTextAt]) + "…"
+	}
+	return text
+}
 
 // htmlMessage turns an HTML page (an error page of the edge in front of the
-// backend, such as Cloudflare's) into a line: its title, not a screen of markup.
+// backend, such as Cloudflare's) into a line: its title, else the start of its
+// text, not a screen of markup.
 func htmlMessage(s string) (string, bool) {
 	head := strings.ToLower(s[:min(len(s), 200)])
 	if !strings.Contains(head, "<html") && !strings.Contains(head, "<!doctype html") {
@@ -153,6 +170,9 @@ func htmlMessage(s string) (string, bool) {
 		if title := strings.Join(strings.Fields(m[1]), " "); title != "" {
 			return "html error page: " + title, true
 		}
+	}
+	if text := htmlText(s); text != "" {
+		return "html error page: " + text, true
 	}
 	return "html error page", true
 }

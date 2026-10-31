@@ -143,10 +143,10 @@ func joinNonEmpty(parts ...string) string {
 }
 
 // upstreamIDs names the response's request ids, for matching a failure with
-// the backend's side.
+// the backend's side, and the edge's verdict (cf-mitigated: a challenge or a block).
 func upstreamIDs(h http.Header) string {
 	var ids []string
-	for _, k := range []string{"X-Request-Id", "Cf-Ray"} {
+	for _, k := range []string{"X-Request-Id", "Cf-Ray", "Cf-Mitigated"} {
 		if v := h.Get(k); v != "" {
 			ids = append(ids, strings.ToLower(k)+"="+v)
 		}
@@ -306,8 +306,12 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		}
 		hdrs := rateHeaders(resp.Header)
 		out := anthropicError(c, status, codex.ErrorType(status), msg)
-		if status == http.StatusTooManyRequests && hdrs != "" {
-			c.Locals(localsErr, msg+" | "+hdrs) // the log gets the limits; the client the message
+		// The log gets the limits and the ids; the client the message.
+		if status != http.StatusTooManyRequests {
+			hdrs = ""
+		}
+		if trail := joinNonEmpty(hdrs, upstreamIDs(resp.Header)); trail != "" {
+			c.Locals(localsErr, msg+" | "+trail)
 		}
 		return out
 	}

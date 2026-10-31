@@ -131,6 +131,28 @@ func TestUpstreamErrorMessageIsLogged(t *testing.T) {
 	}
 }
 
+// A refusal by the edge (a 403 page) names the ids and the verdict of the edge
+// and shows what the page says, so a challenge can be told from a block.
+func TestEdgeRefusalLogsIdsAndPageText(t *testing.T) {
+	status, body, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cf-Ray", "abc123-PIT")
+		w.Header().Set("Cf-Mitigated", "challenge")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<html><body><script>var a=1;</script><h1>Enable JavaScript</h1></body></html>`))
+	}), time.Minute)
+	if status != fiber.StatusForbidden || !strings.Contains(body, "html error page: Enable JavaScript") {
+		t.Fatalf("status %d, body %q", status, body)
+	}
+	for _, want := range []string{" 403 - ", "html error page: Enable JavaScript | cf-ray=abc123-PIT cf-mitigated=challenge"} {
+		if !strings.Contains(access, want) {
+			t.Errorf("access log lacks %q: %q", want, access)
+		}
+	}
+	if strings.Contains(access, "var a") {
+		t.Errorf("a script reached the log: %q", access)
+	}
+}
+
 func TestBrokenStreamIsLogged(t *testing.T) {
 	fastRetries(t, 2)
 	status, body, _, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -210,8 +210,12 @@ func TestErrorMessageOfAnHTMLPage(t *testing.T) {
 		"<title>chatgpt.com | 504:\n Gateway time-out </title></head><body>" + strings.Repeat("x", 2000) + "</body></html>"
 	for _, c := range []struct{ in, want string }{
 		{page, "html error page: chatgpt.com | 504: Gateway time-out"},
-		{"<!DOCTYPE html><html><body>oops</body></html>", "html error page"},
+		{"<!DOCTYPE html><html><body>oops</body></html>", "html error page: oops"},
 		{"<html><head><title></title></head></html>", "html error page"},
+		// no title: the start of the visible text, without scripts, styles and tags
+		{"<html><head><style>p{}</style></head><body><script>var a=1;</script><h1>Attention\nRequired!</h1><p>Sorry,  you have been blocked</p></body></html>",
+			"html error page: Attention Required! Sorry, you have been blocked"},
+		{"<html><body>" + strings.Repeat("é", 400) + "</body></html>", "html error page: " + strings.Repeat("é", 150) + "…"},
 		{strings.Repeat("y", 600), strings.Repeat("y", 500)}, // not a page: cut as before
 	} {
 		if got := ErrorMessage([]byte(c.in)); got != c.want {
