@@ -56,7 +56,7 @@ func TestParse(t *testing.T) {
 			t.Errorf("%s: %v", c.name, err)
 			continue
 		}
-		if got != c.want || !reflect.DeepEqual(rest, c.rest) {
+		if got != c.want || (len(rest)+len(c.rest) > 0 && !reflect.DeepEqual(rest, c.rest)) {
 			t.Errorf("%s: got %+v %q, want %+v %q", c.name, got, rest, c.want, c.rest)
 		}
 	}
