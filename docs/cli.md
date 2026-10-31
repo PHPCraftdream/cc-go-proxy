@@ -13,6 +13,52 @@ the profile goes to `claude` untouched: `ccgp codex --help` is Claude Code's hel
 `ccgp --<command> --help` prints the help of that command, `ccgp --help` lists them all, `ccgp --version` prints the
 version. `ccgpy <profile> …` is `ccgp <profile> --dangerously-skip-permissions …`.
 
+## Own home: a setup that shares nothing
+
+By default the config, logins, URL tokens, Claude Code dirs and the server log live in the user's config and cache dirs.
+Two flags before the profile or the command move **all** of them into one directory, for a second setup that shares
+no settings, tokens, logins or paths with the first:
+
+```
+ccgp --local <profile | --command> …     keep everything in ./.ccgp (created on first use)
+ccgp --home <dir> <profile | --command> … keep everything in <dir> (also --home=<dir>)
+ccgpy --local <profile> …                 ccgpy takes the same flags
+```
+
+The home holds `config.ktav`, `creds/`, `claude/<profile>/` and `logs/ccgp.log`. Which home is used, first match wins:
+
+1. `--home <dir>` or `--local` (the flags come first; after the profile they belong to `claude`; not both together);
+2. the `CCGP_HOME` environment variable (a directory);
+3. a `.ccgp` directory in the **current** directory (parents are not searched): a project that has one runs on it
+   without any flag;
+4. the default layout.
+
+Things to know:
+
+- A new home gets a **free port** of its own in its `config.ktav` (`listen.port`), so it runs its own background
+  server. The server is found by `host:port`; two homes on one port would talk to the same server. `--stop`, `--restart`,
+  `--status` and `--logs` act on the server of the home you are in.
+- The flags set `CCGP_HOME` for the process, so the background server and `claude` started from it keep the same home.
+- A directory made by `--local` / `--home` gets a `.gitignore` holding `*`: it keeps logins and tokens, keep it out of git.
+- `CCGP_CONFIG` still selects another config file; the rest stays in the home.
+- A new home has no logins: `ccgp --local --login codex`. `ccgp --status` shows a `home:` line (and `"home"` in `--json`)
+  when a home is in use.
+- Your own Claude Code dir (`~/.claude`, or `CLAUDE_CONFIG_DIR`) is still the read-only source of the agents, skills and
+  plugins copied into each profile's dir.
+
+Examples:
+
+```
+cd ~/projects/client-a
+ccgp --local --login codex          # a separate ChatGPT login for this project, in ./.ccgp
+ccgp codex                          # picks ./.ccgp up by itself from now on
+ccgp --status                       # home:    …/client-a/.ccgp
+
+ccgp --home ~/work/ccgp --profile list
+ccgpy --home ~/work/ccgp work -p "hello"
+CCGP_HOME=~/work/ccgp ccgp --logs -f
+```
+
 ## Server
 
 | Command | |

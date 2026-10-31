@@ -15,6 +15,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
 
 func sortStrings(s []string) { sort.Strings(s) }
@@ -160,11 +161,11 @@ func withDefaults(env []string, defaults [][2]string) []string {
 
 // claudeHomeBase holds the isolated Claude Code config dirs, one per profile.
 func claudeHomeBase() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := home.Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cc-go-proxy", "claude"), nil
+	return filepath.Join(dir, "claude"), nil
 }
 
 // prepareClaudeHome creates the profile's isolated Claude Code config dir

@@ -91,7 +91,7 @@ func contains(list []string, s string) bool {
 func TestCompleteWordsWithoutNames(t *testing.T) {
 	// No config: commands still complete, names are simply absent.
 	got := completeWords([]string{"ccgp", "--lo"}, completionNames{})
-	want := []string{"--login", "--logout", "--logs"}
+	want := []string{"--local", "--login", "--logout", "--logs"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q", got, want)
 	}

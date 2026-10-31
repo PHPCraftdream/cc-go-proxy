@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	ktav "github.com/ktav-lang/golang/pure"
 )
 
@@ -90,13 +91,14 @@ type fileConfig struct {
 	Profiles  []Profile  `json:"profiles"`
 }
 
-// DefaultConfigPath returns <UserConfigDir>/cc-go-proxy/config.ktav.
+// DefaultConfigPath returns <UserConfigDir>/cc-go-proxy/config.ktav, or
+// config.ktav in the home directory.
 func DefaultConfigPath() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := home.Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cc-go-proxy", "config.ktav"), nil
+	return filepath.Join(dir, "config.ktav"), nil
 }
 
 // configFilePath resolves the config path; explicit reports whether it was set via env.

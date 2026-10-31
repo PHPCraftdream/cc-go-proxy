@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
 
 const (
@@ -47,13 +49,14 @@ func Check(base string) (*Health, error) {
 	return &h, nil
 }
 
-// LogPath is <UserCacheDir>/cc-go-proxy/logs/ccgp.log (%LOCALAPPDATA% on Windows).
+// LogPath is <UserCacheDir>/cc-go-proxy/logs/ccgp.log (%LOCALAPPDATA% on Windows),
+// or logs/ccgp.log in the home directory.
 func LogPath() (string, error) {
-	dir, err := os.UserCacheDir()
+	dir, err := home.LogDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cc-go-proxy", "logs", "ccgp.log"), nil
+	return filepath.Join(dir, "ccgp.log"), nil
 }
 
 // openLog opens the log for append, rotating to .1 when over maxLogSize.

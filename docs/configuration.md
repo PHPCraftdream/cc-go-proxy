@@ -10,6 +10,11 @@ first run, from [`config.example.ktav`](../internal/config/config.example.ktav):
 
 `ccgp --status` prints the real paths. `CCGP_CONFIG` points ccgp at another config file.
 
+**Another place, all at once.** `ccgp --local` (a `.ccgp` directory in the current directory), `ccgp --home <dir>`,
+`CCGP_HOME` or a `.ccgp` directory that already exists in the current directory move the config, `creds/`, the
+Claude Code dirs (`claude/`) and the log (`logs/ccgp.log`) into one directory, so two setups share nothing
+([details and order](cli.md#own-home-a-setup-that-shares-nothing)). A new home gets a port of its own.
+
 The config is **yours**: ccgp reads it and changes it only on your command.
 
 - `ccgp --profile add` / `rm` edit the text surgically (comments, key order and line endings, CRLF included, stay),

@@ -2,8 +2,12 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
 
 func TestDefaultTemplateIsValid(t *testing.T) {
@@ -101,5 +105,41 @@ func TestResetFileBacksUpAndRegenerates(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(cfg); string(b) != string(DefaultTemplate()) {
 		t.Error("config is not the default template after reset")
+	}
+}
+
+// A setup in its own home directory gets a port of its own, the default one
+// keeps 60093: a server is found by its port.
+func TestNewConfigInAHomeGetsItsOwnPort(t *testing.T) {
+	t.Setenv(home.EnvVar, "")
+	if got := newConfig(); string(got) != string(DefaultTemplate()) {
+		t.Error("the default layout must get the template as it is")
+	}
+	dir := t.TempDir()
+	t.Setenv(home.EnvVar, dir)
+	t.Setenv(ConfigFileEnv, "")
+	t.Setenv("PROXY_TOKEN", "")
+	got := string(newConfig())
+	if strings.Contains(got, "listen.port: "+DefaultPort+"\n") {
+		t.Errorf("the home kept the default port")
+	}
+	i := strings.Index(got, "listen.port: ")
+	if i < 0 {
+		t.Fatal("no listen.port")
+	}
+	port := strings.Fields(got[i+len("listen.port: "):])[0]
+	if n, err := strconv.Atoi(port); err != nil || n < 1024 || n > 65535 {
+		t.Errorf("port %q", port)
+	}
+	if strings.Replace(got, port, DefaultPort, 1) != string(DefaultTemplate()) {
+		t.Error("only the port may differ from the template")
+	}
+
+	path, created, err := EnsureFile()
+	if err != nil || !created || path != filepath.Join(dir, "config.ktav") {
+		t.Fatalf("EnsureFile = %q, %v, %v", path, created, err)
+	}
+	if _, err := loadFile(path); err != nil {
+		t.Errorf("the config of a home does not load: %v", err)
 	}
 }

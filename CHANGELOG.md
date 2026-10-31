@@ -15,6 +15,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   `ccgp --models apply` to rewrite a profile's mapping.
 
 ### Added
+- A setup of its own: `ccgp --local` keeps the config, logins, URL tokens, Claude Code dirs and the server log in a
+  `.ccgp` directory in the current directory, `ccgp --home <dir>` (or `CCGP_HOME`) in any directory. The flags come
+  first (`ccgp --local --login codex`, `ccgpy --home ~/work/ccgp work`); a `.ccgp` directory that already exists in the
+  current directory is picked up without a flag. A new home gets a free port of its own and so its own server, and a
+  `.gitignore` that keeps its secrets out of git. `ccgp --status` shows the `home:` line. See `docs/cli.md`.
 - Codex request bodies of 32 KiB and more are sent zstd-compressed (`Content-Encoding: zstd`, as the official Codex
   client does): a long conversation is several MiB of JSON, and sending 6 MiB took 12-17 s on a slow uplink, more
   than half of the wait for the first reply. A backend that answers a compressed body with 400/415 gets the same

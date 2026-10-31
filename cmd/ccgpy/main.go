@@ -1,10 +1,10 @@
 // Command ccgpy is the no-prompts shortcut of ccgp, like cy for claude:
 //
-//	ccgpy <profile> [claude args...]
+//	ccgpy [--local | --home <dir>] <profile> [claude args...]
 //
 // runs
 //
-//	ccgp <profile> --dangerously-skip-permissions [claude args...]
+//	ccgp [--local | --home <dir>] <profile> --dangerously-skip-permissions [claude args...]
 //
 // It starts the ccgp binary that sits next to it (or the one in PATH), passes
 // the terminal and the exit code through, and does nothing else.
@@ -19,12 +19,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
 
 // skipPermissions is Claude Code's flag that disables every permission prompt.
 const skipPermissions = "--dangerously-skip-permissions"
 
-const usage = "usage: ccgpy <profile> [claude args...]   (runs: ccgp <profile> " + skipPermissions + " [claude args...])"
+const usage = "usage: ccgpy [--local | --home <dir>] <profile> [claude args...]   (runs: ccgp [--local | --home <dir>] <profile> " + skipPermissions + " [claude args...])"
 
 func main() {
 	self, _ := os.Executable()
@@ -68,16 +70,20 @@ func run(args []string, selfDir string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// ccgpArgs puts the permission-skipping flag right after the profile.
+// ccgpArgs puts the permission-skipping flag right after the profile. The home
+// flags (--local, --home <dir>) before the profile go to ccgp as they are.
 func ccgpArgs(args []string) ([]string, error) {
+	opt, args, err := home.Parse(args)
+	if err != nil {
+		return nil, err
+	}
 	if len(args) == 0 {
 		return nil, errors.New(usage)
 	}
 	if args[0] == "" || args[0][0] == '-' {
 		return nil, fmt.Errorf("the first argument must be a profile, got %q\n%s", args[0], usage)
 	}
-	out := make([]string, 0, len(args)+1)
-	out = append(out, args[0], skipPermissions)
+	out := append(opt.Args(), args[0], skipPermissions)
 	return append(out, args[1:]...), nil
 }
 

@@ -40,9 +40,32 @@ func TestCCGPArgsPutTheFlagAfterTheProfile(t *testing.T) {
 	}
 }
 
+// The home flags go to ccgp in front of the profile, as typed.
+func TestCCGPArgsPassTheHomeFlagsOn(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"--local", "codex", "-c"}, "--local|codex|--dangerously-skip-permissions|-c"},
+		{[]string{"--home", "some dir", "codex"}, "--home|some dir|codex|--dangerously-skip-permissions"},
+		{[]string{"--home=x", "codex"}, "--home|x|codex|--dangerously-skip-permissions"},
+		{[]string{"codex", "--local"}, "codex|--dangerously-skip-permissions|--local"}, // after the profile it is claude's
+	} {
+		got, err := ccgpArgs(c.in)
+		if err != nil || strings.Join(got, "|") != c.want {
+			t.Errorf("ccgpArgs(%q) = %q, %v, want %q", c.in, got, err, c.want)
+		}
+	}
+	for _, in := range [][]string{{"--local"}, {"--home"}, {"--local", "--home", "x", "codex"}} {
+		if _, err := ccgpArgs(in); err == nil {
+			t.Errorf("ccgpArgs(%q) must fail", in)
+		}
+	}
+}
+
 func TestCCGPArgsRejectsMissingProfile(t *testing.T) {
 	for _, in := range [][]string{nil, {""}, {"--model", "x"}, {"-c"}} {
-		if _, err := ccgpArgs(in); err == nil || !strings.Contains(err.Error(), "usage: ccgpy <profile>") {
+		if _, err := ccgpArgs(in); err == nil || !strings.Contains(err.Error(), "usage: ccgpy ") {
 			t.Errorf("ccgpArgs(%q) = %v, want the usage error", in, err)
 		}
 	}

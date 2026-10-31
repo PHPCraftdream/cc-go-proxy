@@ -52,3 +52,6 @@ THIRD_PARTY_LICENSES.md
 
 # /wrush task worktrees — always created here, in-tree
 /worktrees/
+
+# ccgp home directory of a project (logins and tokens)
+.ccgp/

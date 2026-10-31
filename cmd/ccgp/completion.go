@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
 
 // Shell completion. The scripts are thin: they pass the command line to the
@@ -84,6 +85,12 @@ func completeCmd(args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
+	// Names come from the home the typed flags choose; nothing is created.
+	if len(args) > 2 {
+		if opt, _, err := home.Parse(args[1 : len(args)-1]); err == nil {
+			_ = opt.Use(false)
+		}
+	}
 	for _, c := range completeWords(args, configNames()) {
 		fmt.Println(c)
 	}
@@ -135,15 +142,25 @@ func completeWords(words []string, n completionNames) []string {
 	}
 	prior := rest[:len(rest)-1]
 
+	// Home flags come first; after --home the shell completes the directory.
+	opt, prior, err := home.Parse(prior)
+	if err != nil {
+		return nil
+	}
+	var flags []string
+	if !opt.Any() {
+		flags = []string{"--local", "--home"}
+	}
+
 	var all []string
 	switch {
 	case prog == "ccgpy":
-		// ccgpy <profile> <claude args...>
+		// ccgpy [--local|--home <dir>] <profile> <claude args...>
 		if len(prior) == 0 {
-			all = call(n.profiles)
+			all = append(flags, call(n.profiles)...)
 		}
 	case len(prior) == 0:
-		all = append(commandNames(), call(n.profiles)...)
+		all = append(append(flags, commandNames()...), call(n.profiles)...)
 	case !strings.HasPrefix(prior[0], "-"):
 		// A profile run: the rest belongs to claude.
 	default:

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
 
@@ -23,13 +24,13 @@ type Store struct {
 	Dir string
 }
 
-// DefaultDir returns <UserConfigDir>/cc-go-proxy/creds.
+// DefaultDir returns <UserConfigDir>/cc-go-proxy/creds, or creds in the home directory.
 func DefaultDir() (string, error) {
-	dir, err := os.UserConfigDir()
+	dir, err := home.Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "cc-go-proxy", "creds"), nil
+	return filepath.Join(dir, "creds"), nil
 }
 
 func (s Store) tokensPath() string { return filepath.Join(s.Dir, "profile-tokens"+ktavfile.Ext) }

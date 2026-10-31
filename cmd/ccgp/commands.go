@@ -204,6 +204,12 @@ Config (Ktav):
   Override: CCGP_CONFIG. Created automatically on first run.
   Credentials are stored separately in <config dir>/cc-go-proxy/creds (owner-only).
 
+Home (a setup that shares nothing with the default one: config, logins, URL tokens, Claude dirs, log):
+  ccgp --local <profile|--command> ...   keep everything in ./.ccgp (made on first use, git-ignored)
+  ccgp --home <dir> <profile|--command>  keep everything in <dir> (also --home=<dir>)
+  The flags come first. Without them: CCGP_HOME=<dir>, else a .ccgp directory in the current directory is picked up.
+  A new home gets its own free port, so it runs its own server. ccgpy takes the same flags.
+
 Env-only mode (no config.ktav):
   OPENAI_API_KEY, PROXY_TOKEN (min 32 chars), OPENAI_BASE_URL, HOST, PORT
   Profile name: default
@@ -211,5 +217,7 @@ Env-only mode (no config.ktav):
 Example:
   ccgp codex -p "hello"
   ccgpy codex
+  ccgp --local --login codex        a separate login and settings in ./.ccgp
+  ccgp --home ~/work/ccgp work      profile work on the setup in ~/work/ccgp
 `)
 }

@@ -1,5 +1,6 @@
 // Command ccgp is a headless Claude Code -> OpenAI/Codex bridge.
 //
+//	ccgp [--local|--home <dir>] ...   keep all files in ./.ccgp or in <dir> (also CCGP_HOME, or a .ccgp dir in the current directory)
 //	ccgp <profile> [claude args...]   start server if needed, ensure creds, run claude
 //	ccgp --serve [-d] [-s]            run server in foreground
 //	ccgp --start|--stop|--status      manage background server
@@ -20,6 +21,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 
 	// Root certificates for HTTPS when the system has none (busybox, scratch and
@@ -46,6 +48,13 @@ type exitError int
 func (e exitError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
 func run(args []string) error {
+	opt, args, err := home.Parse(args)
+	if err != nil {
+		return err
+	}
+	if err := opt.Use(createsHome(args)); err != nil {
+		return err
+	}
 	inv, err := parseInvocation(args)
 	if err != nil {
 		return err
@@ -70,6 +79,19 @@ func run(args []string) error {
 		}
 	}
 	return inv.cmd.run(inv.args)
+}
+
+// createsHome tells whether the command may make the directory of --local and
+// --home: help, the version and completion write nothing.
+func createsHome(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "-h", "--help", "--version", "--complete":
+		return false
+	}
+	return len(args) < 2 || (args[1] != "--help" && args[1] != "-h")
 }
 
 // ensureConfig creates the default config on first run.
@@ -122,6 +144,7 @@ type statusProfile struct {
 }
 
 type statusData struct {
+	Home      string           `json:"home,omitempty"` // the home directory in use; empty: the default layout
 	Server    statusServer     `json:"server"`
 	LogFile   string           `json:"logFile"`
 	Config    statusConfig     `json:"config"`
@@ -159,6 +182,9 @@ func buildStatus(base, logPath string, h *angel.Health, healthErr error, cfg *co
 
 // renderStatusText prints the human-readable form of a status payload.
 func renderStatusText(w io.Writer, s statusData) error {
+	if s.Home != "" {
+		_, _ = fmt.Fprintf(w, "home:    %s\n", s.Home)
+	}
 	if s.Server.Running {
 		_, _ = fmt.Fprintf(w, "server:  %s running (pid %d) at %s\n", s.Server.Version, s.Server.PID, s.Server.URL)
 	} else {
@@ -222,6 +248,7 @@ func status(args []string) error {
 		}
 	}
 	st := buildStatus(base, logPath, h, healthErr, cfg, cfgErr, credsDir, credsErr, providers, profiles)
+	st.Home = home.Root()
 	out := io.Writer(os.Stdout)
 	var err error
 	if jsonOut {

@@ -1,14 +1,17 @@
 package config
 
 import (
+	"bytes"
 	_ "embed"
 	"errors"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
@@ -17,6 +20,26 @@ var defaultTemplate []byte
 
 // DefaultTemplate returns the config written on first run.
 func DefaultTemplate() []byte { return append([]byte(nil), defaultTemplate...) }
+
+// newConfig is the config written for a new setup. A setup in its own home
+// directory gets a free port: a server is found by its port, so two homes on
+// the default one would share a server (and its tokens).
+func newConfig() []byte {
+	t := DefaultTemplate()
+	if home.Root() == "" {
+		return t
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return t
+	}
+	defer func() { _ = l.Close() }()
+	_, port, err := net.SplitHostPort(l.Addr().String())
+	if err != nil {
+		return t
+	}
+	return bytes.Replace(t, []byte("listen.port: "+DefaultPort), []byte("listen.port: "+port), 1)
+}
 
 // EnsureFile creates the default config when none exists. It does nothing when
 // CCGP_CONFIG or PROXY_TOKEN selects another mode. Existing files are never touched.
@@ -38,7 +61,7 @@ func EnsureFile() (path string, created bool, err error) {
 	if err != nil {
 		return path, false, err
 	}
-	if _, err := f.Write(defaultTemplate); err != nil {
+	if _, err := f.Write(newConfig()); err != nil {
 		_ = f.Close()
 		return path, false, err
 	}
@@ -90,5 +113,5 @@ func ResetFile() (path, backup string, err error) {
 	if backup, err = backupFile(path); err != nil {
 		return path, "", err
 	}
-	return path, backup, securefile.WriteFile(path, defaultTemplate)
+	return path, backup, securefile.WriteFile(path, newConfig())
 }

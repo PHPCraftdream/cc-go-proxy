@@ -19,6 +19,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`) with backup and loader validation |
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
+| `internal/home` | where ccgp keeps its files: default config/cache dirs, or one home directory (`--home <dir>`, `--local` = `./.ccgp`, `CCGP_HOME`, a `.ccgp` dir in the current directory) for config, creds, Claude dirs and log; flag parsing shared with `ccgpy` |
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client (large bodies zstd-compressed with a plain fallback, `compress.go`) |
