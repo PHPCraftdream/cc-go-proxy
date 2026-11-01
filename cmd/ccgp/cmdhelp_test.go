@@ -28,6 +28,51 @@ func TestCommandHelpTextHasEntryOrFallback(t *testing.T) {
 	}
 }
 
+// Every visible command has its own long help with an example, so a new
+// command cannot ship with the one-line fallback only.
+func TestEveryVisibleCommandHasFullHelpWithExample(t *testing.T) {
+	for _, c := range commands() {
+		if c.hidden {
+			continue
+		}
+		text, ok := commandHelp[c.name]
+		if !ok {
+			t.Errorf("%s: no entry in commandHelp", c.name)
+			continue
+		}
+		if !strings.Contains(text, "Example") {
+			t.Errorf("%s: help has no example:\n%s", c.name, text)
+		}
+		if !strings.HasPrefix(text, "ccgp "+c.name) {
+			t.Errorf("%s: help does not start with the command line:\n%s", c.name, text)
+		}
+	}
+}
+
+// The long help names the flags the command's synopsis lists.
+func TestCommandHelpMentionsSynopsisFlags(t *testing.T) {
+	want := map[string][]string{
+		"--status":      {"--json"},
+		"--models":      {"--json", "apply", "-v"},
+		"--which":       {"--json"},
+		"--logs":        {"-f", "-n"},
+		"--profile":     {"--like", "--provider", "--type", "--purge", "--yes", "--json", "claude"},
+		"--connections": {"active", "total", "proxy", "--json"},
+		"--doctor":      {"--offline", "--json"},
+		"--update":      {"--check"},
+		"--login":       {"--device", "claude"},
+		"--serve":       {"-d", "-s"},
+	}
+	for name, flags := range want {
+		text := commandHelp[name]
+		for _, f := range flags {
+			if !strings.Contains(text, f) {
+				t.Errorf("%s: help does not mention %q", name, f)
+			}
+		}
+	}
+}
+
 func TestCommandHelpTextFallback(t *testing.T) {
 	c := command{name: "--restart", args: "", desc: "Restart the background server"}
 	var buf bytes.Buffer

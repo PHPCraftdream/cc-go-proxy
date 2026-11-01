@@ -30,6 +30,9 @@ func whichRoute(cfg *config.Config, profile, model string) (routeInfo, error) {
 	if !ok {
 		return routeInfo{}, fmt.Errorf("unknown profile %q (configured: %s)", profile, names(cfg.Profiles))
 	}
+	if cfg.Providers[pf.Provider].Type == config.ProviderTypeClaude {
+		return routeInfo{}, fmt.Errorf("profile %q is a Claude profile: it does not go through ccgp, so it has no model mapping", profile)
+	}
 	// Env mode: the base config is already the per-profile config (tier
 	// overrides stay active); file mode: build it like profileResolver does.
 	pcfg := cfg

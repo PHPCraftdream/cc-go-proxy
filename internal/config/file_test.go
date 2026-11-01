@@ -67,6 +67,16 @@ func TestLoadFileKtav(t *testing.T) {
 	}
 }
 
+func TestLoadFileClaudeProfile(t *testing.T) {
+	fc, err := loadFile(writeKtav(t, "providers: [\n    {\n        name: work\n        type: claude\n    }\n]\nprofiles: [\n    {\n        name: work\n        provider: work\n    }\n]\n"))
+	if err != nil {
+		t.Fatalf("loadFile: %v", err)
+	}
+	if len(fc.Providers) != 1 || fc.Providers[0].Type != ProviderTypeClaude || len(fc.Profiles) != 1 {
+		t.Errorf("config = %+v", fc)
+	}
+}
+
 func TestLoadFileErrors(t *testing.T) {
 	provider := "providers: [\n    {\n        name: p\n        type: codex_api\n    }\n]\n"
 	tests := []struct{ name, body, want string }{
@@ -75,6 +85,9 @@ func TestLoadFileErrors(t *testing.T) {
 		{"unknown provider", provider + "profiles: [\n    {\n        name: w\n        provider: nope\n    }\n]\n", "unknown provider"},
 		{"rule without model", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: *opus*\n            }\n        ]\n    }\n]\n", "required"},
 		{"claude is a send endpoint", provider + "profiles: [\n    {\n        name: claude\n        provider: p\n    }\n]\n", "reserved profile name"},
+		{"claude provider with a url", "providers: [\n    {\n        name: c\n        type: claude\n        base_url: https://x\n    }\n]\n", "takes no base_url"},
+		{"claude profile with models", "providers: [\n    {\n        name: c\n        type: claude\n    }\n]\nprofiles: [\n    {\n        name: c\n        provider: c\n        models: [\n            {\n                match: *\n                model: m\n            }\n        ]\n    }\n]\n", "does not go through ccgp"},
+		{"claude profile with a proxy", "providers: [\n    {\n        name: c\n        type: claude\n    }\n]\nprofiles: [\n    {\n        name: c\n        provider: c\n        proxy: none\n    }\n]\n", "does not go through ccgp"},
 		{"bad pattern", provider + "profiles: [\n    {\n        name: w\n        provider: p\n        models: [\n            {\n                match: op[us\n                model: x\n            }\n        ]\n    }\n]\n", "bad pattern"},
 	}
 	for _, tt := range tests {

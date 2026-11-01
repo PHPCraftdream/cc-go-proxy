@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -35,6 +37,8 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 		return err
 	}
 	switch pr.Type {
+	case config.ProviderTypeClaude:
+		return fmt.Errorf("profile %q is a Claude profile: sign in inside Claude Code (ccgp %s, then /login)", pr.Name, pr.Name)
 	case config.ProviderTypeCodex:
 		fresh, err := loginCodex(store, pr.Name, force, device, cfg.ProviderProxyChoice(pr.Name))
 		if err == nil && fresh {
@@ -176,9 +180,24 @@ func names[T any](m map[string]T) string {
 	return strings.Join(sortedKeys(m), ", ")
 }
 
+// claudeLoginState tells whether the Claude dir of a Claude profile under base
+// holds a login made inside Claude Code (the file is never read).
+func claudeLoginState(base, name string) string {
+	if claudehome.HasCredentials(filepath.Join(base, name)) {
+		return "signed in inside Claude Code"
+	}
+	return "sign in inside Claude Code (/login)"
+}
+
 // loginState describes stored credentials without exposing them.
 func loginState(store creds.Store, pr *config.Provider) string {
 	switch pr.Type {
+	case config.ProviderTypeClaude:
+		base, err := claudeHomeBase()
+		if err != nil {
+			return "error: " + err.Error()
+		}
+		return claudeLoginState(base, pr.Name)
 	case config.ProviderTypeCodex:
 		t, err := oauth.Store{Path: store.OAuthPath(pr.Name)}.Load()
 		switch {

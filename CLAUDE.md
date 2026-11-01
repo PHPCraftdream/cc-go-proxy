@@ -20,6 +20,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
 | `internal/home` | where ccgp keeps its files: default config/cache dirs, or one home directory (`--home <dir>`, `--local` = `./.ccgp`, `CCGP_HOME`, a `.ccgp` dir in the current directory) for config, creds, Claude dirs and log; flag parsing shared with `ccgpy` |
+| `internal/claudehome` | the isolated Claude Code dir of a profile: `Prepare` (proxy profiles: mirror + seeded `.claude.json`, credentials removed) and `PrepareOwn` (profiles of type `claude`, the real Claude Code: mirror only, no account state, the user's own login kept) |
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client (large bodies zstd-compressed with a plain fallback, `compress.go`) |

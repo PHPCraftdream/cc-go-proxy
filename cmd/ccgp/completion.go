@@ -273,7 +273,7 @@ func profileCandidates(sub []string, prev string, n completionNames) []string {
 		case "--provider":
 			return call(n.providers)
 		case "--type":
-			return []string{"codex", "codex_api", "anthropic_compat"}
+			return []string{"codex", "codex_api", "anthropic_compat", "claude"}
 		}
 		return []string{"--like", "--provider", "--type", "--base-url", "--model", "--window"}
 	case "list":

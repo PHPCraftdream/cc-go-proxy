@@ -14,7 +14,20 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   to the newest `luna` (was the `luna` of the release before). Fable stays on `astra`, Opus on `sol`. Run
   `ccgp --models apply` to rewrite a profile's mapping.
 
+- Documentation and help brought up to date: every command has its own `--help` with the flags and examples
+  (`--which`, `--logs`, `--restart` and `--completion` were one-liners before; `--status`, `--models`, `--send`,
+  `--profile`, `--login` say more), `docs/cli.md` gained running a profile, per-area examples, environment variables and
+  exit codes, and the new `docs/api.md` describes the HTTP endpoints (`/health`, `/call/<token>/…`) with `curl`
+  examples. A test keeps every command's help complete.
+
 ### Added
+- Profiles of the real Claude Code: `ccgp --profile add work --type claude` makes a profile (provider type `claude`)
+  that does not use the proxy at all. `ccgp work` runs `claude` with a config directory of its own, created clean:
+  only `CLAUDE.md`, `settings.json` (without credential entries), agents, commands, skills, output styles and plugins
+  are mirrored from your own Claude Code; no `.claude.json` (account, `userID`, projects, MCP servers), no sessions, no
+  history, no token. Your parent's `ANTHROPIC_*` / `CLAUDE_CODE_OAUTH_TOKEN` / Bedrock / Vertex variables are dropped.
+  You sign in with `/login` inside it, so every profile can be a different account, and as many as you like. See
+  `docs/configuration.md`.
 - A setup of its own: `ccgp --local` keeps the config, logins, URL tokens, Claude Code dirs and the server log in a
   `.ccgp` directory in the current directory, `ccgp --home <dir>` (or `CCGP_HOME`) in any directory. The flags come
   first (`ccgp --local --login codex`, `ccgpy --home ~/work/ccgp work`); a `.ccgp` directory that already exists in the

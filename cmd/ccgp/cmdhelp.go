@@ -38,26 +38,86 @@ Stop the background proxy server.
 Example:
   ccgp --stop
 `,
-	"--status": `ccgp --status
+	"--status": `ccgp --status [--json]
 
 Show whether the background server runs, where its log and config live, and
-the login state of every configured provider and profile.
+the login state of every configured provider and profile. A "home:" line
+appears when a separate home (--local, --home, CCGP_HOME, ./.ccgp) is in use.
 
-Example:
+  --json    print the same as one JSON document
+
+Exit code 3 when the server is not running (after printing).
+
+Examples:
   ccgp --status
+  ccgp --status --json
+  ccgp --local --status
 `,
 	"--login": `ccgp --login <provider> [--device]
 
-Authenticate a provider.
+Authenticate a provider (the provider name, not a profile name; a profile made
+with --like has a provider of the same name).
 
-  codex      browser OAuth flow by default; --device uses the device-code flow
+  codex      browser OAuth flow by default (prints a link, never opens the
+             browser); --device uses the device-code flow
   codex_api  asks for an API key, or reads the provider's api_key_env
   anthropic_compat
              asks for an API key
+  claude     nothing to do here: start the profile (ccgp <profile>) and sign
+             in inside Claude Code with /login
 
 Examples:
   ccgp --login codex
   ccgp --login codex --device
+  ccgp --login zai
+`,
+	"--which": `ccgp --which <profile> <model> [--json]
+
+Show, offline, where a Claude model name goes in a profile: the backend model,
+the provider, the context window and what matched (rule <glob>, default_model,
+tier setting or passthrough). The command-line twin of
+GET /call/<token>/model?requested=<model>. A profile of type claude has no
+mapping and says so.
+
+  --json    print the answer as one JSON document
+
+Examples:
+  ccgp --which codex claude-opus-4-1
+  ccgp --which zai sonnet --json
+`,
+	"--logs": `ccgp --logs [-f] [-n N]
+
+Show the tail of the background server's log (see ccgp --status for its path).
+
+  -n N    how many lines (default 50)
+  -f      follow the log as it grows, also across log rotation (Ctrl+C stops)
+
+Examples:
+  ccgp --logs
+  ccgp --logs -n 200
+  ccgp --logs -f
+`,
+	"--restart": `ccgp --restart
+
+Stop the background server (when one runs) and start a new one from this
+binary, also when requests are in flight. Use it after ccgp --update or a
+reinstall; ccgp <profile> restarts an idle outdated server by itself and only
+warns when requests are running.
+
+Example:
+  ccgp --restart
+`,
+	"--completion": `ccgp --completion bash|zsh|powershell
+
+Print a shell completion script for ccgp and ccgpy. Commands, flags and the
+names of your profiles and providers are completed.
+
+Examples:
+  source <(ccgp --completion bash)
+  source <(ccgp --completion zsh)
+  ccgp --completion powershell | Out-String | Invoke-Expression
+
+Put the line in your shell profile to keep it.
 `,
 	"--logout": `ccgp --logout <provider> [--yes]
 
@@ -86,57 +146,84 @@ the server log directory.
 Example:
   ccgp --doctor
 `,
-	"--models": `ccgp --models [apply] [-v] [profile]
+	"--models": `ccgp --models [apply] [--json] [-v] [profile]
 
-Show the newest Codex models and how they map to the Claude model tiers.
-With "apply", write the mapping into the ccgp:managed-models block of the
-profile's provider in config.ktav (a backup is kept).
+Show the newest Codex models and how they map to the Claude model tiers (and
+the built-in mapping of providers with a preset, such as z.ai). With "apply",
+write the mapping into the ccgp:managed-models block of the profile in
+config.ktav. Without a profile name, every generated profile is shown or
+written. Needs config.ktav.
 
-  -v, --verbose    list every model seen upstream
+  apply            write the mapping into the config
+  --json           print the mapping as JSON (the show form only)
+  -v, --verbose    list every model seen upstream, with all catalog fields
 
 Examples:
   ccgp --models
+  ccgp --models --json codex
   ccgp --models apply codex
+  ccgp --models apply zai
 `,
 	"--send": `ccgp --send <from> <to> [count]
 
 Copy the latest session transcripts of the current directory from one side
-to the other ("claude" or a profile name). Default count: 10. Never
-overwrites diverged data.
+to the other. A side is "claude" (your own Claude Code) or a profile name;
+the two must differ. Default count: 10, newest first. Only sessions of the
+directory you run it in are copied (what "ccgp <profile> -c" and /resume
+list). Never overwrites diverged data; a session being written is copied up
+to its last complete line. Thinking blocks are removed when the two sides use
+different providers (their signatures are not valid elsewhere).
 
 Examples:
   ccgp --send claude codex
   ccgp --send codex claude 3
+  ccgp --send codex codex2 1
 `,
 	"--import": `ccgp --import <profile> [count]
 
 Same as: ccgp --send claude <profile>
 
-Example:
+Examples:
   ccgp --import codex
+  ccgp --import work 3
 `,
 	"--export": `ccgp --export <profile> [count]
 
 Same as: ccgp --send <profile> claude
 
-Example:
+Examples:
   ccgp --export codex
+  ccgp --export zai 3
 `,
 	"--profile": `ccgp --profile add|list|rm
 
-Manage profiles (and their providers) in config.ktav.
+Manage profiles (and their providers) in config.ktav. Every change is
+validated with the real loader and keeps a config.ktav.bak-<time> backup.
 
-  add <name> --like <profile>      new profile with its OWN login
+  add [name] --like <profile>      new profile with its OWN login, copying the
+                                   source's provider type, URL and model rules
+                                   (no name: the next free <source>N)
   add <name> --provider <provider> new profile on an existing login
-                                   both accept [--model M [--window N]]
   add <name> --type <t> ...        new backend: codex | codex_api |
                                    anthropic_compat [--base-url URL]
-  list                             profiles, providers, login state
-  rm <name> [--yes] [--purge]      remove a profile; --purge also deletes its
-                                   Claude dir and unused provider credentials
+  add <name> --type claude         the real Claude Code with its own login,
+                                   nothing through ccgp; only settings, skills
+                                   and CLAUDE.md are copied, no ids, no tokens
+      --like, --provider and --type (not claude) accept [--model M [--window N]]:
+      one catch-all rule; without it the rules of the source are copied
+  list [--json]                    profiles, providers, login state, Claude dirs
+  rm <name> [--yes] [--purge]      remove a profile (and its provider when
+                                   nothing else uses it); --purge also deletes
+                                   its Claude dir and unused provider credentials
+
+add never signs in: ccgp <name> does on its first start.
 
 Examples:
   ccgp --profile add codex2 --like codex
+  ccgp --profile add codex-alt --provider codex
+  ccgp --profile add myai --type anthropic_compat --base-url https://example.internal/api --model my-model
+  ccgp --profile add work --type claude
+  ccgp --profile list --json
   ccgp --profile rm codex2 --purge
 `,
 	"--config": `ccgp --config reset

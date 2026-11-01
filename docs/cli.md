@@ -13,6 +13,32 @@ the profile goes to `claude` untouched: `ccgp codex --help` is Claude Code's hel
 `ccgp --<command> --help` prints the help of that command, `ccgp --help` lists them all, `ccgp --version` prints the
 version. `ccgpy <profile> …` is `ccgp <profile> --dangerously-skip-permissions …`.
 
+## Running a profile
+
+```sh
+ccgp codex                         # Claude Code through profile codex
+ccgp codex -c                      # everything after the profile goes to claude: continue the last session
+ccgp codex -p "explain this repo"  # headless
+ccgp zai --model opus              # a Claude model name; the profile maps it to a backend model
+ccgp work                          # a profile of type claude: the real Claude Code, no proxy (see below)
+ccgpy codex                        # same as: ccgp codex --dangerously-skip-permissions
+```
+
+For a proxy profile (`codex`, `codex_api`, `anthropic_compat`) `ccgp <profile>`, in order: loads the config, signs in if
+the provider has no login yet (a link for Codex, a key prompt otherwise), generates the profile's URL token, starts the
+background server if it is not running (or restarts an idle one from an older binary), prepares the profile's own
+Claude Code directory, copies the latest session of the current directory into a profile that has none of it
+([sessions](sessions.md#the-first-launch-of-a-profile)), and runs `claude` with `ANTHROPIC_BASE_URL` pointing at the
+profile's token URL and the compaction window of the session's main model set. The exit code is Claude Code's.
+
+A profile of type `claude` (`ccgp --profile add work --type claude`) skips all of that: no server, no token, no
+login by ccgp. `claude` runs with a clean directory of its own and you sign in inside it with `/login`
+([configuration](configuration.md#profiles-of-the-real-claude-code---type-claude)).
+
+`ccgpy <profile> …` finds the `ccgp` next to it (else in `PATH`) and runs `ccgp <profile>
+--dangerously-skip-permissions …`; it takes the home flags too (`ccgpy --local work`) and passes the terminal and the
+exit code through. It is for places where running Claude Code without permission prompts is acceptable.
+
 ## Own home: a setup that shares nothing
 
 By default the config, logins, URL tokens, Claude Code dirs and the server log live in the user's config and cache dirs.
@@ -69,6 +95,16 @@ CCGP_HOME=~/work/ccgp ccgp --logs -f
 | `--status [--json]` | Server, log, config and creds paths, login state of every provider and profile |
 | `--logs [-f] [-n N]` | Last `N` lines of the server log (default 50); `-f` follows it, also across log rotation |
 | `--serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` one line per request) |
+
+```sh
+ccgp --start && ccgp --status      # start it, see the pid, address, paths and logins
+ccgp --status --json               # the same for scripts; exit code 3 when the server is down
+ccgp --logs -n 200                 # the last 200 lines
+ccgp --logs -f                     # follow
+ccgp --restart                     # after an update: a new server from this binary
+ccgp --stop
+ccgp --serve -s                    # foreground, one line per request (stop with Ctrl+C)
+```
 
 ### Reading the log
 
@@ -152,15 +188,38 @@ after printing the JSON.
 | --- | --- |
 | `--login <provider> [--device]` | Sign in (Codex: browser OAuth, or a device code; others: API key) |
 | `--logout <provider> [--yes]` | Remove the stored OAuth tokens or API key of a provider after a confirmation. The config file is not touched, and `--yes` is required without a terminal |
-| `--profile add\|list\|rm` | See [configuration](configuration.md#creating-and-removing-profiles) |
+| `--profile add\|list\|rm` | `add NAME --like P` (own login), `--provider P` (existing login), `--type codex\|codex_api\|anthropic_compat\|claude` (new backend; `claude` = the real Claude Code, own clean directory and sign-in), `list [--json]`, `rm NAME [--yes] [--purge]`; see [configuration](configuration.md#creating-and-removing-profiles) |
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
 | `--connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy, global or of one profile (`none` = direct, `inherit` = the global one again); see [configuration](configuration.md#layout) |
+
+```sh
+ccgp --login codex                       # sign in (a link; --device for a code)
+ccgp --login zai                         # an API key, asked once
+ccgp --logout codex --yes                # forget the login (the config stays)
+ccgp --profile add codex2 --like codex   # a second account of the same kind, then: ccgp codex2
+ccgp --profile add work --type claude    # a real Claude Code profile with its own account
+ccgp --profile list --json
+ccgp --models                            # what the backend offers and the tier mapping
+ccgp --models apply codex                # write that mapping into the config
+ccgp --which codex claude-opus-4-1       # where a model name goes, offline
+ccgp --connections                       # show the limits and the proxy
+ccgp --connections proxy socks5://127.0.0.1:1080
+ccgp --config reset                      # default config, the old one is kept as a backup
+```
 
 ## Sessions
 
 `--send <from> <to> [count]`, `--import <profile> [count]`, `--export <profile> [count]`: see
 [sessions](sessions.md).
+
+```sh
+cd ~/projects/app
+ccgp --import codex          # your Claude Code's latest sessions of this directory -> profile codex
+ccgp codex -c                # carry on
+ccgp --send codex zai 3      # three latest sessions between two profiles
+ccgp --export zai            # profile zai -> your own Claude Code
+```
 
 ## Updating
 
@@ -172,6 +231,36 @@ server is running, restart it afterwards with `ccgp --restart`.
 
 Installed with npm, update with npm instead (`npm install -g @cc-go-proxy/ccgp@latest`): `--update` would replace the binary
 inside the npm package, and the next npm install would put the packaged version back.
+
+## Environment variables
+
+| Variable | Used by | Meaning |
+| --- | --- | --- |
+| `CCGP_HOME` | all | A home directory for config, logins, tokens, Claude dirs and log ([own home](#own-home-a-setup-that-shares-nothing)) |
+| `CCGP_CONFIG` | all | Another config file |
+| `HOST`, `PORT` | server | Listen address; win over `listen` in the config |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | all outbound connections | Used when no `connections.proxy` / profile `proxy` is set |
+| `CLAUDE_CONFIG_DIR` | profile runs | Your own Claude Code directory, the read-only source of the mirrored settings (a profile's own directory is set by ccgp) |
+| `ANTHROPIC_MODEL` | profile runs | The session's main model, for the compaction window |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | profile runs | Set by ccgp from the profile; yours win |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `PROXY_TOKEN`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | env-only mode | See [configuration](configuration.md#env-only-mode) |
+| `CCGP_VERSION`, `CCGP_INSTALL_DIR` | `install.sh`, `install.ps1` | Version and directory to install |
+
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN` and the Bedrock / Vertex /
+Foundry switches of the parent are removed before `claude` starts, for proxy and `claude` profiles alike.
+
+## Exit codes
+
+| Code | When |
+| --- | --- |
+| `0` | success |
+| `1` | an error (printed as `ccgp: …`); `--doctor` found a failing check |
+| `3` | `--status`: the server is not running (the status is still printed) |
+| anything | a profile run returns the exit code of `claude` |
+
+## The HTTP API
+
+The server's endpoints (`/health`, `/call/<token>/…`) are described in [api.md](api.md).
 
 ## Shell completion
 

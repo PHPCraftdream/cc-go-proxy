@@ -30,7 +30,9 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 - **Named profiles.** Each profile has its own URL token and its own provider; Claude's `fable` / `opus` / `sonnet` /
   `haiku` map to the models you choose, with the real context window of each, so compaction fires at the right time.
   Several logins are supported: `ccgp --profile add` clones a profile with its own login (a second ChatGPT account),
-  adds a profile to an existing login, or wires up a new backend.
+  adds a profile to an existing login, or wires up a new backend. `--type claude` makes a profile of the real Claude
+  Code (no proxy): a clean config directory of its own and its own sign-in, so you can keep several Claude accounts
+  ([details](docs/configuration.md#profiles-of-the-real-claude-code---type-claude)).
 - **Locked down.** Every request needs `/call/<token>/…`; the server listens on loopback; secrets are owner-only on disk.
 - **Your Claude credentials stay out.** Each profile runs Claude Code in its own config directory with your agents,
   skills, commands and plugins copied in, but never an official login or API key.
@@ -106,6 +108,20 @@ For z.ai: `ccgp --login zai` once (asks for your API key), then `ccgp zai`.
 A second ChatGPT account: `ccgp --profile add codex2 --like codex`, then `ccgp codex2` (signs in on first start).
 Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
 
+Several Claude accounts, each clean and separate (no proxy, nothing of your own login, ids or sessions copied):
+`ccgp --profile add work --type claude`, then `ccgp work` and `/login` inside. Details:
+[profiles of the real Claude Code](docs/configuration.md#profiles-of-the-real-claude-code---type-claude).
+
+Bring a conversation along: `cd` into the project and `ccgp --import codex` (your Claude Code's latest sessions of this
+directory into profile `codex`), then `ccgp codex -c`. A proxy profile that has none of this directory's sessions gets
+the latest one by itself on its first start. Details: [sessions](docs/sessions.md).
+
+A setup of its own that shares nothing with the default one: `ccgp --local --login codex` (everything in `./.ccgp`),
+`ccgp --home ~/work/ccgp work`. Details: [own home](docs/cli.md#own-home-a-setup-that-shares-nothing).
+
+Check everything: `ccgp --doctor`; look at the server: `ccgp --status`, `ccgp --logs -f`; where a model goes:
+`ccgp --which codex claude-opus-4-1`.
+
 Behind a proxy: `ccgp --connections proxy socks5://127.0.0.1:1080` (or `http://user:pass@host:3128`) for everything,
 `ccgp --connections proxy http://corp:3128 profile work` for one profile, `proxy none profile home` to bypass it,
 `ccgp --connections proxy off` to remove it. A change applies on the next request.
@@ -127,7 +143,7 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |
 | `ccgp --import <profile> [count]` | Alias of `ccgp --send claude <profile>` |
 | `ccgp --export <profile> [count]` | Alias of `ccgp --send <profile> claude` |
-| `ccgp --profile add\|list\|rm` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type`) |
+| `ccgp --profile add\|list\|rm` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type codex\|codex_api\|anthropic_compat`), profiles of the real Claude Code with their own account (`--type claude`) |
 | `ccgp --start` / `--stop` / `--restart` | Manage the background server |
 | `ccgp --status [--json]` | Show the server, paths and login state |
 | `ccgp --logs [-f] [-n N]` | Show the tail of the background server log, `-f` follows it |
@@ -167,9 +183,10 @@ upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg an
 
 | | |
 | --- | --- |
-| [CLI reference](docs/cli.md) | Every command: flags, `--json`, `--doctor`, `--restart`, `--update`, completion |
+| [CLI reference](docs/cli.md) | Every command with examples: running a profile, own home, server and log, `--json`, `--doctor`, `--update`, completion, environment variables, exit codes |
+| [HTTP API](docs/api.md) | `/health` and `/call/<token>/…`: the endpoints, tokens, errors, `curl` examples |
 | [Configuration](docs/configuration.md) | Config file, providers, profiles (`--profile add` / `rm`), model rules, context windows |
-| [Providers](docs/providers.md) | Codex, API keys, z.ai: sign-in, model mapping, effort levels |
+| [Providers](docs/providers.md) | Codex, API keys, z.ai, the real Claude Code: sign-in, model mapping, effort levels |
 | [Sessions](docs/sessions.md) | `ccgp --send`, `--import` / `--export`, thinking blocks |
 | [Security](docs/security.md) | Token URLs, secrets at rest, why official credentials never reach a session |
 | [Architecture](docs/architecture.md) | Layout, request flow, invariants |

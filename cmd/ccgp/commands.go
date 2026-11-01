@@ -196,6 +196,7 @@ Profiles:
   ccgp --profile add [name] --like <profile>      New profile with its OWN login (e.g. a second Codex account: ccgp codex2)
   ccgp --profile add <name> --provider <p>        New profile on an existing login [--model M [--window N]]
   ccgp --profile add <name> --type <t> ...        New backend: codex | codex_api | anthropic_compat [--base-url URL] [--model M]
+  ccgp --profile add <name> --type claude         The real Claude Code with its own login (a clean dir: settings only, no ids or tokens)
   ccgp --profile list                             Show profiles, providers, login state and Claude dirs
   ccgp --profile rm <name> [--yes] [--purge]      Remove a profile (its provider too when unused; --purge deletes data)
 

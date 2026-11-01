@@ -24,6 +24,9 @@ const (
 	// Messages API (z.ai and others): requests are forwarded unconverted.
 	ProviderTypeAnthropicCompat = "anthropic_compat"
 	ProviderTypeCodex           = "codex" // ChatGPT subscription via OAuth, Responses API
+	// ProviderTypeClaude is the real Claude Code with its own login: nothing goes
+	// through the proxy, ccgp only keeps a clean config dir for the profile.
+	ProviderTypeClaude = "claude"
 )
 
 // legacyTypeOpenAI is the former name of ProviderTypeCodexAPI.
@@ -142,24 +145,28 @@ func (fc *fileConfig) validate() error {
 	if err := validateConnections(fc.Connections.Active, fc.Connections.Total, fc.Connections.Proxy); err != nil {
 		return err
 	}
-	providers := map[string]bool{}
+	providers := map[string]string{}
 	for i, pr := range fc.Providers {
 		if pr.Name == "" {
 			return fmt.Errorf("providers[%d]: name is required", i)
 		}
-		if providers[pr.Name] {
+		if _, dup := providers[pr.Name]; dup {
 			return fmt.Errorf("providers[%d]: duplicate name %q", i, pr.Name)
 		}
 		switch pr.Type {
 		case ProviderTypeCodex, ProviderTypeCodexAPI:
+		case ProviderTypeClaude:
+			if pr.BaseURL != "" || pr.APIKeyEnv != "" || len(pr.EffortMap) > 0 {
+				return fmt.Errorf("provider %q: type %q takes no base_url, api_key_env or effort_map (it signs in inside Claude Code)", pr.Name, pr.Type)
+			}
 		case ProviderTypeAnthropicCompat:
 			if pr.BaseURL == "" {
 				return fmt.Errorf("provider %q: base_url is required for type %q", pr.Name, pr.Type)
 			}
 		default:
-			return fmt.Errorf("provider %q: type must be %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat)
+			return fmt.Errorf("provider %q: type must be %q, %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat, ProviderTypeClaude)
 		}
-		providers[pr.Name] = true
+		providers[pr.Name] = pr.Type
 	}
 	profiles := map[string]bool{}
 	for i, pf := range fc.Profiles {
@@ -181,8 +188,12 @@ func (fc *fileConfig) validate() error {
 		if reservedProfiles[pf.Name] {
 			return fmt.Errorf("profiles[%d]: %q is a reserved profile name (claude is the ccgp --send endpoint)", i, pf.Name)
 		}
-		if !providers[pf.Provider] {
+		ptype, known := providers[pf.Provider]
+		if !known {
 			return fmt.Errorf("profile %q: unknown provider %q", pf.Name, pf.Provider)
+		}
+		if ptype == ProviderTypeClaude && (pf.Proxy != "" || len(pf.Models) > 0 || pf.DefaultModel != "" || pf.ContextWindow != 0 || pf.CompactPercent != 0) {
+			return fmt.Errorf("profile %q: a %q profile does not go through ccgp, so proxy, models, default_model, context_window and compact_percent do not apply", pf.Name, ProviderTypeClaude)
 		}
 		for j, r := range pf.Models {
 			if r.Match == "" || r.Model == "" {

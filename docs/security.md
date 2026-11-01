@@ -53,6 +53,15 @@ session of this directory from your Claude Code (read only on your side).
 The only way ccgp writes into your own Claude Code directory is `ccgp --send ... claude` (or its alias
 `ccgp --export`), under `projects/`.
 
+## Profiles of the real Claude Code
+
+A profile of type `claude` (`ccgp --profile add work --type claude`) is the one case where a Claude login exists in a
+ccgp-managed directory, and it is one you make yourself: ccgp runs `claude` with the profile's own config directory and
+leaves the signing in (`/login`) to Claude Code. ccgp does not read, forward, copy or store that login, nothing goes
+through the proxy, and the directory is created clean: no `.claude.json`, credentials, sessions, history or ids of your
+own Claude Code, only the settings and tooling listed under [configuration](configuration.md#profiles-of-the-real-claude-code---type-claude).
+The parent's endpoint and credential variables are dropped before `claude` starts.
+
 ## Third-party terms
 
 Using a ChatGPT subscription through a third-party client is subject to OpenAI's terms. Anthropic's terms

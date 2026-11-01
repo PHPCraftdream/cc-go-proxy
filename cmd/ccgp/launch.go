@@ -26,8 +26,12 @@ func launch(profile string, claudeArgs []string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := cfg.Profiles[profile]; !ok {
+	pf, ok := cfg.Profiles[profile]
+	if !ok {
 		return fmt.Errorf("unknown profile %q (configured: %s)", profile, names(cfg.Profiles))
+	}
+	if cfg.Providers[pf.Provider].Type == config.ProviderTypeClaude {
+		return launchOwn(profile, claudeArgs)
 	}
 
 	token := cfg.Token // env-only mode
@@ -57,11 +61,17 @@ func launch(profile string, claudeArgs []string) error {
 		return err
 	}
 	seedProfileSessions(os.Stderr, cfg, profile)
-	cmd := exec.Command(claude, claudeArgs...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = compactEnv(
+	env := compactEnv(
 		claudeEnv(os.Environ(), angel.BaseURL(cfg.Host, cfg.Port)+"/call/"+token, configDir),
 		cfg.Profiles[profile], mainModel(claudeArgs, os.Getenv, configDir))
+	return runClaude(claude, claudeArgs, env)
+}
+
+// runClaude runs claude on the terminal and returns its exit code as exitError.
+func runClaude(claude string, args, env []string) error {
+	cmd := exec.Command(claude, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = env
 
 	// Ctrl+C goes to claude (same console group); ccgp must not exit first.
 	sig := make(chan os.Signal, 1)
@@ -76,6 +86,39 @@ func launch(profile string, claudeArgs []string) error {
 		return err
 	}
 	return nil
+}
+
+// launchOwn runs the real Claude Code for a profile of type claude: no server,
+// no proxy, no token. The profile's config dir gets the shared settings only
+// (see claudehome.PrepareOwn); the account is signed in by Claude Code itself.
+func launchOwn(profile string, claudeArgs []string) error {
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		return errors.New("claude not found in PATH")
+	}
+	configDir, err := prepareOwnHome(profile)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(configDir, ".claude.json")); err != nil {
+		fmt.Fprintf(os.Stderr, "ccgp: new Claude profile %q: sign in inside Claude Code (/login); nothing of your own login is copied\n", profile)
+	}
+	return runClaude(claude, claudeArgs, ownEnv(os.Environ(), configDir))
+}
+
+// ownEnv points Claude Code at the profile's config dir and drops every
+// endpoint/credential variable of the parent, so the profile's account is the
+// only one it can use.
+func ownEnv(env []string, configDir string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if claudehome.IsAuthEnv(k) || strings.EqualFold(k, "CLAUDE_CONFIG_DIR") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "CLAUDE_CONFIG_DIR="+configDir)
 }
 
 // The range of CLAUDE_CODE_AUTO_COMPACT_WINDOW that Claude Code takes as is.
@@ -171,11 +214,7 @@ func claudeHomeBase() (string, error) {
 // prepareClaudeHome creates the profile's isolated Claude Code config dir
 // (no official credentials) mirrored from the user's own one, and returns it.
 func prepareClaudeHome(profile string) (string, error) {
-	base, err := claudeHomeBase()
-	if err != nil {
-		return "", err
-	}
-	src, srcState, err := officialClaudeDir(base)
+	base, src, srcState, err := claudeSource()
 	if err != nil {
 		return "", err
 	}
@@ -184,6 +223,32 @@ func prepareClaudeHome(profile string) (string, error) {
 		return "", err
 	}
 	return dst, nil
+}
+
+// prepareOwnHome creates the config dir of a profile of type claude: the shared
+// settings of the user's Claude Code, nothing of its account (claudehome.PrepareOwn).
+func prepareOwnHome(profile string) (string, error) {
+	base, src, _, err := claudeSource()
+	if err != nil {
+		return "", err
+	}
+	dst := filepath.Join(base, profile)
+	if err := claudehome.PrepareOwn(src, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
+// claudeSource returns the root of the profile dirs and the user's own Claude
+// Code dir with its state file.
+func claudeSource() (base, src, srcState string, err error) {
+	if base, err = claudeHomeBase(); err != nil {
+		return "", "", "", err
+	}
+	if src, srcState, err = officialClaudeDir(base); err != nil {
+		return "", "", "", err
+	}
+	return base, src, srcState, nil
 }
 
 // officialClaudeDir returns the user's own Claude Code config dir and its

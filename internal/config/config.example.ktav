@@ -31,6 +31,11 @@ connections.total: 10
 ## `ccgp --connections proxy URL|off` sets and removes it.
 # connections.proxy: socks5://127.0.0.1:1080
 
+## A real Claude Code with an account of its own (no proxy, a clean config directory) is
+## created with `ccgp --profile add work --type claude`, which adds to providers:
+##     { name: work   type: claude }       (one object per line group, as below)
+## and to profiles: { name: work   provider: work }. Sign in inside it with /login.
+## It takes no base_url, models, proxy, context_window or compact_percent.
 providers: [
     ## "codex": your ChatGPT subscription via OAuth (`ccgp --login codex`, or `--device` for device code).
     {

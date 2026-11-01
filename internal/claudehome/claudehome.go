@@ -2,6 +2,8 @@
 // ccgp profile. The directory never holds an official (claude.ai / Anthropic
 // API) credential, so a gateway session can never pick one up, while the
 // user's shared instructions and tooling are mirrored from the real one.
+// PrepareOwn serves profiles of the real Claude Code: the same mirror, but no
+// account state is seeded and the profile's own login is kept.
 package claudehome
 
 import (
@@ -49,6 +51,29 @@ func Prepare(src, srcState, dst string) error {
 		return fmt.Errorf("claudehome: remove credentials from %s: %w", dst, err)
 	}
 
+	if err := mirrorShared(src, dst); err != nil {
+		return err
+	}
+	return seedState(srcState, filepath.Join(dst, ".claude.json"))
+}
+
+// PrepareOwn makes dst the config dir of a profile that runs the real Claude
+// Code with its own login. Only the shared tooling and settings are mirrored
+// from src (see mirrorShared): no .claude.json, session or account data is
+// carried over, and a login made in dst is kept.
+func PrepareOwn(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
+	}
+	if same(src, dst) {
+		return errors.New("claudehome: destination is the user's own Claude Code config dir")
+	}
+	return mirrorShared(src, dst)
+}
+
+// mirrorShared copies the instructions, settings (without credential entries),
+// agents, commands, skills, output styles and plugins from src to dst.
+func mirrorShared(src, dst string) error {
 	for _, name := range mirroredFiles {
 		if err := mirrorFile(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err
@@ -69,7 +94,7 @@ func Prepare(src, srcState, dst string) error {
 	if err := rewritePluginPaths(src, dst); err != nil {
 		return fmt.Errorf("claudehome: %w", err)
 	}
-	return seedState(srcState, filepath.Join(dst, ".claude.json"))
+	return nil
 }
 
 func same(a, b string) bool {

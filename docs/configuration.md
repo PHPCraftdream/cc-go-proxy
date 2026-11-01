@@ -152,8 +152,8 @@ show it as `***`.
 | Key | Meaning |
 | --- | --- |
 | `name` | Referenced by profiles. |
-| `type` | `codex` — ChatGPT subscription via OAuth (Responses API). `codex_api` — OpenAI-compatible Chat Completions with an API key, pay per token (`openai` is the old name and still works). `anthropic_compat` — an Anthropic-compatible endpoint such as z.ai, forwarded unconverted. |
-| `base_url` | Endpoint. Optional for `codex`. |
+| `type` | `codex` — ChatGPT subscription via OAuth (Responses API). `codex_api` — OpenAI-compatible Chat Completions with an API key, pay per token (`openai` is the old name and still works). `anthropic_compat` — an Anthropic-compatible endpoint such as z.ai, forwarded unconverted. `claude` — the real Claude Code with a login of its own, nothing goes through ccgp (see below). |
+| `base_url` | Endpoint. Optional for `codex`; not allowed for `claude`. |
 | `api_key_env` | Take the key from this environment variable instead of the creds directory. |
 | `effort_map` | `anthropic_compat` only: rewrite Claude Code's effort level (`low`, `medium`, `high`, `xhigh`, `max`) before forwarding, for providers with fewer levels. |
 
@@ -166,6 +166,7 @@ show it as `***`.
 | `models[]` | Ordered rules; the first whose `match` glob fits the requested Claude model wins. |
 | `context_window` | Optional override of the window the launcher tells Claude Code about. |
 | `compact_percent` | Optional 1-100: compact earlier than Claude Code's default. |
+| `proxy` | Optional: a proxy URL for this profile, or `none` for a direct connection; without it the global `connections.proxy` applies ([above](#listen)). |
 | `default_model` | Legacy; prefer a final `match: *` rule. |
 
 A rule is `match` (glob on the Claude model name, e.g. `*opus*`), `model` (what the backend is asked for)
@@ -179,6 +180,7 @@ ccgp can edit the config for you; every change is surgical, validated and backed
 ccgp --profile add codex2 --like codex                       # new login + profile, copying the source profile
 ccgp --profile add codex-alt --provider codex                # new profile on the existing codex login
 ccgp --profile add myai --type anthropic_compat --base-url https://example.internal/api --model my-model
+ccgp --profile add work --type claude                        # the real Claude Code, its own clean dir and login
 ccgp --profile list
 ccgp --profile rm codex2 [--yes] [--purge]
 ```
@@ -194,7 +196,7 @@ ccgp --profile rm codex2 [--yes] [--purge]
   (`--window N` sets the window, default 272000 — the command says so); without, the rules of the provider's
   first profile (by name) are copied. If the provider has no profile yet, the new one gets no rules and the
   command tells you to run `ccgp --models apply <name>` (codex and preset providers) or to add a `models` list.
-- `--type <codex|codex_api|anthropic_compat>` [--base-url URL] creates a new backend (OpenRouter, Ollama, any
+- `--type <codex|codex_api|anthropic_compat|claude>` [--base-url URL] creates a new backend (OpenRouter, Ollama, any
   Anthropic-compatible API). Without `--model`, a `codex` provider or one whose URL has a built-in preset gets
   an empty managed block, ready for `ccgp --models apply <name>`.
 - `--profile add` never signs in; it prints `run: ccgp <name>` — the launcher signs in on first start.
@@ -207,6 +209,30 @@ ccgp --profile rm codex2 [--yes] [--purge]
   Without `--purge` it lists what stays behind (the isolated Claude dir, and the provider's credentials if the
   provider was removed); `--purge` deletes `<config dir>/cc-go-proxy/claude/<name>` and, if the provider was
   removed, its credentials.
+
+### Profiles of the real Claude Code (`--type claude`)
+
+`ccgp --profile add work --type claude` (and `personal`, `team`, … as many as you need) makes a profile that
+does **not** use the proxy: `ccgp work` starts no server, needs no token and sets no `ANTHROPIC_BASE_URL`; it runs
+`claude` with `CLAUDE_CONFIG_DIR=<home>/claude/work`. The point is a clean, separate Claude Code per profile, for
+example one per Anthropic account:
+
+- The directory is created from nothing. Copied from your own Claude Code at every launch, one way: `CLAUDE.md`,
+  `keybindings.json`, `settings.json` (without `apiKeyHelper`, `forceLogin*`, cloud-auth entries and the credential
+  variables in `env`), and the `agents`, `commands`, `skills`, `output-styles` and `plugins` folders.
+- **Never copied:** `.claude.json` (so no account, `userID`, project list or MCP server settings), `.credentials.json`,
+  sessions and projects, history, todos, anything else. A first launch does not seed a session either (unlike the
+  proxy profiles); move one on purpose with [`ccgp --send`](sessions.md) if you want it.
+- The variables of the parent that choose an endpoint or a credential (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, Bedrock, Vertex, Foundry) are dropped, so the profile can only use
+  the account you sign in with.
+- You sign in yourself: the first `ccgp work` shows Claude Code's own sign-in, or type `/login`. The login lives in the
+  profile's directory only; ccgp never reads, copies or stores it, and a login made there is kept between launches.
+  `--profile list` shows `signed in inside Claude Code` once the directory holds one.
+- It takes no `base_url`, `models`, `default_model`, `context_window`, `compact_percent` or `proxy` (the config loader
+  rejects them), and `--model`, `--window`, `--base-url`, `--models apply`, `--which`, `--login` and
+  `--connections proxy … profile` do not apply to it.
+- `--profile rm work` keeps the directory (it holds the sign-in) unless `--purge` is given.
 
 ### Reserved profile names
 

@@ -32,7 +32,9 @@ Code first, the same way as `ccgp --import <profile> 1`, so `/resume` or `-c` ca
 (Claude Code lists the sessions of the current directory only: without one, `-c` says `No conversation found to
 continue`). It happens once per directory: after that the profile has a session of it and nothing is copied at
 launch. If Claude Code has no session for this directory, nothing is copied and nothing is printed. A copy that
-fails only prints a note on stderr; the profile starts anyway.
+fails only prints a note on stderr; the profile starts anyway. Profiles of type `claude` (the real Claude Code,
+[configuration](configuration.md#profiles-of-the-real-claude-code---type-claude)) are created clean and get no such
+copy; bring a session in on purpose with `ccgp --import <profile>`.
 
 ## What is copied
 

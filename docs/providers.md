@@ -8,6 +8,7 @@ to a provider and to model-mapping rules ([configuration.md](configuration.md)).
 | `codex` | ChatGPT Codex, with a ChatGPT subscription | Anthropic Messages → OpenAI Responses API | OAuth, refresh token rotates |
 | `codex_api` | OpenAI, OpenRouter, Ollama, any OpenAI-compatible API | Anthropic Messages → Chat Completions | API key |
 | `anthropic_compat` | z.ai GLM, any Anthropic-compatible endpoint | Anthropic Messages, forwarded unconverted | API key |
+| `claude` | The real Claude Code, no proxy | none: `claude` talks to Anthropic itself | your own login inside Claude Code (`/login`), never read by ccgp |
 
 `ccgp --login <provider>` authenticates; every `ccgp <profile>` run also does it when credentials are missing.
 
@@ -97,6 +98,28 @@ z.ai has three effort levels, so Claude Code's five are converted by the provide
 `count_tokens` is forwarded; if an endpoint lacks it, a length estimate keeps Claude Code working.
 
 Endpoint and model data: [docs.z.ai](https://docs.z.ai/devpack/tool/claude).
+
+## `claude` — the real Claude Code
+
+Not a backend: a profile of this type does not use the proxy. It is for keeping several separate Claude Code
+setups (say a personal and a work Anthropic account) next to your Codex and z.ai profiles.
+
+```sh
+ccgp --profile add work --type claude       # provider and profile "work"
+ccgp --profile add personal --type claude
+ccgp work                                   # first run: Claude Code's own sign-in (/login) inside the profile
+ccgp personal -c                            # another account, another history, another settings copy
+ccgp --profile list                         # LOGIN: "signed in inside Claude Code" once /login was done
+```
+
+`ccgp work` runs `claude` with `CLAUDE_CONFIG_DIR=<home>/claude/work`, created clean: only `CLAUDE.md`, settings
+(without credential entries), agents, commands, skills, output styles and plugins are mirrored from your own Claude Code;
+no `.claude.json`, account id, `userID`, MCP settings, sessions or history are copied, and the parent's
+`ANTHROPIC_*` / OAuth / Bedrock / Vertex variables are dropped. The sign-in is yours, made inside Claude Code; ccgp never
+reads or stores it. The profile has no URL token, no model rules and no `--login` / `--models` / `--which` /
+proxy settings. To bring a conversation in on purpose use [`ccgp --import work`](sessions.md). Details and the exact
+rules: [configuration](configuration.md#profiles-of-the-real-claude-code---type-claude),
+[security](security.md#profiles-of-the-real-claude-code).
 
 ## The model identity
 

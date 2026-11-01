@@ -13,6 +13,14 @@ running → make sure the provider has credentials (sign-in link or key prompt) 
 token → prepare the isolated Claude Code config directory → run `claude` with `ANTHROPIC_BASE_URL` pointing at
 `/call/<token>` and with the context-window variables set.
 
+A profile of type `claude` takes a shorter path: no server, token or sign-in by ccgp. It prepares a clean config
+directory (`claudehome.PrepareOwn`: the shared settings and tooling only, no account state) and runs `claude` with
+that `CLAUDE_CONFIG_DIR` and the parent's credential variables removed; Claude Code talks to Anthropic itself.
+
+Where ccgp keeps its files (config, creds, Claude dirs, log) is decided once at start by `internal/home`: the default
+user dirs, or one home directory (`--local`, `--home <dir>`, `CCGP_HOME`, a `.ccgp` directory in the current
+directory). HTTP endpoints: [api.md](api.md).
+
 ## Layout
 
 | Path | Role |
@@ -28,7 +36,9 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 | `internal/proxydial` | SOCKS5 (RFC 1928/1929) and HTTP(S) `CONNECT` dialers for `connections.proxy`; `Choice` (a proxy, none, or the environment's) carried on the request context, so the profile's choice (`Config.ProxyChoice`) picks the way out per request; a default for requests without one |
 | `internal/converter` | Messages ↔ Chat Completions for `codex_api` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload, handlers |
-| `internal/claudehome` | The isolated Claude Code config directory and its one-way mirror |
+| `internal/claudehome` | The isolated Claude Code config directory and its one-way mirror (`Prepare` for proxy profiles, with a seeded `.claude.json`; `PrepareOwn` for profiles of the real Claude Code, settings only) |
+| `internal/home` | Where ccgp keeps its files: default dirs or one home directory; flag parsing shared by `ccgp` and `ccgpy` |
+| `internal/ktavfile` | Reads and writes ccgp's own Ktav files (logins, URL tokens, mirror manifest), verified to read back |
 | `internal/sessions` | `--send` (aliases `--import` / `--export`): streaming, append-only session copy and thinking-block removal |
 | `internal/identity` | Model-identity sentence rewrite |
 | `internal/preset` | Built-in mappings and effort maps for known providers (z.ai) |

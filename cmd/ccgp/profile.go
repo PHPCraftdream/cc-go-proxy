@@ -35,7 +35,7 @@ type profileAddOpts struct {
 // profileCmd implements `ccgp --profile <add|list|rm>`.
 func profileCmd(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge]")
+		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge]")
 	}
 	if cfg.IsEnvMode() {
 		return errors.New("ccgp --profile needs config.ktav (env-only mode has a single implicit profile)")
@@ -157,7 +157,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 	}
 	if chosen != 1 {
-		return errors.New("usage: ccgp --profile add <name> --like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat> [--base-url URL] [--model M [--window N]] (exactly one of --like, --provider, --type)")
+		return errors.New("usage: ccgp --profile add <name> --like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude> [--base-url URL] [--model M [--window N]] (exactly one of --like, --provider, --type)")
 	}
 
 	data, err := os.ReadFile(cfgPath)
@@ -194,6 +194,9 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		if !ok {
 			return fmt.Errorf("unknown provider %q (configured: %s)", opts.Provider, names(cfg.Providers))
 		}
+		if pr.Type == config.ProviderTypeClaude {
+			return fmt.Errorf("provider %q is a Claude profile: every Claude account is its own profile (ccgp --profile add <name> --type claude)", opts.Provider)
+		}
 		providerName, providerType, providerURL = opts.Provider, pr.Type, pr.BaseURL
 		if !opts.HasModel {
 			// Copy the mapping of the provider's first profile (by name).
@@ -210,8 +213,12 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 	case opts.Type != "":
 		switch opts.Type {
 		case config.ProviderTypeCodex, config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat:
+		case config.ProviderTypeClaude:
+			if opts.BaseURL != "" || opts.HasModel || opts.HasWindow {
+				return fmt.Errorf("--type %s goes straight to Claude: --base-url, --model and --window do not apply", opts.Type)
+			}
 		default:
-			return fmt.Errorf("--type must be %q, %q or %q", config.ProviderTypeCodex, config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat)
+			return fmt.Errorf("--type must be %q, %q, %q or %q", config.ProviderTypeCodex, config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat, config.ProviderTypeClaude)
 		}
 		providerName, providerType, providerURL = opts.Name, opts.Type, opts.BaseURL
 		prov = &config.ProviderSpec{Name: opts.Name, Type: opts.Type, BaseURL: opts.BaseURL}
@@ -267,6 +274,14 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		return err
 	}
 
+	if providerType == config.ProviderTypeClaude {
+		_, _ = fmt.Fprintf(w, "created Claude profile %q: the real Claude Code with its own login, nothing goes through ccgp\n", name)
+		if backup != "" {
+			_, _ = fmt.Fprintf(w, "backup: %s\n", backup)
+		}
+		_, _ = fmt.Fprintf(w, "run: ccgp %s   (sign in inside Claude Code with /login; only settings, CLAUDE.md, skills and agents are copied from your own Claude Code)\n", name)
+		return nil
+	}
 	if prov != nil {
 		_, _ = fmt.Fprintf(w, "created profile %q with its own provider %q (type %s)\n", name, name, providerType)
 	} else {
@@ -309,7 +324,7 @@ func buildProfileRows(cfg *config.Config, store creds.Store, claudeBase string) 
 		pf := cfg.Profiles[name]
 		pr := cfg.Providers[pf.Provider]
 		mainModel := "-"
-		if m, ok := (&config.Config{ModelRules: pf.Models, DefaultModel: pf.DefaultModel}).ResolveModel("sonnet"); ok {
+		if m, ok := (&config.Config{ModelRules: pf.Models, DefaultModel: pf.DefaultModel}).ResolveModel("sonnet"); ok && pr.Type != config.ProviderTypeClaude {
 			mainModel = m
 		}
 		claudeDir := false
@@ -318,7 +333,11 @@ func buildProfileRows(cfg *config.Config, store creds.Store, claudeBase string) 
 				claudeDir = true
 			}
 		}
-		rows = append(rows, profileRow{Name: name, Provider: pf.Provider, Type: pr.Type, Login: loginState(store, pr), MainModel: mainModel, ClaudeDir: claudeDir})
+		login := loginState(store, pr)
+		if pr.Type == config.ProviderTypeClaude {
+			login = claudeLoginState(claudeBase, name)
+		}
+		rows = append(rows, profileRow{Name: name, Provider: pf.Provider, Type: pr.Type, Login: login, MainModel: mainModel, ClaudeDir: claudeDir})
 	}
 	return rows
 }
@@ -418,6 +437,7 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 		return fmt.Errorf("drop the URL token of %q: %w", opts.Name, err)
 	}
 	providerRemoved := refs == 1
+	own := cfg.Providers[provider].Type == config.ProviderTypeClaude
 	if providerRemoved {
 		// RemoveProfileText already dropped the provider object from the config.
 		delete(cfg.Providers, provider)
@@ -443,7 +463,7 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 			return err
 		}
 		_, _ = fmt.Fprintf(w, "deleted the Claude dir %s\n", dir)
-		if providerRemoved {
+		if providerRemoved && !own {
 			if err := store.DeleteProviderCreds(provider); err != nil {
 				return err
 			}
@@ -453,10 +473,14 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 	}
 	if dirErr == nil {
 		if _, err := os.Stat(dir); err == nil {
-			_, _ = fmt.Fprintf(w, "kept the Claude dir %s (delete it with --purge)\n", dir)
+			if own {
+				_, _ = fmt.Fprintf(w, "kept the Claude dir %s with its sign-in (delete it with --purge)\n", dir)
+			} else {
+				_, _ = fmt.Fprintf(w, "kept the Claude dir %s (delete it with --purge)\n", dir)
+			}
 		}
 	}
-	if providerRemoved {
+	if providerRemoved && !own {
 		// The provider is gone from the config, so nothing uses its login now.
 		_, _ = fmt.Fprintf(w, "left behind: the credentials of provider %q in %s (delete them with --purge)\n", provider, store.Dir)
 	}
