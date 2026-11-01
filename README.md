@@ -39,6 +39,9 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 - **Separate setups.** `ccgp --local` / `ccgp --home <dir>` (or a `.ccgp` directory in the project) keep the config,
   logins, tokens, Claude dirs and the log in one directory that shares nothing with the default setup
   ([details](docs/cli.md#own-home-a-setup-that-shares-nothing)).
+- **Through a proxy.** SOCKS5, HTTP `CONNECT` and HTTPS proxies for every outbound connection (models, sign-in, token
+  refresh, update), global or per profile, with `none` for a direct connection; without a setting the `HTTPS_PROXY` /
+  `HTTP_PROXY` / `NO_PROXY` environment applies ([details](docs/configuration.md#layout)).
 - **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command, and
   `ccgp --profile add` / `rm` validate the result and keep a backup first ([details](docs/configuration.md)).
 - **Windows first**, also Linux and macOS; Windows is tested in CI.
@@ -102,6 +105,10 @@ For z.ai: `ccgp --login zai` once (asks for your API key), then `ccgp zai`.
 
 A second ChatGPT account: `ccgp --profile add codex2 --like codex`, then `ccgp codex2` (signs in on first start).
 Details: [profiles](docs/configuration.md#creating-and-removing-profiles).
+
+Behind a proxy: `ccgp --connections proxy socks5://127.0.0.1:1080` (or `http://user:pass@host:3128`) for everything,
+`ccgp --connections proxy http://corp:3128 profile work` for one profile, `proxy none profile home` to bypass it,
+`ccgp --connections proxy off` to remove it. A change applies on the next request.
 
 ## Commands
 
