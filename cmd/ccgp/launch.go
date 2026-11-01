@@ -30,7 +30,7 @@ func launch(profile string, claudeArgs []string) error {
 	if !ok {
 		return fmt.Errorf("unknown profile %q (configured: %s)", profile, names(cfg.Profiles))
 	}
-	if cfg.Providers[pf.Provider].Type == config.ProviderTypeClaude {
+	if isClaudeProfile(cfg, pf) {
 		return launchOwn(profile, claudeArgs)
 	}
 

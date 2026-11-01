@@ -437,7 +437,7 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 		return fmt.Errorf("drop the URL token of %q: %w", opts.Name, err)
 	}
 	providerRemoved := refs == 1
-	own := cfg.Providers[provider].Type == config.ProviderTypeClaude
+	own := isClaudeProfile(cfg, pf)
 	if providerRemoved {
 		// RemoveProfileText already dropped the provider object from the config.
 		delete(cfg.Providers, provider)
@@ -485,4 +485,11 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 		_, _ = fmt.Fprintf(w, "left behind: the credentials of provider %q in %s (delete them with --purge)\n", provider, store.Dir)
 	}
 	return nil
+}
+
+// isClaudeProfile reports whether pf runs the real Claude Code (provider type
+// claude) and so does not go through ccgp.
+func isClaudeProfile(cfg *config.Config, pf *config.Profile) bool {
+	pr := cfg.Providers[pf.Provider]
+	return pr != nil && pr.Type == config.ProviderTypeClaude
 }

@@ -74,10 +74,10 @@ func TestCommandHelpMentionsSynopsisFlags(t *testing.T) {
 }
 
 func TestCommandHelpTextFallback(t *testing.T) {
-	c := command{name: "--restart", args: "", desc: "Restart the background server"}
+	c := command{name: "--nosuch", args: "", desc: "Restart the background server"}
 	var buf bytes.Buffer
 	printCommandHelp(&buf, c)
-	want := "ccgp --restart\n\nRestart the background server\n"
+	want := "ccgp --nosuch\n\nRestart the background server\n"
 	if buf.String() != want {
 		t.Errorf("fallback help = %q, want %q", buf.String(), want)
 	}

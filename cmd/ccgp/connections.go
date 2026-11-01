@@ -147,7 +147,7 @@ func proxyValue(cfg *config.Config, value, profile string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("unknown profile %q (configured: %s)", profile, names(cfg.Profiles))
 	}
-	if cfg.Providers[pf.Provider].Type == config.ProviderTypeClaude {
+	if isClaudeProfile(cfg, pf) {
 		return "", fmt.Errorf("profile %q is a Claude profile: it does not go through ccgp, so it has no proxy setting", profile)
 	}
 	switch {
