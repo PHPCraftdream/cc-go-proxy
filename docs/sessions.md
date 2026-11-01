@@ -26,11 +26,13 @@ prints a percentage line every two seconds, so gigabyte transcripts show that th
 
 ## The first launch of a profile
 
-When `ccgp <profile>` starts and the profile has no session at all (a new profile), ccgp copies the one latest
-session of the current directory from your Claude Code first, the same way as `ccgp --import <profile> 1`, so
-`/resume` or `-c` can carry on with the work at once. It happens once: after that the profile has a session and
-nothing is copied at launch. If Claude Code has no session for this directory, nothing is copied and nothing is
-printed. A copy that fails only prints a note on stderr; the profile starts anyway.
+When `ccgp <profile>` starts and the profile has no session of the **current directory** (a new profile, or one that
+has only worked in other directories so far), ccgp copies the one latest session of this directory from your Claude
+Code first, the same way as `ccgp --import <profile> 1`, so `/resume` or `-c` can carry on with the work at once
+(Claude Code lists the sessions of the current directory only: without one, `-c` says `No conversation found to
+continue`). It happens once per directory: after that the profile has a session of it and nothing is copied at
+launch. If Claude Code has no session for this directory, nothing is copied and nothing is printed. A copy that
+fails only prints a note on stderr; the profile starts anyway.
 
 ## What is copied
 

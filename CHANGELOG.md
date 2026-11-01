@@ -47,6 +47,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- `ccgp <profile> -c` said `No conversation found to continue` in a directory where the profile had no session yet but
+  had sessions of other directories: the copy of the latest session from your Claude Code at launch ran only for a
+  profile with no session at all. It now runs for a profile that has no session of the current directory.
 - A refused Codex request (any non-2xx status) now logs the backend ids (`x-request-id`, `cf-ray`) and the edge verdict
   (`cf-mitigated`), and an HTML error page without a title shows the start of its text instead of a bare
   `html error page`: a 403 from the Cloudflare edge can be told from a challenge or a block.
@@ -79,7 +82,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Streams the client left are logged as `stream canceled by client`, apart from real failures.
 - The timing in the log shows the real TLS handshake time of new connections (it read `tls 0s`), marks connections
   opened in the background as `conn warm (opened … before)` and names the error a request was retried after.
-- The first launch of a profile that has no sessions copies the latest session of the current directory from your
+- The launch of a profile that has no session of the current directory copies the latest session of this directory from your
   Claude Code (like `ccgp --import <profile> 1`), so `/resume` and `-c` can continue the work at once.
 - The binary runs everywhere it can: release archives and `install.sh` now also cover Linux 32-bit ARM (built for
   armv6, so it runs on a Raspberry Pi 1 and later), Linux riscv64 and FreeBSD (x86-64, arm64), besides the six

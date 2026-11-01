@@ -184,8 +184,8 @@ func TestSkipReasonNamesTheCause(t *testing.T) {
 	}
 }
 
-// A profile without any session gets the latest session of the working
-// directory from Claude, and only that one.
+// A profile without a session of the working directory gets the latest
+// session of that directory from Claude, and only that one.
 func TestSeedFirstSessionCopiesTheLatestOfThisDirectory(t *testing.T) {
 	cwd := filepath.Join(t.TempDir(), "work")
 	project := projectDirName(cwd)
@@ -253,10 +253,43 @@ func TestSeedFirstSessionLeavesOtherCasesAlone(t *testing.T) {
 			t.Errorf("output %q, %d sessions", out.String(), count(dst.dir))
 		}
 	})
-	t.Run("the profile already has a session in another directory", func(t *testing.T) {
+	t.Run("the profile already has a session of this directory", func(t *testing.T) {
+		src, dst := endpoint{dir: t.TempDir(), label: "claude"}, endpoint{dir: t.TempDir(), label: "p"}
+		writeSession(t, src.dir, project, "x", "{}\n")
+		writeSession(t, dst.dir, project, "mine", "{}\n")
+		writeSession(t, dst.dir, "elsewhere", "other", "{}\n")
+		var out bytes.Buffer
+		seedFirstSession(&out, src, dst, cwd)
+		if out.Len() != 0 || count(dst.dir) != 2 {
+			t.Errorf("output %q, %d sessions", out.String(), count(dst.dir))
+		}
+	})
+	// The case that failed with "No conversation found to continue": the
+	// profile has sessions, but none of this directory.
+	t.Run("the profile has sessions only in other directories", func(t *testing.T) {
 		src, dst := endpoint{dir: t.TempDir(), label: "claude"}, endpoint{dir: t.TempDir(), label: "p"}
 		writeSession(t, src.dir, project, "x", "{}\n")
 		writeSession(t, dst.dir, "elsewhere", "mine", "{}\n")
+		var out bytes.Buffer
+		seedFirstSession(&out, src, dst, cwd)
+		l, err := sessions.List(dst.dir)
+		if err != nil || len(l) != 2 || !strings.Contains(out.String(), "first launch of p") {
+			t.Fatalf("output %q, sessions %+v, %v", out.String(), l, err)
+		}
+		here := 0
+		for _, s := range l {
+			if s.Project == project && s.ID == "x" {
+				here++
+			}
+		}
+		if here != 1 {
+			t.Errorf("the session of this directory was not copied: %+v", l)
+		}
+	})
+	t.Run("the project name is matched without regard to case", func(t *testing.T) {
+		src, dst := endpoint{dir: t.TempDir(), label: "claude"}, endpoint{dir: t.TempDir(), label: "p"}
+		writeSession(t, src.dir, project, "x", "{}\n")
+		writeSession(t, dst.dir, strings.ToUpper(project), "mine", "{}\n")
 		var out bytes.Buffer
 		seedFirstSession(&out, src, dst, cwd)
 		if out.Len() != 0 || count(dst.dir) != 1 {

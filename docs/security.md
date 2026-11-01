@@ -48,8 +48,8 @@ directory at every launch, one way:
   point at the copy. Links and junctions are never followed, so a session cannot write into your own directory.
 
 History, sessions and projects stay separate; move chosen ones with [`ccgp --send`](sessions.md). The one
-exception is the first launch of a profile without sessions, which copies the latest session of the current
-directory from your Claude Code (read only on your side).
+exception is the launch of a profile that has no session of the current directory yet, which copies the latest
+session of this directory from your Claude Code (read only on your side).
 The only way ccgp writes into your own Claude Code directory is `ccgp --send ... claude` (or its alias
 `ccgp --export`), under `projects/`.
 

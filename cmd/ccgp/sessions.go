@@ -284,27 +284,27 @@ func seedProfileSessions(w io.Writer, cfg *config.Config, profile string) {
 	seedFirstSession(w, src, dst, cwd)
 }
 
-// seedFirstSession gives a profile that has no sessions at all the latest
-// session of the working directory from the user's own Claude Code, so the
-// first launch can go on with the work (/resume, -c). A profile that already
-// has a session, or a directory without one in Claude, is left alone.
+// seedFirstSession gives a profile that has no session of the working
+// directory the latest one of that directory from the user's own Claude Code,
+// so the launch can go on with the work (/resume, -c: Claude Code lists the
+// sessions of the current directory only, whatever the profile has elsewhere).
+// A profile that already has a session of this directory, or a directory
+// without one in Claude, is left alone.
 func seedFirstSession(w io.Writer, src, dst endpoint, cwd string) {
-	if have, err := sessions.List(dst.dir); err != nil || len(have) > 0 {
-		return
-	}
 	project := projectDirName(cwd)
-	list, err := sessions.List(src.dir)
-	if err != nil {
+	has := func(dir string) (bool, error) {
+		list, err := sessions.List(dir)
+		for _, s := range list {
+			if strings.EqualFold(s.Project, project) {
+				return true, err
+			}
+		}
+		return false, err
+	}
+	if have, err := has(dst.dir); err != nil || have {
 		return
 	}
-	found := false
-	for _, s := range list {
-		if strings.EqualFold(s.Project, project) {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if found, err := has(src.dir); err != nil || !found {
 		return
 	}
 	opt := sessions.Options{StripThinking: stripThinkingBetween(src, dst), Project: project}
