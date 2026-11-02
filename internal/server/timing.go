@@ -249,11 +249,9 @@ func (u *upstreamTrace) slow(end time.Time) bool {
 	return (!u.headers.IsZero() && u.headers.Sub(u.start) >= slowHeaders) || end.Sub(u.start) >= slowTotal
 }
 
-// summary describes the call: the connection, the waits from the start of the
-// call, the request size and the tokens.
-func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes int) string {
-	u.mu.Lock()
-	defer u.mu.Unlock()
+// connLocked describes the last attempt's connection (new, warm or reused) and
+// the number of upstream calls; the caller holds u.mu.
+func (u *upstreamTrace) connLocked() string {
 	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
 	conn := "conn new (dns " + r(u.dns) + ", connect " + r(u.connect) + ", tls " + r(u.tls) + u.poolText(", ") + ")"
 	switch {
@@ -265,6 +263,27 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	if u.calls > 1 {
 		conn += fmt.Sprintf(", %d upstream calls", u.calls)
 	}
+	return conn
+}
+
+// connText is connLocked for a failed request's line: which connection it was
+// on tells a bad route from a dead connection. "" before any attempt.
+func (u *upstreamTrace) connText() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.calls == 0 {
+		return ""
+	}
+	return u.connLocked()
+}
+
+// summary describes the call: the connection, the waits from the start of the
+// call, the request size and the tokens.
+func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes int) string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
+	conn := u.connLocked()
 	if u.retry != "" {
 		conn += ", retried after: " + oneLine(u.retry, 200)
 		if u.first != "" {

@@ -149,21 +149,46 @@ var (
 // htmlTextAt is how many runes of page text are shown when the page has no title.
 const htmlTextAt = 150
 
-// htmlText is the visible text of a page, cut to htmlTextAt runes.
+// htmlIP is the blocked address an edge's block page ends with: "[IP: 203.0.113.7]".
+var htmlIP = regexp.MustCompile(`\[IP:\s*[0-9A-Fa-f:.]{2,45}\s*\]`)
+
+// htmlText is the visible text of a page, cut to htmlTextAt runes. A long text
+// keeps the address of a block page after the cut: it tells which way out the
+// edge turned away.
 func htmlText(s string) string {
 	text := strings.Join(strings.Fields(htmlTag.ReplaceAllString(htmlSkip.ReplaceAllString(s, " "), " ")), " ")
+	if len([]rune(text)) <= htmlTextAt {
+		return text
+	}
+	ip := ""
+	if loc := htmlIP.FindStringIndex(text); loc != nil {
+		ip = " " + text[loc[0]:loc[1]]
+		text = strings.Join(strings.Fields(text[:loc[0]]+" "+text[loc[1]:]), " ")
+	}
 	if r := []rune(text); len(r) > htmlTextAt {
 		text = string(r[:htmlTextAt]) + "…"
 	}
-	return text
+	return text + ip
+}
+
+// IsHTMLPage reports whether body is an HTML page, not the JSON the backend
+// itself answers with: a page comes from the edge in front of it.
+func IsHTMLPage(body []byte) bool {
+	b := bytes.TrimLeft(body, " \t\r\n\xef\xbb\xbf")
+	return len(b) > 0 && b[0] == '<' && looksHTML(string(b[:min(len(b), 200)]))
+}
+
+// looksHTML reports whether the start of a body opens an HTML page.
+func looksHTML(head string) bool {
+	head = strings.ToLower(head)
+	return strings.Contains(head, "<html") || strings.Contains(head, "<!doctype html")
 }
 
 // htmlMessage turns an HTML page (an error page of the edge in front of the
 // backend, such as Cloudflare's) into a line: its title, else the start of its
 // text, not a screen of markup.
 func htmlMessage(s string) (string, bool) {
-	head := strings.ToLower(s[:min(len(s), 200)])
-	if !strings.Contains(head, "<html") && !strings.Contains(head, "<!doctype html") {
+	if !looksHTML(s[:min(len(s), 200)]) {
 		return "", false
 	}
 	if m := htmlTitle.FindStringSubmatch(s); m != nil {

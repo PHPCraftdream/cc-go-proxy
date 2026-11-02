@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -241,7 +242,8 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)
 	}
 	trace.wire = &codex.Wire{}
-	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithWire(ctx, trace.wire), trace.clientTrace()), trace.observer())
+	obs := trace.observer()
+	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithWire(ctx, trace.wire), trace.clientTrace()), obs)
 	resp, err := codex.Call(ctx, baseURL, s, req)
 	// A short rate limit is waited out here, once; a long one is Claude Code's to handle.
 	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
@@ -256,14 +258,27 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			}
 		}
 	}
-	// A gateway error (the edge in front of the backend, not the backend) is
-	// asked again after a short pause: nothing ran yet, and the client would
-	// only send the same request itself.
-	for try := 0; err == nil && edgeError(resp.StatusCode) && try < len(brokenBackoff); try++ {
+	// A gateway error, or an HTML page the edge turned the connection away with
+	// (a block of its route), comes from the edge in front of the backend, not the
+	// backend: it is asked again after a short pause, on a fresh connection after
+	// a page. Nothing ran yet, and the client would only send the same request itself.
+	for try := 0; err == nil && try < len(brokenBackoff); try++ {
+		status := resp.StatusCode
+		if !edgeError(status) && status != http.StatusForbidden {
+			break
+		}
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		_ = resp.Body.Close()
+		blocked := status == http.StatusForbidden && codex.IsHTMLPage(b)
+		if status == http.StatusForbidden && !blocked {
+			resp.Body = io.NopCloser(bytes.NewReader(b)) // the backend's own 403: the client gets it
+			break
+		}
+		if blocked {
+			obs.Discard()
+		}
 		logUpstreamRetry(logOut, cfg.Profile, probe.Model+" -> "+model, try+1, len(brokenBackoff), brokenBackoff[try],
-			fmt.Sprintf("HTTP %d: %s", resp.StatusCode, codex.ErrorMessage(b)), "", upstreamIDs(resp.Header))
+			fmt.Sprintf("HTTP %d: %s", status, codex.ErrorMessage(b)), "", joinNonEmpty(upstreamIDs(resp.Header), trace.connText()))
 		if !sleepCtx(ctx, brokenBackoff[try]) {
 			err = ctx.Err()
 			break
@@ -287,6 +302,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			msg += " | " + sent
 		}
 		c.Locals(localsErr, msg)
+		c.Locals(localsConn, trace.connText())
 		return out
 	}
 	c.Locals(localsConn, trace.newConnText())
@@ -294,6 +310,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		_ = resp.Body.Close()
 		cancel()
+		c.Locals(localsConn, trace.connText())
 		status := resp.StatusCode
 		if status == http.StatusUnauthorized {
 			// Still 401 after refresh: credentials are no longer accepted.

@@ -20,6 +20,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   exit codes, and the new `docs/api.md` describes the HTTP endpoints (`/health`, `/call/<token>/…`) with `curl`
   examples. A test keeps every command's help complete.
 
+- Log: a successful `GET …/model` and `/health` no longer get a line (a third of the log was them); a failed one does.
+  A line `--- 2026-11-02 ---` opens the log of a server and every new day (lines carry the time only). The line of a
+  failed request (403, 429, 502, …) ends with the connection it was on (`conn new (dns …, tls …)`, `conn reused (idle …)`),
+  and the address in an edge's block page (`[IP: …]`) is no longer cut off.
+
 ### Added
 - Profiles of the real Claude Code: `ccgp --profile add work --type claude` makes a profile (provider type `claude`)
   that does not use the proxy at all. `ccgp work` runs `claude` with a config directory of its own, created clean:
@@ -60,6 +65,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- An HTML page with a 403 from the edge in front of the Codex backend (Cloudflare's "Unable to load site … If you are
+  using a VPN …": the route of one connection is blocked, others pass) is no longer handed to Claude Code at once: the
+  request is asked again, up to twice (0.3 s, 2 s), after the pool of that connection is dropped, so the retry opens
+  a new one. A 403 with JSON, the backend's own, is passed on as before. On 2 November 12 of 45 requests in 11 minutes
+  got that page.
 - `ccgp <profile> -c` said `No conversation found to continue` in a directory where the profile had no session yet but
   had sessions of other directories: the copy of the latest session from your Claude Code at launch ran only for a
   profile with no session at all. It now runs for a profile that has no session of the current directory.

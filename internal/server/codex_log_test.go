@@ -116,6 +116,10 @@ func TestStalledBackendIs502WithReasonInLog(t *testing.T) {
 	if !strings.Contains(access, " 502 - ") || !strings.Contains(access, "timeout awaiting response headers") {
 		t.Errorf("access log = %q", access)
 	}
+	// Which connection it waited on tells a dead one from a bad route.
+	if !strings.Contains(access, " | conn new (dns ") {
+		t.Errorf("access log lacks the connection: %q", access)
+	}
 }
 
 func TestUpstreamErrorMessageIsLogged(t *testing.T) {
@@ -134,7 +138,10 @@ func TestUpstreamErrorMessageIsLogged(t *testing.T) {
 // A refusal by the edge (a 403 page) names the ids and the verdict of the edge
 // and shows what the page says, so a challenge can be told from a block.
 func TestEdgeRefusalLogsIdsAndPageText(t *testing.T) {
-	status, body, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fastRetries(t, 2)
+	var calls atomic.Int32
+	status, body, access, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		w.Header().Set("Cf-Ray", "abc123-PIT")
 		w.Header().Set("Cf-Mitigated", "challenge")
 		w.WriteHeader(http.StatusForbidden)
@@ -143,13 +150,98 @@ func TestEdgeRefusalLogsIdsAndPageText(t *testing.T) {
 	if status != fiber.StatusForbidden || !strings.Contains(body, "html error page: Enable JavaScript") {
 		t.Fatalf("status %d, body %q", status, body)
 	}
-	for _, want := range []string{" 403 - ", "html error page: Enable JavaScript | cf-ray=abc123-PIT cf-mitigated=challenge"} {
+	for _, want := range []string{" 403 - ", "html error page: Enable JavaScript | cf-ray=abc123-PIT cf-mitigated=challenge | conn "} {
 		if !strings.Contains(access, want) {
 			t.Errorf("access log lacks %q: %q", want, access)
 		}
 	}
 	if strings.Contains(access, "var a") {
 		t.Errorf("a script reached the log: %q", access)
+	}
+	// A page is the edge's, not the backend's: asked again, twice, then given up.
+	if calls.Load() != 3 {
+		t.Errorf("backend calls = %d, want 3 (the request and two retries)", calls.Load())
+	}
+	for _, want := range []string{"upstream retry 1/2", "upstream retry 2/2", "HTTP 403: html error page: Enable JavaScript", "cf-ray=abc123-PIT cf-mitigated=challenge | conn new"} {
+		if !strings.Contains(stream, want) {
+			t.Errorf("stream log lacks %q: %q", want, stream)
+		}
+	}
+}
+
+// A page the edge turned the connection away with is asked again; the address
+// the page names reaches the log whole, and the retry gets a fresh connection.
+func TestBlockedRouteIsAskedAgainOnAFreshConnection(t *testing.T) {
+	fastRetries(t, 2)
+	var calls, dials atomic.Int32
+	ok := overloadBackend(new(atomic.Int32), 0)
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Cf-Ray", "ray-hel")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `<html><body><p>Unable to load site Please try again later. If you are using a VPN, try turning it off. `+
+				`Check the status page for information on outages. [IP: 203.0.113.7]</p></body></html>`)
+			return
+		}
+		ok.ServeHTTP(w, r)
+	})
+	router := connpool.NewRouter(0, 1, 1, func() *http.Transport {
+		return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dials.Add(1)
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}
+	})
+	status, body, _, stream := codexCallWith(t, backend, &http.Client{Transport: router}, nil)
+	if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+		t.Fatalf("status %d, body %q: want the answer of the second call", status, body)
+	}
+	if calls.Load() != 2 {
+		t.Errorf("backend calls = %d, want 2", calls.Load())
+	}
+	// The block was met on the first connection; the retry must not reuse it.
+	if dials.Load() != 2 {
+		t.Errorf("connections opened = %d, want 2: the retry needs a new one", dials.Load())
+	}
+	for _, want := range []string{"upstream retry 1/2", "[IP: 203.0.113.7]", "cf-ray=ray-hel | conn new"} {
+		if !strings.Contains(stream, want) {
+			t.Errorf("stream log lacks %q: %q", want, stream)
+		}
+	}
+}
+
+// The backend's own 403 is JSON: it is the client's to see, not to be asked again.
+func TestBackendForbiddenIsNotAskedAgain(t *testing.T) {
+	fastRetries(t, 2)
+	var calls atomic.Int32
+	status, body, access, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":{"message":"not allowed for this account"}}`)
+	}), time.Minute)
+	if status != fiber.StatusForbidden || !strings.Contains(body, "not allowed for this account") {
+		t.Fatalf("status %d, body %q: want the backend's 403", status, body)
+	}
+	if calls.Load() != 1 || stream != "" {
+		t.Errorf("backend calls = %d, log %q: a JSON 403 must not be retried", calls.Load(), stream)
+	}
+	if !strings.Contains(access, " 403 - ") || !strings.Contains(access, "codex: not allowed for this account") {
+		t.Errorf("access log = %q", access)
+	}
+}
+
+// A gateway error is still asked again, and the failed line says which connection it was on.
+func TestGatewayErrorLineNamesTheConnection(t *testing.T) {
+	fastRetries(t, 1)
+	status, _, access, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, "bad gateway")
+	}), time.Minute)
+	if status != fiber.StatusBadGateway {
+		t.Fatalf("status %d, want 502", status)
+	}
+	if !strings.Contains(stream, "upstream retry 1/1") || !strings.Contains(access, " 502 - ") || !strings.Contains(access, "| conn ") {
+		t.Errorf("stream %q, access %q", stream, access)
 	}
 }
 

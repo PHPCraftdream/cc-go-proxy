@@ -109,7 +109,10 @@ ccgp --serve -s                    # foreground, one line per request (stop with
 ### Reading the log
 
 Every request has one line: start time, status, the time until the backend's reply headers, the route and, for
-failures, the error. A streamed Codex answer that goes wrong or is slow gets a second line:
+failures, the error and the connection it was on (`| conn reused (idle …)`). A successful `GET …/model` or `/health`
+has no line (Claude Code asks every minute); a failed one has. Lines carry the time only, so a line
+`--- 2026-11-02 ---` opens the log of a server and every new day. A streamed Codex answer that goes wrong or is slow
+gets a second line:
 
 - `stream failed after …`: the stream broke after it started. The reason, then the raw backend event that ended it
   (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
@@ -128,7 +131,12 @@ failures, the error. A streamed Codex answer that goes wrong or is slow gets a s
   said it is overloaded (`server_is_overloaded` and similar; pauses of 2 s, then 5 s), or the connection broke
   (`stream read error: unexpected EOF`, `http2: client connection lost`, a stream that ends early; pauses of 0.3 s,
   then 2 s). Only when the retries run out does the stream fail. A stream that already sent content is never
-  started over, and neither is one the client canceled.
+  started over, and neither is one the client canceled. A third kind comes from the edge in front of the backend:
+  a gateway error (502, 503, 504) or a 403 with an HTML page (`html error page: Unable to load site … If you are
+  using a VPN, try turning it off. … [IP: …]`: the edge turned this connection's route away, while other connections
+  of the same machine may pass). Same pauses; after a page ccgp drops the connection's pool, so the retry opens a
+  new connection, and the page's `[IP: …]` (the address the edge saw) stays in the line. A 403 with JSON is the
+  backend's own answer and is passed on.
 - `upstream reconnect N after …`: the connection of an attempt failed (could not open, or broke before the reply) and
   ccgp sent the request over another one. One line per retry, with the error and the kind of connection the failed
   try was on; the client sees nothing unless the retries run out. Lines with the same error in a row, or many

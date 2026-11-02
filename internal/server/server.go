@@ -68,12 +68,22 @@ func oneLine(s string, n int) string {
 	return s
 }
 
+// quietRoute reports a request that says nothing when it succeeds: the model
+// lookup and the health check, which Claude Code and ccgp repeat all day.
+func quietRoute(c *fiber.Ctx) bool {
+	return c.Method() == fiber.MethodGet && (c.Path() == "/health" || strings.HasSuffix(c.Path(), "/model"))
+}
+
 // accessLog prints one line per request: start time, status, duration, route,
-// and for failures (status >= 400) the error message.
+// and for failures (status >= 400) the error message. A successful quietRoute
+// request gets no line.
 func accessLog(w io.Writer) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 		err := c.Next()
+		if status := c.Response().StatusCode(); status < 400 && quietRoute(c) {
+			return err
+		}
 		profile := ""
 		if rc := requestConfig(c); rc != nil {
 			profile = " [" + rc.Profile + "]"
@@ -145,6 +155,7 @@ func Start(cfg *config.Config) error {
 	store := creds.Store{Dir: dir}
 	index, build := profileResolver(cfg, store)
 
+	logOut = newDayWriter(os.Stdout)
 	app := fiber.New(appConfig(cfg.MaxBodyBytes()))
 
 	// Middleware. No CORS: browsers must not reach the proxy.
@@ -154,7 +165,7 @@ func Start(cfg *config.Config) error {
 
 	// Enable HTTP logging only when simple log mode is enabled
 	if cfg.SimpleLog {
-		app.Use(accessLog(os.Stdout))
+		app.Use(accessLog(logOut))
 	}
 
 	// Health check endpoint; pid lets `ccgp --stop` verify the process,

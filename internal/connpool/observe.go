@@ -2,6 +2,7 @@ package connpool
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,30 @@ type Observer struct {
 	// connection is at most that old; a new connection on an old pool means
 	// the pool's earlier connection was lost.
 	Pool func(age time.Duration)
+
+	mu sync.Mutex
+	t  *Transport
+	p  *pool // the pool of the latest attempt
+}
+
+// bind remembers the pool an attempt goes to, for Discard.
+func (o *Observer) bind(t *Transport, p *pool) {
+	o.mu.Lock()
+	o.t, o.p = t, p
+	o.mu.Unlock()
+}
+
+// Discard drops the pool the latest attempt went to: its lane gets a fresh pool
+// (and so a new connection) at once. For a connection the far end's edge turned
+// away, whose route is bad: the next request must not go there. A request still
+// running on the pool finishes there.
+func (o *Observer) Discard() {
+	o.mu.Lock()
+	t, p := o.t, o.p
+	o.mu.Unlock()
+	if t != nil {
+		t.discard(p)
+	}
 }
 
 type observerKey struct{}

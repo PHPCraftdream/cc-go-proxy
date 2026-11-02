@@ -429,9 +429,31 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // reportPool tells the request's observer how old p is.
 func (t *Transport) reportPool(req *http.Request, p *pool) {
-	if o := observer(req.Context()); o != nil && o.Pool != nil {
+	o := observer(req.Context())
+	if o == nil {
+		return
+	}
+	o.bind(t, p)
+	if o.Pool != nil {
 		o.Pool(t.now().Sub(p.created))
 	}
+}
+
+// discard gives the lane that holds p a fresh pool, even without room: p drains
+// like a renewed one. A pool no lane holds any more is left alone.
+func (t *Transport) discard(p *pool) {
+	t.mu.Lock()
+	var idle []*pool
+	for _, l := range t.lanes {
+		if l.cur == p {
+			now := t.now()
+			idle = t.retireLocked(p, now, idle)
+			l.cur, l.born = t.newPoolLocked(), now
+			break
+		}
+	}
+	t.mu.Unlock()
+	closeIdle(idle)
 }
 
 // backoff is the pause before retry n (0 is the second retry; the first one

@@ -217,9 +217,38 @@ func TestErrorMessageOfAnHTMLPage(t *testing.T) {
 			"html error page: Attention Required! Sorry, you have been blocked"},
 		{"<html><body>" + strings.Repeat("é", 400) + "</body></html>", "html error page: " + strings.Repeat("é", 150) + "…"},
 		{strings.Repeat("y", 600), strings.Repeat("y", 500)}, // not a page: cut as before
+		// the address a block page ends with is kept past the cut
+		{"<html><body><p>" + strings.Repeat("v", 160) + " [IP: 203.0.113.7]</p></body></html>",
+			"html error page: " + strings.Repeat("v", 150) + "… [IP: 203.0.113.7]"},
+		{"<html><body><p>" + strings.Repeat("v", 160) + " [IP:2001:db8::1]</p></body></html>",
+			"html error page: " + strings.Repeat("v", 150) + "… [IP:2001:db8::1]"},
+		// the address is not cut in two, wherever it stands in a long text
+		{"<html><body><p>Blocked [IP:203.0.113.7] " + strings.Repeat("w", 300) + "</p></body></html>",
+			"html error page: Blocked " + strings.Repeat("w", 150-len("Blocked ")) + "… [IP:203.0.113.7]"},
+		{"<html><body><p>" + strings.Repeat("v", 140) + " [IP: 203.0.113.7] tail</p></body></html>",
+			"html error page: " + strings.Repeat("v", 140) + " tail [IP: 203.0.113.7]"},
+		// a short text is shown as it is
+		{"<html><body><p>Blocked [IP:203.0.113.7] here</p></body></html>", "html error page: Blocked [IP:203.0.113.7] here"},
 	} {
 		if got := ErrorMessage([]byte(c.in)); got != c.want {
 			t.Errorf("ErrorMessage(%.40q…) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIsHTMLPage(t *testing.T) {
+	for in, want := range map[string]bool{
+		"<html><body>x</body></html>":          true,
+		"<!DOCTYPE HTML><p>x</p>":              true,
+		"  \n<HTML>":                           true,
+		`{"error":{"message":"usage limit"}}`:  false,
+		`{"detail":"<html> in a JSON string"}`: false, // JSON is the backend's own
+		"":                                     false,
+		strings.Repeat("a", 300) + "<html>":    false,
+		"plain text, nothing to see":           false,
+	} {
+		if got := IsHTMLPage([]byte(in)); got != want {
+			t.Errorf("IsHTMLPage(%.30q) = %v, want %v", in, got, want)
 		}
 	}
 }
