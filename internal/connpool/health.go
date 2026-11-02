@@ -10,13 +10,16 @@ import (
 // while; the client learns it only when the next request fails to write.
 // With pings a quiet connection is never silent for long, and one that no
 // longer answers is closed and leaves the pool before a request picks it.
-// The limits are generous on purpose: on a bad network a ping answered after
+// The answer limit is generous on purpose: on a bad network a ping answered after
 // 5 s was killing connections whose streams were only waiting for a slow
 // backend (streams cut at exactly 20 s, 15 + 5, with no content yet).
+// The ping also keeps a connection open: api.z.ai closes an HTTP/2 connection
+// that was quiet for 30 s (a graceful GOAWAY) and counts a ping as traffic, so
+// with the first ping at 30 s every request to it opened a new connection.
 // Vars so tests can shorten them.
 var (
-	healthPing    = 30 * time.Second // quiet this long: send a ping
-	healthTimeout = 15 * time.Second // no answer this long: close the connection
+	healthPing    = 15 * time.Second // quiet this long: send a ping
+	healthTimeout = 30 * time.Second // no answer this long: close the connection
 )
 
 // HealthLimit is how long a connection can be silent before a health ping

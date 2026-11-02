@@ -969,6 +969,15 @@ func TestHardenKeepsOwnHTTP2Settings(t *testing.T) {
 	tr.release(p)
 }
 
+// api.z.ai closes an HTTP/2 connection that was quiet for 30 s (measured: a
+// ping at 25 s is answered, at 30 s there is a GOAWAY), and a ping keeps it
+// open: the first one has to come well before, or no request ever reuses one.
+func TestHealthPingComesBeforeAShortIdleLimit(t *testing.T) {
+	if healthPing > 20*time.Second {
+		t.Errorf("first health ping after %s of silence, want 20 s at most", healthPing)
+	}
+}
+
 // The observer hears how old the pool of every attempt is: a new connection on
 // an old pool tells that the pool's earlier connection was lost.
 func TestObserverHearsPoolAge(t *testing.T) {

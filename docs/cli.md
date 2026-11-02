@@ -112,9 +112,11 @@ Every request has one line: start time, status, the time until the backend's rep
 failures, the error and the connection it was on (`| conn reused (idle …)`). A successful `GET …/model` or `/health`
 has no line (Claude Code asks every minute); a failed one has. Lines carry the time only, so a line
 `--- 2026-11-02 ---` opens the log of a server and every new day. A streamed Codex answer that goes wrong or is slow
-gets a second line:
+gets a second line. It is written when the answer ends but stamped with the start of the call, like the request's own
+line, so it can stand far below that line; its timing ends with `total 15m1.327s, ended 10:45:19`, the time it ended:
 
-- `stream failed after …`: the stream broke after it started. The reason, then the raw backend event that ended it
+- `stream failed after …`: the stream broke after it started (`after` is the time since the start of the call, the
+  same as `total`). The reason, then the raw backend event that ended it
   (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.

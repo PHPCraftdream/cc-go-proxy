@@ -25,6 +25,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   failed request (403, 429, 502, …) ends with the connection it was on (`conn new (dns …, tls …)`, `conn reused (idle …)`),
   and the address in an edge's block page (`[IP: …]`) is no longer cut off.
 
+- Log: the lines `slow stream`, `stream failed` and `stream canceled by client` are stamped with the start of the
+  call (they were stamped with the moment the reply headers came in, except the slow one), count `after` from the same
+  start as `total`, and the timing ends with `ended HH:MM:SS`, the time the answer ended: such a line is written when
+  the answer ends and could not be placed in time before.
+
 ### Added
 - Profiles of the real Claude Code: `ccgp --profile add work --type claude` makes a profile (provider type `claude`)
   that does not use the proxy at all. `ccgp work` runs `claude` with a config directory of its own, created clean:
@@ -65,6 +70,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- Requests to z.ai never reused a connection: z.ai closes an HTTP/2 connection that was quiet for 30 seconds, and the
+  health ping came at exactly 30, so every request (a few a minute, spread over the lanes) opened its own, 0.17 s or
+  more of a 0.35 s round trip. The ping now comes after 15 seconds of quiet (a ping counts as traffic for z.ai, which
+  answers it); the answer limit went from 15 to 30 seconds, so a dead connection is still dropped after at most 45 s of
+  silence. The 10-minute `upstream stats [anthropic]` line shows the effect: `dials` falls from about one per request
+  to the warm-ups of the renewed pools.
+
 - An HTML page with a 403 from the edge in front of the Codex backend (Cloudflare's "Unable to load site … If you are
   using a VPN …": the route of one connection is blocked, others pass) is no longer handed to Claude Code at once: the
   request is asked again, up to twice (0.3 s, 2 s), after the pool of that connection is dropped, so the retry opens
@@ -83,8 +95,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   every 30 minutes all streams to `chatgpt.com` ended in `unexpected EOF` and new requests got a 502. Upstream
   connections are now renewed every 10 minutes without interrupting running requests, and a request whose
   connection breaks before the reply is sent again.
-- HTTP/2 connections to the backends send a health ping when they have been quiet for 30 seconds and are closed when
-  it is not answered within 15 (shorter limits cut streams that only waited for a slow backend): a connection that a proxy program or an antivirus killed silently while it was idle no
+- HTTP/2 connections to the backends send a health ping when they have been quiet for 15 seconds and are closed when
+  it is not answered within 30 (shorter limits cut streams that only waited for a slow backend): a connection that a proxy program or an antivirus killed silently while it was idle no
   longer fails the next request (it was one retry each time: `wsasend: An established connection was aborted by the
   software in your host machine`). The log of a retried request says what kind of connection its first try was on.
 - A 429 from the Codex backend with a `Retry-After` of up to 5 seconds is waited out once and the request is sent

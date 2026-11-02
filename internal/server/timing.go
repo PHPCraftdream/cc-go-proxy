@@ -297,7 +297,7 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	if !tr.FirstDelta.IsZero() {
 		waits = append(waits, "first token "+r(tr.FirstDelta.Sub(u.start)))
 	}
-	waits = append(waits, "total "+r(end.Sub(u.start)))
+	waits = append(waits, "total "+r(end.Sub(u.start))+", ended "+end.Format("15:04:05"))
 	req := "request " + sizeString(bodyBytes)
 	var notes []string
 	if u.wire != nil && u.wire.Encoding != "" {

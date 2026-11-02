@@ -194,14 +194,16 @@ func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, a
 }
 
 // logUpstreamEnd prints the line for a reply that was cancelled, failed or slow.
-func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTrace, up *http.Response, started time.Time, profile, mapped string, bodyBytes int) {
+// All three are stamped with the start of the call, like the request's own line;
+// the summary tells when the reply ended.
+func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTrace, up *http.Response, profile, mapped string, bodyBytes int) {
 	end := time.Now()
 	ids := upstreamIDs(up.Header)
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
-		logStreamCanceled(logOut, started, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
+		logStreamCanceled(logOut, trace.start, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
 	case tr.Failed != "":
-		logStreamFailure(logOut, started, profile, mapped, tr.Failed, tr.Detail,
+		logStreamFailure(logOut, trace.start, profile, mapped, tr.Failed, tr.Detail,
 			joinNonEmpty(notRetriedNote(tr.ContentSent()), trace.silenceText(end), ids, trace.summary(tr, end, bodyBytes)))
 	case trace.slow(end):
 		logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
@@ -343,7 +345,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		}
 		return next, err
 	}
-	profile, mapped, started, bodyBytes := cfg.Profile, probe.Model+" -> "+model, time.Now(), len(body)
+	profile, mapped, bodyBytes := cfg.Profile, probe.Model+" -> "+model, len(body)
 
 	if !wantStream {
 		defer cancel()
@@ -351,7 +353,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		tr := &codex.Translator{Model: probe.Model, Emit: col.Emit}
 		upstream := runUpstream(ctx, tr, resp, again, profile, mapped)
 		defer func() { _ = upstream.Body.Close() }()
-		logUpstreamEnd(ctx, tr, trace, upstream, started, profile, mapped, bodyBytes)
+		logUpstreamEnd(ctx, tr, trace, upstream, profile, mapped, bodyBytes)
 		out, err := col.Result()
 		if err != nil {
 			return anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
@@ -377,7 +379,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		}}
 		upstream := runUpstream(ctx, tr, resp, again, profile, mapped)
 		defer func() { _ = upstream.Body.Close() }()
-		logUpstreamEnd(ctx, tr, trace, upstream, started, profile, mapped, bodyBytes)
+		logUpstreamEnd(ctx, tr, trace, upstream, profile, mapped, bodyBytes)
 	})
 	return nil
 }

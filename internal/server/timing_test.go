@@ -37,7 +37,7 @@ func TestSlowStreamIsLoggedWithTiming(t *testing.T) {
 		t.Fatalf("stream did not complete: %q", body)
 	}
 	for _, want := range []string{
-		"slow stream ", "[codex] claude-opus-5-5 -> ", ": conn new (dns ", "| headers ", ", first token ", ", total ",
+		"slow stream ", "[codex] claude-opus-5-5 -> ", ": conn new (dns ", "| headers ", ", first token ", ", total ", ", ended ",
 		"| request ", "| tokens in 100 (cached 40) out 20 (reasoning 5)", "| x-request-id=req_9\n",
 	} {
 		if !strings.Contains(stream, want) {
@@ -50,8 +50,9 @@ func TestTraceSummary(t *testing.T) {
 	start := time.Unix(1000, 0)
 	u := &upstreamTrace{start: start, calls: 2, reused: true, idle: 3 * time.Second, headers: start.Add(25 * time.Second)}
 	tr := &codex.Translator{FirstDelta: start.Add(40 * time.Second)}
-	got := u.summary(tr, start.Add(3*time.Minute), 3<<20)
-	want := "conn reused (idle 3s), 2 upstream calls | headers 25s, first token 40s, total 3m0s | request 3.0 MiB"
+	end := start.Add(3 * time.Minute)
+	got := u.summary(tr, end, 3<<20)
+	want := "conn reused (idle 3s), 2 upstream calls | headers 25s, first token 40s, total 3m0s, ended " + end.Format("15:04:05") + " | request 3.0 MiB"
 	if got != want {
 		t.Errorf("summary = %q\nwant      %q", got, want)
 	}
@@ -80,8 +81,9 @@ func TestTraceSummaryWarmConnAndRetry(t *testing.T) {
 	o.Retry(errors.New("unexpected EOF"))
 	ct.GetConn("h:443") // the retry
 	o.WarmConn(45 * time.Second)
-	got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
-	want := "conn warm (opened 45s before), 2 upstream calls, retried after: unexpected EOF | total 1s | request 10 B"
+	end := start.Add(time.Second)
+	got := u.summary(&codex.Translator{}, end, 10)
+	want := "conn warm (opened 45s before), 2 upstream calls, retried after: unexpected EOF | total 1s, ended " + end.Format("15:04:05") + " | request 10 B"
 	if got != want {
 		t.Errorf("summary = %q\nwant      %q", got, want)
 	}
@@ -102,8 +104,9 @@ func TestTraceSummaryNamesTheFirstConnection(t *testing.T) {
 	o.Retry(errors.New("wsasend: aborted"))
 	ct.GetConn("h:443")
 	ct.GotConn(httptrace.GotConnInfo{})
-	got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
-	want := "conn new (dns 0s, connect 0s, tls 0s), 2 upstream calls, retried after: wsasend: aborted (the first try was on a reused, idle 1m13s connection) | total 1s | request 10 B"
+	end := start.Add(time.Second)
+	got := u.summary(&codex.Translator{}, end, 10)
+	want := "conn new (dns 0s, connect 0s, tls 0s), 2 upstream calls, retried after: wsasend: aborted (the first try was on a reused, idle 1m13s connection) | total 1s, ended " + end.Format("15:04:05") + " | request 10 B"
 	if got != want {
 		t.Errorf("summary = %q\nwant      %q", got, want)
 	}

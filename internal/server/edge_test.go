@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptrace"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -242,5 +243,29 @@ func TestFailedStreamLogsHowLongItWasSilent(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q: %q", want, log)
 		}
+	}
+}
+
+// The line is stamped with the start of the call, so it says when the stream
+// ended, and "after" counts from the same start as "total".
+func TestFailedStreamLineNamesItsEnd(t *testing.T) {
+	fastRetries(t, 1)
+	_, _, _, log := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n" +
+			"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"m\",\"type\":\"message\"}}\n\n" +
+			"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"m\",\"delta\":\"half\"}\n\n"))
+		w.(http.Flusher).Flush()
+		time.Sleep(200 * time.Millisecond)
+	}), time.Minute)
+	m := regexp.MustCompile(`stream failed after (\S+) .* total (\S+), ended \d\d:\d\d:\d\d`).FindStringSubmatch(log)
+	if m == nil {
+		t.Fatalf("no failed line with total and ended: %q", log)
+	}
+	after, err1 := time.ParseDuration(m[1])
+	total, err2 := time.ParseDuration(m[2])
+	if err1 != nil || err2 != nil || after < total || after-total > 100*time.Millisecond {
+		t.Errorf("after %q and total %q are not the same span", m[1], m[2])
 	}
 }
