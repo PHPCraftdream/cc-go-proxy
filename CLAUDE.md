@@ -60,6 +60,7 @@ Guidance for Claude Code when working in this repository.
 go vet ./...
 go test ./...
 make build
+scripts/deploy.sh          # or scripts\deploy.cmd: build, install into $CCGP_BIN (default ~/bin), restart the server
 ```
 
 ## Which tests CI runs
