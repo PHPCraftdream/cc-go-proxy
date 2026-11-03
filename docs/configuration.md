@@ -27,16 +27,19 @@ The config is **yours**: ccgp reads it and changes it only on your command.
   same way, with a backup.
 - `ccgp --peak <provider> set|add|rm|tz|clear` rewrites the provider's `peak` and `peak_tz` keys
   ([below](#peak-hours)) the same way, with a backup.
-- `ccgp --interactive` ([menus](cli.md#interactive-mode)) makes the same kind of edit for one setting at a time:
+- `ccgp --interactive` ([full-screen interface](cli.md#interactive-mode)) makes the same kind of edit for one setting at a time:
   a profile's `default_model`, `context_window`, `compact_percent`, `proxy` or `provider`, a provider's `base_url`,
   `api_key_env` or peak hours, and the adding and removing of profiles.
 - `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
-Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens) lives in the
-separate `creds` directory, owner-only (Windows: explicit DACL, Unix: `0600`).
+Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens, and the pauses of
+[peak hours](peak-hours.md)) lives in the separate `creds` directory, owner-only (Windows: explicit DACL, Unix: `0600`).
 A running server picks up config edits without a restart; only a change of the listen address or `max_body_mb` needs `ccgp --stop`.
 
 ## Layout
+
+Comments start with `##`. A single `#` is part of the text in Ktav, so `# peak: [` is not a comment but a key that
+opens a list, and the file does not load; ccgp's own template uses `##` everywhere.
 
 ```
 listen.host: 127.0.0.1
@@ -45,7 +48,7 @@ listen.max_body_mb: 256
 
 connections.active: 7
 connections.total: 10
-# connections.proxy: socks5://127.0.0.1:1080
+## connections.proxy: socks5://127.0.0.1:1080
 
 providers: [
     {

@@ -97,6 +97,11 @@ z.ai has three effort levels, so Claude Code's five are converted by the provide
 `low` → `low`, `medium` → `high`, `high` / `xhigh` / `max` → `max`. Any `anthropic_compat` provider can set its own.
 `count_tokens` is forwarded; if an endpoint lacks it, a length estimate keeps Claude Code working.
 
+If your z.ai plan counts usage higher at some hours, tell ccgp and it refuses z.ai requests then, with a notice in the
+chat: `ccgp --peak zai set mon-fri 14:00-18:00` and `ccgp --peak zai tz Asia/Shanghai` (the hours and their zone are
+whatever your plan states; ccgp does not know them). Any provider can have peak hours; see
+[peak hours](peak-hours.md).
+
 Endpoint and model data: [docs.z.ai](https://docs.z.ai/devpack/tool/claude).
 
 ## `claude` — the real Claude Code

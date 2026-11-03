@@ -201,8 +201,8 @@ Manage profiles (and their providers) in config.ktav. Every change is
 validated with the real loader and keeps a config.ktav.bak-<time> backup.
 
   add [name] --like <profile>      new profile with its OWN login, copying the
-                                   source's provider type, URL and model rules
-                                   (no name: the next free <source>N)
+                                   source's provider type, URL, peak hours and
+                                   model rules (no name: the next free <source>N)
   add <name> --provider <provider> new profile on an existing login
   add <name> --type <t> ...        new backend: codex | codex_api |
                                    anthropic_compat [--base-url URL]

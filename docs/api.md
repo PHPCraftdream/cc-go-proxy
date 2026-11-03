@@ -78,7 +78,9 @@ false. What happens depends on the profile's provider:
 
 The model is rewritten by the profile's rules and the model-identity sentence in the system prompt is corrected
 ([providers](providers.md#the-model-identity)). Bodies up to `listen.max_body_mb` (default 256 MiB) are accepted;
-larger ones answer `413`.
+larger ones answer `413`. If the provider has [peak hours](peak-hours.md) and the request arrives inside one (and no
+`ccgp --peak <provider> pause` is running), ccgp answers `400` at once and sends nothing to the provider; this
+route is the only one that does so, `count_tokens` and the others go on.
 
 ```sh
 curl -s http://127.0.0.1:60093/call/$TOKEN/v1/messages \
@@ -91,7 +93,7 @@ errors passed on with their status:
 
 | Status | Meaning |
 | --- | --- |
-| `400` | the body is not a valid request (`invalid_request_error`) |
+| `400` | the body is not a valid request (`invalid_request_error`); or the request arrived in the **peak hours** of the profile's provider: the message names the window and when requests resume, and the request is not sent to the provider ([peak hours](peak-hours.md)) |
 | `404` | unknown token |
 | `503` | the profile cannot be served now, for example the provider has no API key (`run ccgp --login <provider>`) or the profile was removed from the config |
 | `413` | the body is larger than `listen.max_body_mb` |

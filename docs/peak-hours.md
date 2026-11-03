@@ -1,9 +1,9 @@
 # Peak hours
 
-Some providers charge more, throttle, or are simply slow at set hours of the day (z.ai's plan counts usage higher in
-its afternoon, for instance). ccgp can know those hours and **refuse the requests of a provider's profiles while they
-last**, so a long session does not eat the quota at the expensive time. You decide when to work; Claude Code tells you
-why it stopped.
+Some providers charge more, throttle, or are simply slow at set hours of the day, and say so in their plan. Give
+ccgp those hours and it will **refuse the requests of a provider's profiles while they last**, so a long session does
+not eat the quota at the expensive time. You decide when to work; Claude Code tells you why it stopped. The hours are
+yours to enter: ccgp has no list of them.
 
 ```sh
 ccgp --peak zai set mon-fri 14:00-18:00      # the peak: Monday to Friday, 14:00 to 18:00 ...
@@ -129,8 +129,7 @@ what is going on and ends the turn; when the peak is over, say `continue`.
 **Can I work in a peak once, without editing anything?** `ccgp --peak zai pause` (till the end of this peak) or
 `pause 30m`. `ccgp --peak zai resume` brings the refusal back.
 
-**The hours changed.** `ccgp --peak zai set …` (or edit `config.ktav`). There is no list of providers' hours inside
-ccgp: they are yours to set.
+**The hours changed.** `ccgp --peak zai set …`, or the *Peak hours* screen of `ccgp -i`, or edit `config.ktav`.
 
 **The machine's clock is wrong.** The windows are compared with the machine's clock converted to the zone, so a wrong
 clock or zone moves the peak with it.

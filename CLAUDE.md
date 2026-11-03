@@ -54,6 +54,16 @@ Guidance for Claude Code when working in this repository.
   token / Trusted Publishing setup: `docs/releasing.md`.
 - Keep the README's first line (fork notice) and `CHANGELOG.md` `## [Unreleased]` up to date.
 
+## Gotchas
+
+- Ktav comments are `##`; a single `#` is text, and `# key: [` opens a list. Every comment in the default template and
+  in test fixtures uses `##`.
+- `ccgp --interactive` is a Bubble Tea model (`tui.go`, `tui_screens.go`): test it by sending `tea.KeyMsg`s to
+  `Update` and reading `View`, never by starting a program (no terminal in CI). It must only change the config
+  through `config.EditFile` and the same editors the commands use.
+- Windows finds a `ccgp.exe` in the current directory before `PATH`: a stale build in the repo root hides the
+  installed one (it is git-ignored; `scripts\deploy.cmd` installs into `%USERPROFILE%\bin`).
+
 ## Commands
 
 ```sh

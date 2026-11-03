@@ -102,6 +102,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- The commented `connections.proxy` example of the default config was a single-`#` line, which Ktav takes for text,
+  not a comment; it is a `##` comment now. The docs and the contributor notes say that comments are `##`.
 - The interface options that only `~/.claude.json` holds did not reach the profiles: `leftArrowOpensAgents: false`
   (the `←` key that backgrounds the session and opens agent view) was set in your own Claude Code, and in a profile
   `←` still opened it. Only the theme, editor mode, verbose, MCP servers and the onboarding flag were copied, once, when

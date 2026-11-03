@@ -50,8 +50,9 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 - **Interactive setup.** `ccgp --interactive` (or `-i`) is a full-screen interface ([Bubble Tea](https://github.com/charmbracelet/bubbletea))
   to look at, change and add profiles, providers and peak hours without remembering the commands
   ([details](docs/cli.md#interactive-mode)).
-- **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command, and
-  `ccgp --profile add` / `rm` validate the result and keep a backup first ([details](docs/configuration.md)).
+- **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command (`--profile`,
+  `--connections`, `--peak`, `--models apply`, the interactive interface), and every change is validated with the
+  real loader and keeps a backup first ([details](docs/configuration.md)).
 - **Windows first**, also Linux and macOS; Windows is tested in CI.
 
 ## Install

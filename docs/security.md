@@ -22,6 +22,8 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
   `ccgp --connections`, `ccgp --peak`, `ccgp --interactive`, `ccgp --models apply`, `ccgp --config reset`); the profile, connections and peak commands validate
   the edited text with the real loader and keep a `config.ktav.bak-<timestamp>` backup first.
 - A rotated OAuth refresh token is persisted **before** it is used.
+- `creds/peak-pause.ktav` (the pauses of [peak hours](peak-hours.md): a provider name and an end time) holds nothing
+  secret; it lives there because it is state of the running setup, not configuration, and is written owner-only too.
 
 ## Official Claude credentials never reach a ccgp session
 

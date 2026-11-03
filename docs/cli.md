@@ -224,7 +224,7 @@ after printing the JSON.
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
 | `--connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy, global or of one profile (`none` = direct, `inherit` = the global one again); see [configuration](configuration.md#layout) |
-| `--interactive`, `-i` | Menus to view, edit and add profiles and providers; see [interactive mode](#interactive-mode) |
+| `--interactive`, `-i` | Full-screen interface to view, edit and add profiles, providers and peak hours; needs a terminal; see [interactive mode](#interactive-mode) |
 | `--peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider, when the requests of its profiles are refused; see [peak hours](peak-hours.md) |
 
 ```sh

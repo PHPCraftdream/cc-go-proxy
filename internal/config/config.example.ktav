@@ -29,7 +29,7 @@ connections.total: 10
 ## socks5://[user:pass@]host:port, socks5h://…, http://… or https://… (CONNECT).
 ## Without it HTTPS_PROXY / HTTP_PROXY from the environment apply.
 ## `ccgp --connections proxy URL|off` sets and removes it.
-# connections.proxy: socks5://127.0.0.1:1080
+## connections.proxy: socks5://127.0.0.1:1080
 
 ## A real Claude Code with an account of its own (no proxy, a clean config directory) is
 ## created with `ccgp --profile add work --type claude`, which adds to providers:
