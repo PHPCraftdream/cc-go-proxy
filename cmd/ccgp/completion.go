@@ -231,6 +231,19 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 			return []string{"profile"}
 		}
 		return []string{"active", "total", "proxy", "--json"}
+	case "--interactive", "-i":
+		return nil
+	case "--peak":
+		switch {
+		case len(sub) == 0:
+			return append(call(n.providers), "--json")
+		case len(sub) == 1:
+			return []string{"set", "add", "rm", "tz", "clear", "pause", "resume", "--json"}
+		case sub[1] == "tz":
+			return []string{"local", "UTC", "Asia/Shanghai", "+08:00"}
+		case sub[1] == "set" || sub[1] == "add":
+			return []string{"mon-fri", "sat,sun"}
+		}
 	case "--completion":
 		if len(sub) == 0 {
 			return []string{"bash", "zsh", "powershell"}

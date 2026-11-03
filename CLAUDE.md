@@ -15,8 +15,8 @@ Guidance for Claude Code when working in this repository.
 | Path | Role |
 | --- | --- |
 | `cmd/ccgpy` | `ccgpy <profile> …`: runs the sibling `ccgp <profile> --dangerously-skip-permissions …`, nothing else |
-| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm`, `--connections` (active/total/proxy), `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
-| `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`) with backup and loader validation |
+| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm`, `--connections` (active/total/proxy), `--peak` (peak hours of a provider, pause), `--interactive`/`-i` (menus over the same editors, `interactive.go`), `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
+| `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`, `SetProviderPeakText`, `SetProfileKeyText`/`SetProviderKeyText`) with backup and loader validation; provider peak hours (`peak.go`: windows, zone, `PeakSchedule.At`; `peak_pause.go`: the pause file in creds) |
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
 | `internal/home` | where ccgp keeps its files: default config/cache dirs, or one home directory (`--home <dir>`, `--local` = `./.ccgp`, `CCGP_HOME`, a `.ccgp` dir in the current directory) for config, creds, Claude dirs and log; flag parsing shared with `ccgpy` |
@@ -27,14 +27,14 @@ Guidance for Claude Code when working in this repository.
 | `internal/connpool` | upstream transport: active window of lanes (fewest in flight; `connections.active`, default 7), pools renewed every 10 min at staggered times, old pools drained and capped with the active ones by `connections.total` (default 10; renewal waits, running requests are never cut), next pool warmed up in the background and the lane switches the moment it is open; the warm connection goes to the next request (ties prefer its lane) or is dropped after 20 s (`warm.go`), HTTP/2 health pings (quiet 15 s -> ping, no answer 30 s -> closed), a connect failure is retried on lanes with a working connection for up to 30 s (backoff), a connection broken before the reply at most twice; `Observer.Discard` gives a lane a fresh pool at once (the server calls it when the edge answers a request with an HTML block page) |
 | `internal/proxydial` | SOCKS5 and HTTP(S) CONNECT dialers; `Choice` (proxy / none / env) on the request context, cascade global `connections.proxy` -> profile `proxy:` in `Config.ProxyChoice`; default proxy for context-less calls set by `config.Load` |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) between Claude Code config dirs; `StripThinking` |
-| `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload |
+| `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload; peak hours: `POST /v1/messages` in a provider's peak window is refused with a 400 before any upstream call (`peak.go`) |
 | `internal/angel` | detached background process, `/health`-based control; the server's run record (`server.run`), crash reports (`crash/`), the stop note (`StopBy`), the Windows job it lives in |
 
 ## Invariants
 
 - Every model endpoint is under `/call/:token/`; unknown token → 404. Never log tokens
   (`maskToken`).
-- `config.ktav` is written only on the user's command: `ccgp --profile add` / `rm` and `ccgp --connections` (surgical edit through
+- `config.ktav` is written only on the user's command: `ccgp --profile add` / `rm`, `ccgp --connections`, `ccgp --peak` and `ccgp --interactive` (surgical edit through
   `config.EditFile`: validated with the real loader, `config.ktav.bak-<timestamp>` backup), `ccgp --models apply`
   and the refresh after `ccgp --login` (only the marked `ccgp:managed-models` block) and `ccgp --config reset` (default
   template, old file backed up). Secrets go through `securefile.WriteFile`.

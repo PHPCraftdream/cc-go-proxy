@@ -592,3 +592,19 @@ func TestProfileAddKeepsCRLF(t *testing.T) {
 		t.Errorf("CRLF endings were not preserved: %d of %d lines", crlfCount, len(lines)-1)
 	}
 }
+
+// The new provider of --like has the peak hours of the source: they belong to
+// the service, not to the login.
+func TestProfileAddLikeCarriesPeakHours(t *testing.T) {
+	text := strings.Replace(testConfig, "        api_key_env: ZAI_KEY_TEST\n",
+		"        api_key_env: ZAI_KEY_TEST\n        peak_tz: Asia/Shanghai\n        peak: [\n            {\n                days: mon-fri\n                from: 14:00\n                to: 18:00\n            }\n        ]\n", 1)
+	path, cfg := writeTestConfig(t, text)
+	if err := profileAdd(&bytes.Buffer{}, profileAddOpts{Like: "zai"}, path, cfg, creds.Store{}); err != nil {
+		t.Fatal(err)
+	}
+	pr := loadTestConfig(t).Providers["zai3"]
+	want := []config.PeakWindow{{Days: "mon-fri", From: "14:00", To: "18:00"}}
+	if pr == nil || !reflect.DeepEqual(pr.Peak, want) || pr.PeakTZ != "Asia/Shanghai" {
+		t.Errorf("provider zai3 = %+v, want the peak hours of zai", pr)
+	}
+}

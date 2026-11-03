@@ -36,8 +36,11 @@ func commands() []command {
 		{name: "--import", args: "<profile> [count]", desc: "Same as: ccgp --send claude <profile>", ensureConfig: true, run: sessionsImportCmd},
 		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
 		{name: "--profile", args: "add|list [--json]|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
+		{name: "--interactive", args: "", desc: "Menus to view, edit and add profiles and providers (also: -i)", ensureConfig: true, run: interactiveCmd},
+		{name: "-i", args: "", desc: "Same as: ccgp --interactive", ensureConfig: true, run: interactiveCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
 		{name: "--connections", args: "[active N] [total N] [proxy URL|off [profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd},
+		{name: "--peak", args: "[provider [set|add WINDOW...|rm N...|tz ZONE|clear|pause [DURATION]|resume]] [--json]", desc: "Show or set the peak hours of a provider, when its profiles' requests are refused", ensureConfig: true, run: peakCmd},
 		{name: "--which", args: "<profile> <model> [--json]", desc: "Show where a Claude model is routed in a profile (offline)", ensureConfig: true, run: whichCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
 		{name: "--restart", args: "", desc: "Stop and start the background server", ensureConfig: true, run: restartCmd},
@@ -199,6 +202,12 @@ Profiles:
   ccgp --profile add <name> --type claude         The real Claude Code with its own login (a clean dir: settings only, no ids or tokens)
   ccgp --profile list                             Show profiles, providers, login state and Claude dirs
   ccgp --profile rm <name> [--yes] [--purge]      Remove a profile (its provider too when unused; --purge deletes data)
+
+Menus and peak hours:
+  ccgp -i                                         Menus to view, edit and add profiles and providers
+  ccgp --peak                                     Peak hours of every provider, and whether it is peak now
+  ccgp --peak zai set mon-fri 14:00-18:00         Refuse zai's requests in those hours (zone: ccgp --peak zai tz Asia/Shanghai)
+  ccgp --peak zai pause 2h                        Work anyway for two hours (resume ends the pause)
 
 Config (Ktav):
   Windows: %APPDATA%\cc-go-proxy\config.ktav   Linux: ~/.config/cc-go-proxy/config.ktav

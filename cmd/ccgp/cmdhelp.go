@@ -264,6 +264,80 @@ Examples:
   ccgp --connections proxy none profile home
   ccgp --connections proxy inherit profile work
 `,
+	"--interactive": `ccgp --interactive
+ccgp -i
+
+Menus to look at, change and add profiles and providers without remembering
+the commands. Only this flag starts it; every other command stays as it is.
+Each screen reads config.ktav afresh and every change goes through the same
+editor as the commands: validated with the real loader, with a
+config.ktav.bak-<time> backup. Answer with the number (or letter) of a choice;
+an empty line goes back, the end of the input (Ctrl-D, Ctrl-Z on Windows)
+quits. Answers can also come from a pipe.
+
+  profiles   list them (login, provider, type); open one to see its settings and
+             set default_model, context_window, compact_percent, proxy, move it
+             to another provider, or remove it; add one:
+             - another account of the kind a profile has (--profile add --like)
+             - another profile on a login that exists (--provider)
+             - a new backend: codex, codex_api, anthropic_compat, claude (--type)
+  providers  list them (type, profiles, peak hours); open one to see its
+             base_url, api_key_env, login, effort_map, peak hours and profiles,
+             set base_url and api_key_env, and manage its peak hours (windows,
+             zone, pause); add a provider (it comes with its first profile)
+
+A provider goes when its last profile is removed. Models (the rule lists) and
+effort_map are shown and edited with ccgp --models or in the file.
+
+Examples:
+  ccgp --interactive
+  ccgp -i
+  printf '1\n0\n0\n' | ccgp -i       (profiles, back, quit)
+`,
+	"-i": `ccgp -i
+
+Same as: ccgp --interactive
+
+Example:
+  ccgp -i
+`,
+	"--peak": `ccgp --peak [provider [set|add WINDOW...|rm N...|tz ZONE|clear|pause [DURATION]|resume]] [--json]
+
+Peak hours of a provider (config.ktav: peak, peak_tz on the provider). In
+them ccgp refuses the requests of its profiles with an error that Claude
+Code shows in the chat (400, never sent to the model or the provider, so it
+does not touch the cache or the conversation); a running request is not cut.
+Token counting and the other routes go on. The running server applies a
+change on its next request.
+
+A WINDOW is [days] HH:MM-HH:MM in the provider's zone:
+  days    mon-fri, sat,sun, fri-mon (wraps the week); without it: every day
+  time    to is exclusive; 24:00 ends the day; to before from runs past
+          midnight (22:00-06:00; its days are the days it starts on)
+
+  (no provider)  every provider: windows, zone, and whether it is peak now
+  <provider>     one provider (a profile name stands for its provider)
+  set W...       replace all windows
+  add W...       add windows
+  rm N...        remove windows by their numbers in the list
+  tz ZONE        the zone the windows are given in: a name (Asia/Shanghai), an
+                 offset (+08:00), UTC, or local (the machine's, the default)
+  clear          remove the peak hours (windows and zone)
+  pause [LEN]    let requests through for LEN (90m, 2h, 1d; at most 7d), by
+                 default until the running peak ends; kept apart from the config
+  resume         end the pause
+  --json         print the state as JSON
+
+Examples:
+  ccgp --peak
+  ccgp --peak zai set mon-fri 14:00-18:00
+  ccgp --peak zai tz Asia/Shanghai
+  ccgp --peak zai add sat,sun 10:00-12:00 20:00-23:00
+  ccgp --peak zai rm 2
+  ccgp --peak zai pause 2h
+  ccgp --peak zai resume
+  ccgp --peak zai clear
+`,
 	"--update": `ccgp --update [--check]
 
 Update ccgp (and ccgpy, when installed next to it) from the latest GitHub

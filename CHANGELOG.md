@@ -35,6 +35,23 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- `ccgp --interactive` (`-i`): menus to look at, change and add profiles and providers. Profiles: the list with
+  provider, type and login state; a profile's `default_model`, `context_window`, `compact_percent`, `proxy`, its
+  provider, its removal; adding one as `--profile add` does (`--like`, `--provider`, `--type`). Providers: the list
+  with type, profiles and a mark for peak hours; `base_url`, `api_key_env`, the peak hours menu (windows, zone, pause,
+  resume); adding a provider with its first profile. Only the flag starts it. Every change is the edit of the matching
+  command (validated with the real loader, backup kept); answers may come from a pipe. The editors behind the menus
+  are new in `internal/config` (`SetProfileKeyText`, `SetProviderKeyText`).
+- Peak hours of a provider. A provider in config.ktav may have `peak` windows (`days`, `from`, `to`) and a `peak_tz`
+  (a name like `Asia/Shanghai`, an offset like `+08:00`, or the machine's zone); a request to `/v1/messages` that
+  arrives inside one is refused with an HTTP 400 `invalid_request_error` that names the window and when the requests
+  resume (in the provider's zone and in yours). It never reaches the model or the provider, so it touches neither the
+  provider's cache nor the conversation; Claude Code shows it as a notice and does not retry a 400. A running request is
+  not cut, token counting goes on. `ccgp --peak` shows every provider (windows, zone, peak now or not, when it changes);
+  `ccgp --peak <provider> set|add|rm|tz|clear` edits them (`mon-fri 14:00-18:00`, `sat,sun 10:00-12:00`, a window with
+  `to` before `from` runs past midnight, `--json` for scripts); `pause [LEN]` lets requests through for a while (by
+  default until the running peak ends; kept in `creds/peak-pause.ktav`, not in the config) and `resume` ends it.
+  `ccgp --profile add NAME --like P` carries the peak hours over. The server prints them when it starts.
 - A server that vanishes leaves a trace. It keeps `server.run` next to the log (pid, start, parent, the Windows job it
   lives in; touched every 15 s); `ccgp --stop`, `--restart` and the restart of an outdated server by a launch write
   `server pid N stopped by …` into the log and clear it, a clean exit clears it too. The next server that finds the

@@ -44,6 +44,11 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 - **Through a proxy.** SOCKS5, HTTP `CONNECT` and HTTPS proxies for every outbound connection (models, sign-in, token
   refresh, update), global or per profile, with `none` for a direct connection; without a setting the `HTTPS_PROXY` /
   `HTTP_PROXY` / `NO_PROXY` environment applies ([details](docs/configuration.md#layout)).
+- **Peak hours.** Give a provider its peak hours (`ccgp --peak zai set mon-fri 14:00-18:00`, in the provider's zone)
+  and ccgp refuses its requests then, with a notice in the chat that says when work can go on; `pause` lets you
+  through for a while. The provider never sees the refused request ([details](docs/peak-hours.md)).
+- **Interactive setup.** `ccgp --interactive` (or `-i`) is a set of menus to look at, change and add profiles and
+  providers, peak hours included, without remembering the commands ([details](docs/cli.md#interactive-mode)).
 - **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command, and
   `ccgp --profile add` / `rm` validate the result and keep a backup first ([details](docs/configuration.md)).
 - **Windows first**, also Linux and macOS; Windows is tested in CI.
@@ -119,6 +124,13 @@ the latest one by itself on its first start. Details: [sessions](docs/sessions.m
 A setup of its own that shares nothing with the default one: `ccgp --local --login codex` (everything in `./.ccgp`),
 `ccgp --home ~/work/ccgp work`. Details: [own home](docs/cli.md#own-home-a-setup-that-shares-nothing).
 
+Prefer menus to commands? `ccgp -i` lists, edits and adds profiles and providers
+([interactive mode](docs/cli.md#interactive-mode)).
+
+Keep a provider's expensive hours free of work: `ccgp --peak zai set mon-fri 14:00-18:00` and
+`ccgp --peak zai tz Asia/Shanghai`; in those hours its profiles answer with a notice instead of working, and
+`ccgp --peak zai pause 2h` is the way past it. Details: [peak hours](docs/peak-hours.md).
+
 Check everything: `ccgp --doctor`; look at the server: `ccgp --status`, `ccgp --logs -f`; where a model goes:
 `ccgp --which codex claude-opus-4-1`.
 
@@ -151,6 +163,8 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
 | `ccgp --config reset` | Back up the config and write the default one |
 | `ccgp --connections [active N] [total N] [proxy URL|off [profile NAME]]` | Show or set the connections kept to each backend (default 7 active, 10 total) and the SOCKS5 / HTTP proxy: global, with a different one or none per profile |
+| `ccgp --interactive` / `-i` | Menus to view, edit and add profiles and providers (settings, proxy, base URL, peak hours); only the flag starts it ([interactive mode](docs/cli.md#interactive-mode)) |
+| `ccgp --peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider: in them its profiles' requests are refused with a notice in the chat (`mon-fri 14:00-18:00`, in the provider's zone); `pause` works anyway for a while ([peak hours](docs/peak-hours.md)) |
 | `ccgp --update [--check]` | Update ccgp and ccgpy from the latest GitHub release (checksum verified) |
 | `ccgp --completion bash\|zsh\|powershell` | Print a shell completion script |
 | `ccgp --version` | Print the version |
@@ -187,6 +201,7 @@ upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg an
 | [HTTP API](docs/api.md) | `/health` and `/call/<token>/…`: the endpoints, tokens, errors, `curl` examples |
 | [Configuration](docs/configuration.md) | Config file, providers, profiles (`--profile add` / `rm`), model rules, context windows |
 | [Providers](docs/providers.md) | Codex, API keys, z.ai, the real Claude Code: sign-in, model mapping, effort levels |
+| [Peak hours](docs/peak-hours.md) | Refuse a provider's requests at set hours: windows, zones, what Claude Code shows, `ccgp --peak`, pause |
 | [Sessions](docs/sessions.md) | `ccgp --send`, `--import` / `--export`, thinking blocks |
 | [Security](docs/security.md) | Token URLs, secrets at rest, why official credentials never reach a session |
 | [Architecture](docs/architecture.md) | Layout, request flow, invariants |

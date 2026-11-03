@@ -184,6 +184,9 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 			Type:      srcProv.Type,
 			BaseURL:   srcProv.BaseURL,
 			EffortMap: srcProv.EffortMap,
+			// Peak hours belong to the service, not to the login.
+			Peak:   srcProv.Peak,
+			PeakTZ: srcProv.PeakTZ,
 		}
 		providerName, providerType, providerURL = opts.Like, srcProv.Type, srcProv.BaseURL
 		rules = src.Models

@@ -57,6 +57,9 @@ type ProviderSpec struct {
 	APIKeyEnv string
 	// EffortMap renders as a nested object with sorted keys.
 	EffortMap map[string]string
+	// Peak and PeakTZ are the provider's peak hours (see SetProviderPeakText).
+	Peak   []PeakWindow
+	PeakTZ string
 }
 
 type ProfileSpec struct {
@@ -242,6 +245,7 @@ func renderProvider(indent string, p *ProviderSpec) []string {
 		}
 		lines = append(lines, indent+"    }")
 	}
+	lines = append(lines, renderPeak(indent+"    ", p.Peak, p.PeakTZ)...)
 	return append(lines, indent+"}")
 }
 

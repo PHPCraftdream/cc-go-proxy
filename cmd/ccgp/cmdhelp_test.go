@@ -58,6 +58,7 @@ func TestCommandHelpMentionsSynopsisFlags(t *testing.T) {
 		"--logs":        {"-f", "-n"},
 		"--profile":     {"--like", "--provider", "--type", "--purge", "--yes", "--json", "claude"},
 		"--connections": {"active", "total", "proxy", "--json"},
+		"--peak":        {"set", "add", "rm", "tz", "clear", "pause", "resume", "--json"},
 		"--doctor":      {"--offline", "--json"},
 		"--update":      {"--check"},
 		"--login":       {"--device", "claude"},

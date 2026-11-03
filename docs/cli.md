@@ -209,7 +209,7 @@ model, provider, context window and which rule matched (`rule <glob>`, `default_
 
 ## Machine-readable output
 
-`--status`, `--profile list`, `--models` (the read-only form), `--which` and `--doctor` accept `--json`: one
+`--status`, `--profile list`, `--models` (the read-only form), `--which`, `--peak` and `--doctor` accept `--json`: one
 pretty-printed document on stdout. Field names are lowerCamelCase; URL tokens, API keys and OAuth tokens never appear.
 Without the flag the text output is unchanged. `--status` still exits with code 3 when the server is not running,
 after printing the JSON.
@@ -224,6 +224,8 @@ after printing the JSON.
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
 | `--connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy, global or of one profile (`none` = direct, `inherit` = the global one again); see [configuration](configuration.md#layout) |
+| `--interactive`, `-i` | Menus to view, edit and add profiles and providers; see [interactive mode](#interactive-mode) |
+| `--peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider, when the requests of its profiles are refused; see [peak hours](peak-hours.md) |
 
 ```sh
 ccgp --login codex                       # sign in (a link; --device for a code)
@@ -237,8 +239,49 @@ ccgp --models apply codex                # write that mapping into the config
 ccgp --which codex claude-opus-4-1       # where a model name goes, offline
 ccgp --connections                       # show the limits and the proxy
 ccgp --connections proxy socks5://127.0.0.1:1080
+ccgp --peak                              # the peak hours of every provider and whether it is peak now
+ccgp --peak zai set mon-fri 14:00-18:00  # refuse requests in them ...
+ccgp --peak zai tz Asia/Shanghai         # ... the hours are given in this zone
+ccgp --peak zai pause 2h                 # work anyway for two hours (resume ends it)
 ccgp --config reset                      # default config, the old one is kept as a backup
 ```
+
+## Interactive mode
+
+`ccgp --interactive` (or `ccgp -i`) opens menus to look at, change and add profiles and providers. **Only the flag
+starts it**: a word without dashes is still a profile, and `ccgp` alone still prints the help.
+
+```
+$ ccgp -i
+
+ccgp: /home/you/.config/cc-go-proxy/config.ktav
+  1) profiles
+  2) providers
+  0) quit
+>
+```
+
+Type the number or letter of a choice and press Enter; an empty line goes back, the end of the input (Ctrl-D, or
+Ctrl-Z and Enter on Windows) quits. A question with a value in brackets takes it when you press Enter; where a setting
+is asked, `-` removes it and an empty answer keeps it. Answers may also come from a pipe
+(`printf '1\n0\n0\n' | ccgp -i`).
+
+| Menu | What it does |
+| --- | --- |
+| **profiles** | A list with provider, type and login state. Open one to see `default_model`, `context_window`, `compact_percent`, the proxy and the model rules, and to set the first four, move the profile to another provider, or remove it (with a second question whether to delete its Claude dir and the logins nothing else uses, like `--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's |
+| **profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
+| **providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url` and `api_key_env`; open the **peak hours** menu |
+| **providers → peak hours** | `ccgp --peak <provider>` as questions: set, add or remove windows, the time zone, clear, pause for a while, resume ([peak hours](peak-hours.md)) |
+| **providers → add** | A new backend with its first profile (a provider cannot exist without a profile). A provider goes when its last profile is removed |
+
+Every screen reads `config.ktav` afresh, and every change is the same edit as the command makes: only the line
+concerned changes (comments and line endings stay), the result is validated with the real loader, and a
+`config.ktav.bak-<time>` backup is kept. A value the loader refuses (a compact percent of 150, a `base_url` removed from
+an `anthropic_compat` provider) is reported as `error: …` and nothing is written; the menu stays where it was. A
+running server applies a change on its next request. The model rule lists and `effort_map` are shown, not edited here:
+`ccgp --models apply` or the file.
+
+It needs `config.ktav`; in the env-only mode (no config file, `PROXY_TOKEN` in the environment) it says so and exits.
 
 ## Sessions
 

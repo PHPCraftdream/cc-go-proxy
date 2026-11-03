@@ -59,6 +59,11 @@ type Provider struct {
 	// providers that support fewer levels, e.g. {medium: high, xhigh: max}.
 	// Levels not listed pass through. Only used by anthropic_compat.
 	EffortMap map[string]string `json:"effort_map"`
+	// Peak are the provider's peak hours: requests of its profiles are refused
+	// during them (see PeakSchedule). PeakTZ is the zone they are given in; "": the
+	// machine's own.
+	Peak   []PeakWindow `json:"peak"`
+	PeakTZ string       `json:"peak_tz"`
 }
 
 // Profile binds a URL token (managed in creds) to a provider and model mapping.
@@ -165,6 +170,9 @@ func (fc *fileConfig) validate() error {
 			}
 		default:
 			return fmt.Errorf("provider %q: type must be %q, %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat, ProviderTypeClaude)
+		}
+		if err := validatePeak(pr); err != nil {
+			return err
 		}
 		providers[pr.Name] = pr.Type
 	}

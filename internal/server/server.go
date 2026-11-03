@@ -110,6 +110,18 @@ type sessions struct {
 	store creds.Store
 	mu    sync.Mutex
 	m     map[string]*oauth.Session
+	peak  *config.PeakPauses
+}
+
+// pauses are the pauses of peak hours (`ccgp --peak <provider> pause`), kept in
+// the creds directory.
+func (s *sessions) pauses() *config.PeakPauses {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.peak == nil {
+		s.peak = config.NewPeakPauses(s.store.Dir)
+	}
+	return s.peak
 }
 
 func (s *sessions) get(provider string) *oauth.Session {
@@ -197,6 +209,9 @@ func Start(cfg *config.Config) error {
 	}
 	active, total := applyConnectionLimits(cfg)
 	fmt.Printf("   upstream connections: %d active, %d total\n", active, total)
+	for _, l := range peakBanner(cfg) {
+		fmt.Println(l)
+	}
 	if cfg.ConnectionsProxy != "" {
 		fmt.Printf("   upstream proxy: %s\n", proxyText(cfg))
 	}
@@ -274,6 +289,9 @@ func setupClaudeEndpoints(app *fiber.App, auth fiber.Handler, ss *sessions) {
 	// Messages endpoint - main Claude API
 	app.Post(callPrefix+":token/v1/messages", auth, func(c *fiber.Ctx) error {
 		cfg := requestConfig(c)
+		if msg := peakRefusal(cfg, ss.pauses(), time.Now()); msg != "" {
+			return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", msg)
+		}
 		switch cfg.ProviderType {
 		case config.ProviderTypeCodex:
 			return handleCodexMessages(c, cfg, ss.get(cfg.ProviderName))

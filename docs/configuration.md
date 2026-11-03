@@ -25,6 +25,11 @@ The config is **yours**: ccgp reads it and changes it only on your command.
   profile's `ccgp:managed-models` markers ([below](#generated-model-mappings)); no backup is made.
 - `ccgp --connections active N total N proxy URL|off` rewrites (or adds, or removes) the `connections.*` lines the
   same way, with a backup.
+- `ccgp --peak <provider> set|add|rm|tz|clear` rewrites the provider's `peak` and `peak_tz` keys
+  ([below](#peak-hours)) the same way, with a backup.
+- `ccgp --interactive` ([menus](cli.md#interactive-mode)) makes the same kind of edit for one setting at a time:
+  a profile's `default_model`, `context_window`, `compact_percent`, `proxy` or `provider`, a provider's `base_url`,
+  `api_key_env` or peak hours, and the adding and removing of profiles.
 - `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
 Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens) lives in the
@@ -156,6 +161,42 @@ show it as `***`.
 | `base_url` | Endpoint. Optional for `codex`; not allowed for `claude`. |
 | `api_key_env` | Take the key from this environment variable instead of the creds directory. |
 | `effort_map` | `anthropic_compat` only: rewrite Claude Code's effort level (`low`, `medium`, `high`, `xhigh`, `max`) before forwarding, for providers with fewer levels. |
+| `peak`, `peak_tz` | Peak hours: when the provider's requests are refused ([below](#peak-hours)). Not allowed for `claude`. |
+
+### Peak hours
+
+A provider may list the hours in which its profiles' requests are refused (full description: [peak hours](peak-hours.md)):
+
+```
+{
+    name: zai
+    type: anthropic_compat
+    base_url: https://api.z.ai/api/anthropic
+    peak_tz: Asia/Shanghai
+    peak: [
+        {
+            days: mon-fri
+            from: 14:00
+            to: 18:00
+        }
+        {
+            from: 20:00
+            to: 23:00
+        }
+    ]
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `peak[].from`, `peak[].to` | `HH:MM`, 24 hours; `to` is exclusive and may be `24:00`; a `to` that is not after `from` runs past midnight. Both required |
+| `peak[].days` | `mon`, `sat,sun`, `mon-fri`, `fri-mon` (wraps the week), `mon-wed,fri`. Absent: every day |
+| `peak_tz` | The zone the hours are given in: a name (`Asia/Shanghai`, `America/New_York`), an offset written with sign and colon (`+08:00`) or `UTC`. Absent: the machine's zone. Needs `peak` |
+
+In the hours a request to `/v1/messages` is answered with an HTTP 400 that says when requests resume; nothing reaches
+the provider. `ccgp --peak` edits these keys (and shows the state), `ccgp --peak <provider> pause [LEN]` lets requests
+through for a while; the pause is kept in `creds/peak-pause.ktav`, not in this file. The loader names the provider
+and the window in an error, and a running server keeps the previous settings until the file is right.
 
 ### `profiles[]`
 
@@ -229,8 +270,8 @@ example one per Anthropic account:
 - You sign in yourself: the first `ccgp work` shows Claude Code's own sign-in, or type `/login`. The login lives in the
   profile's directory only; ccgp never reads, copies or stores it, and a login made there is kept between launches.
   `--profile list` shows `signed in inside Claude Code` once the directory holds one.
-- It takes no `base_url`, `models`, `default_model`, `context_window`, `compact_percent` or `proxy` (the config loader
-  rejects them), and `--model`, `--window`, `--base-url`, `--models apply`, `--which`, `--login` and
+- It takes no `base_url`, `models`, `default_model`, `context_window`, `compact_percent`, `proxy` or `peak` (the config
+  loader rejects them), and `--model`, `--window`, `--base-url`, `--models apply`, `--which`, `--login`, `--peak` and
   `--connections proxy … profile` do not apply to it.
 - `--profile rm work` keeps the directory (it holds the sign-in) unless `--purge` is given.
 
