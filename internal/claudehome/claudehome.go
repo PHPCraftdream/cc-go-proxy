@@ -36,8 +36,9 @@ func SourceDir(env func(string) string, home string) (dir, stateFile string) {
 }
 
 // Prepare makes dst an isolated config dir mirrored from src. srcState is the
-// source's .claude.json, used once to seed the destination's. It returns an
-// error if an official credential file cannot be removed from dst.
+// source's .claude.json: it seeds the destination's, and a later launch adds the
+// preferenceKeys that the destination's lacks. It returns an error if an official
+// credential file cannot be removed from dst.
 func Prepare(src, srcState, dst string) error {
 	if err := os.MkdirAll(dst, 0o700); err != nil {
 		return err
@@ -54,7 +55,12 @@ func Prepare(src, srcState, dst string) error {
 	if err := mirrorShared(src, dst); err != nil {
 		return err
 	}
-	return seedState(srcState, filepath.Join(dst, ".claude.json"))
+	state := filepath.Join(dst, ".claude.json")
+	if err := seedState(srcState, state); err != nil {
+		return err
+	}
+	addPreferences(srcState, state)
+	return nil
 }
 
 // PrepareOwn makes dst the config dir of a profile that runs the real Claude
@@ -165,8 +171,19 @@ func SanitizeSettings(data []byte) ([]byte, error) {
 	return json.MarshalIndent(m, "", "  ")
 }
 
-// stateKeys are the only .claude.json entries carried over (once, at creation).
+// stateKeys are the .claude.json entries carried over once, at creation.
 var stateKeys = []string{"hasCompletedOnboarding", "theme", "mcpServers", "editorMode", "verbose"}
+
+// preferenceKeys are the options that live only in .claude.json (the "Global
+// config" keys of Claude Code's settings reference) and shape how it behaves at
+// the keyboard and in the terminal, such as leftArrowOpensAgents. They follow the
+// user into every profile: at creation, and later into a profile that lacks
+// them. Account and project data are never among them, and neither is
+// claudeInChromeDefaultEnabled: it would switch on a browser link in the profile.
+var preferenceKeys = []string{
+	"autoConnectIde", "autoInstallIdeExtension", "copyFullResponse", "copyOnSelect", "defaultToAgentsView",
+	"diffTool", "externalEditorContext", "leftArrowOpensAgents", "prStatusFooterEnabled",
+}
 
 // seedState creates dst from src's non-account preferences when dst is absent.
 // Account data (oauthAccount, userID, project history) is never copied.
@@ -178,7 +195,7 @@ func seedState(src, dst string) error {
 	if data, err := os.ReadFile(src); err == nil {
 		var all map[string]any
 		if json.Unmarshal(data, &all) == nil {
-			keys := append([]string(nil), stateKeys...)
+			keys := append(append([]string(nil), stateKeys...), preferenceKeys...)
 			sort.Strings(keys)
 			for _, k := range keys {
 				if v, ok := all[k]; ok {
@@ -192,6 +209,41 @@ func seedState(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0o600)
+}
+
+// addPreferences gives an existing dst the preferenceKeys of src that it lacks: a
+// profile made before a preference was carried over gets it on its next launch.
+// A key dst has is the profile's own (set in a session, it stays). It is
+// best-effort: a file that cannot be read, parsed or replaced is left as it is, a
+// launch never fails for it. Claude Code rewrites this file too, so it is written
+// only when something is added.
+func addPreferences(src, dst string) {
+	srcData, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	dstData, err := os.ReadFile(dst)
+	if err != nil {
+		return
+	}
+	var from, to map[string]json.RawMessage
+	if json.Unmarshal(srcData, &from) != nil || json.Unmarshal(dstData, &to) != nil || to == nil {
+		return
+	}
+	changed := false
+	for _, k := range preferenceKeys {
+		if v, ok := from[k]; ok {
+			if _, has := to[k]; !has {
+				to[k], changed = v, true
+			}
+		}
+	}
+	if !changed {
+		return
+	}
+	if out, err := json.MarshalIndent(to, "", "  "); err == nil {
+		_ = writeIfChanged(dst, out)
+	}
 }
 
 func writeIfChanged(path string, data []byte) error {

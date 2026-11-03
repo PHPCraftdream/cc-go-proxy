@@ -55,7 +55,7 @@ func defaultServerChecks() *serverChecks {
 	exe, mod := ownExeInfo()
 	return &serverChecks{
 		check:      angel.Check,
-		stop:       angel.Stop,
+		stop:       angel.StopBy("a ccgp launch: the running server is older than the binary"),
 		start:      angel.Start,
 		stderr:     os.Stderr,
 		ownVersion: server.ProxyVersion,
@@ -122,7 +122,7 @@ type restartOps struct {
 
 func defaultRestartOps() *restartOps {
 	return &restartOps{
-		stop:    angel.Stop,
+		stop:    angel.StopBy("ccgp --restart"),
 		start:   angel.Start,
 		stdout:  os.Stdout,
 		exe:     os.Executable,

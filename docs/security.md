@@ -33,7 +33,7 @@ passed as `CLAUDE_CONFIG_DIR`), so your claude.ai login and Anthropic API keys a
   `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`,
   `CLAUDE_CODE_USE_BEDROCK` / `VERTEX` / `FOUNDRY`) are dropped;
 - `settings.json` is mirrored without `apiKeyHelper`, `forceLogin*` and those variables in `env`;
-- `.claude.json` is seeded once with onboarding state, theme and MCP servers only: no account data.
+- `.claude.json` is seeded once with onboarding state, theme, MCP servers and the interface options that only that file holds (`leftArrowOpensAgents`, `copyOnSelect`, …): no account data. A later launch adds such an option to an older profile when it lacks it, and never replaces one the profile has.
 
 ccgp does not read, forward or store a Claude subscription's credentials, and does not route a Claude
 subscription through the proxy.

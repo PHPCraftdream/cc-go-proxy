@@ -150,6 +150,85 @@ func TestPrepareIsIdempotentAndFollowsSource(t *testing.T) {
 	}
 }
 
+// The interface options that only .claude.json holds (leftArrowOpensAgents and
+// the like) follow the user into a new profile; the account does not.
+func TestPrepareCarriesInterfacePreferences(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	state := filepath.Join(root, "src.json")
+	write(t, state, `{"leftArrowOpensAgents":false,"copyOnSelect":false,"diffTool":"terminal","claudeInChromeDefaultEnabled":true,"userID":"u","oauthAccount":{"emailAddress":"me@example.com"}}`)
+	if err := Prepare(src, state, dst); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(dst, ".claude.json"))), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["leftArrowOpensAgents"] != false || got["copyOnSelect"] != false || got["diffTool"] != "terminal" {
+		t.Errorf("preferences not carried over: %v", got)
+	}
+	for _, bad := range []string{"claudeInChromeDefaultEnabled", "userID", "oauthAccount"} {
+		if _, ok := got[bad]; ok {
+			t.Errorf("%s was carried over: %v", bad, got)
+		}
+	}
+}
+
+// A profile made before a preference was carried over gets it on its next
+// launch; what it already has is its own, and nothing else in its state moves.
+func TestPrepareAddsMissingPreferencesToAnOldProfile(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	state := filepath.Join(root, "src.json")
+	write(t, state, `{"leftArrowOpensAgents":false,"copyOnSelect":false,"prStatusFooterEnabled":false}`)
+	write(t, filepath.Join(dst, ".claude.json"), `{"hasCompletedOnboarding":true,"numStartups":3,"copyOnSelect":true,"projects":{"/p":{"allowedTools":[]}}}`)
+	if err := Prepare(src, state, dst); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(dst, ".claude.json"))), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["leftArrowOpensAgents"] != false || got["prStatusFooterEnabled"] != false {
+		t.Errorf("missing preferences not added: %v", got)
+	}
+	if got["copyOnSelect"] != true {
+		t.Errorf("the profile's own choice was replaced: %v", got)
+	}
+	if got["numStartups"] != float64(3) || got["hasCompletedOnboarding"] != true || got["projects"] == nil {
+		t.Errorf("the profile's state changed: %v", got)
+	}
+
+	// A second launch changes nothing.
+	before := read(t, filepath.Join(dst, ".claude.json"))
+	if err := Prepare(src, state, dst); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dst, ".claude.json")) != before {
+		t.Error("the state file was rewritten without a change")
+	}
+}
+
+// A state file that cannot be read or parsed is left alone; the launch goes on.
+func TestPreferencesAreBestEffort(t *testing.T) {
+	root := t.TempDir()
+	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
+	state := filepath.Join(root, "src.json")
+	write(t, state, `{"leftArrowOpensAgents":false}`)
+	write(t, filepath.Join(dst, ".claude.json"), "{not json")
+	if err := Prepare(src, state, dst); err != nil {
+		t.Fatalf("Prepare failed for a broken state file: %v", err)
+	}
+	if got := read(t, filepath.Join(dst, ".claude.json")); got != "{not json" {
+		t.Errorf("broken state file was rewritten: %q", got)
+	}
+	write(t, state, "{also not json")
+	write(t, filepath.Join(dst, ".claude.json"), `{"numStartups":1}`)
+	if err := Prepare(src, state, dst); err != nil || read(t, filepath.Join(dst, ".claude.json")) != `{"numStartups":1}` {
+		t.Errorf("a broken source changed the profile: %v", err)
+	}
+}
+
 func TestPrepareRefusesUsersOwnDir(t *testing.T) {
 	d := t.TempDir()
 	if err := Prepare(d, filepath.Join(d, ".claude.json"), d); err == nil {

@@ -28,7 +28,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/proxydial` | SOCKS5 and HTTP(S) CONNECT dialers; `Choice` (proxy / none / env) on the request context, cascade global `connections.proxy` -> profile `proxy:` in `Config.ProxyChoice`; default proxy for context-less calls set by `config.Load` |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) between Claude Code config dirs; `StripThinking` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload |
-| `internal/angel` | detached background process, `/health`-based control |
+| `internal/angel` | detached background process, `/health`-based control; the server's run record (`server.run`), crash reports (`crash/`), the stop note (`StopBy`), the Windows job it lives in |
 
 ## Invariants
 

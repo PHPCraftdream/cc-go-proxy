@@ -150,6 +150,21 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   ccgp sent the request over another one. One line per retry, with the error and the kind of connection the failed
   try was on; the client sees nothing unless the retries run out. Lines with the same error in a row, or many
   `reused, idle …` ones, point at the network or a program on this machine, not at the backend.
+- `server pid N stopped by …`: written by `ccgp --stop`, `ccgp --restart` or a `ccgp <profile>` launch that replaced
+  an older server, with the pid of the command that did it and of its parent. A server that is gone without such a
+  line was not stopped by ccgp.
+- `previous server pid N (started …, last alive …) ended without a stop by ccgp or a clean exit`: the first line of
+  the next server that finds the record of one that vanished (see below).
+
+#### A server that vanished
+
+A running server keeps a record of itself next to the log: `server.run` (pid, start time, the process that started it,
+and the Windows job it lives in), touched every 15 s. A stop by ccgp or a clean exit removes it. The next server that
+finds it left behind says so in its first log line: since when the previous one was alive and whether it left a crash
+report. A panic or fatal error is printed to the log and, with the stacks of all goroutines, into `crash/` next to it
+(`crash-<time>-pid<N>.txt`, the newest 20 are kept). No crash report means it was ended from outside: killed by a
+program or a user, or its terminal or job closed. On Windows the banner then shows `in a job: …`: a job that kills its
+processes when it closes (`wnice`, `capc`) takes a server started inside it along when the terminal that owns it goes.
 
 The timing: `conn new (dns, connect, tls, pool …)`, `conn reused (idle …, pool …)` or `conn warm (opened … before)` (a
 connection opened in the background for this lane). `pool` is the age of the pool the request went to: a connection

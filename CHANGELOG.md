@@ -35,6 +35,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- A server that vanishes leaves a trace. It keeps `server.run` next to the log (pid, start, parent, the Windows job it
+  lives in; touched every 15 s); `ccgp --stop`, `--restart` and the restart of an outdated server by a launch write
+  `server pid N stopped by …` into the log and clear it, a clean exit clears it too. The next server that finds the
+  record says in its first line that the previous one `ended without a stop by ccgp or a clean exit`, since when it
+  was alive, and whether it ran in a job that kills its processes when it closes. A panic or fatal error, besides the
+  log, goes with the stacks of all goroutines into `crash/crash-<time>-pid<N>.txt` (the newest 20 are kept). On
+  3 November a server stopped at 08:10 with nothing in the log to say why.
 - Profiles of the real Claude Code: `ccgp --profile add work --type claude` makes a profile (provider type `claude`)
   that does not use the proxy at all. `ccgp work` runs `claude` with a config directory of its own, created clean:
   only `CLAUDE.md`, `settings.json` (without credential entries), agents, commands, skills, output styles and plugins
@@ -74,6 +81,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   reset by the backend or the network.
 
 ### Fixed
+
+- The interface options that only `~/.claude.json` holds did not reach the profiles: `leftArrowOpensAgents: false`
+  (the `←` key that backgrounds the session and opens agent view) was set in your own Claude Code, and in a profile
+  `←` still opened it. Only the theme, editor mode, verbose, MCP servers and the onboarding flag were copied, once, when
+  the profile was created. Now `leftArrowOpensAgents`, `defaultToAgentsView`, `copyOnSelect`, `copyFullResponse`,
+  `diffTool`, `externalEditorContext`, `prStatusFooterEnabled`, `autoConnectIde` and `autoInstallIdeExtension` are copied
+  too, and a profile made earlier gets the ones it lacks at its next launch (what the profile has is its own and stays).
+  Profiles of the real Claude Code (`--type claude`) still start without a `.claude.json`.
 
 - Requests to z.ai never reused a connection: z.ai closes an HTTP/2 connection that was quiet for 30 seconds, and the
   health ping came at exactly 30, so every request (a few a minute, spread over the lanes) opened its own, 0.17 s or

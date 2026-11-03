@@ -108,7 +108,7 @@ func startCmd(args []string) error {
 
 func stopCmd(args []string) error {
 	host, port := listenAddr()
-	if err := angel.Stop(angel.BaseURL(host, port), 5*time.Second); err != nil {
+	if err := angel.StopBy("ccgp --stop")(angel.BaseURL(host, port), 5*time.Second); err != nil {
 		return err
 	}
 	fmt.Println("ccgp stopped")

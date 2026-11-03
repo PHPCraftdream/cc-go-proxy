@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
@@ -201,7 +202,24 @@ func Start(cfg *config.Config) error {
 	}
 	go logUpstreamStats(logOut)
 
-	return app.Listen(addr)
+	// Once the port is ours: the record of this server, its crash file, and a word
+	// about a previous server that vanished (angel.BeginRun).
+	var life *angel.Lifecycle
+	app.Hooks().OnListen(func(fiber.ListenData) error {
+		var note string
+		life, note = angel.BeginRun(ProxyVersion)
+		if note != "" {
+			_, _ = fmt.Fprintf(logOut, "[%s] %s\n", time.Now().Format("15:04:05"), note)
+		}
+		if life != nil && life.Run.Job != "none" {
+			_, _ = fmt.Fprintf(logOut, "   server process: pid %s, started by pid %s, in a job: %s\n",
+				life.Run.PID, life.Run.Parent, life.Run.Job)
+		}
+		return nil
+	})
+	err = app.Listen(addr)
+	life.End()
+	return err
 }
 
 // profileResolver builds the token index and per-profile config factory.
