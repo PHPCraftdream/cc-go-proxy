@@ -248,38 +248,45 @@ ccgp --config reset                      # default config, the old one is kept a
 
 ## Interactive mode
 
-`ccgp --interactive` (or `ccgp -i`) opens menus to look at, change and add profiles and providers. **Only the flag
-starts it**: a word without dashes is still a profile, and `ccgp` alone still prints the help.
+`ccgp --interactive` (or `ccgp -i`) opens a full-screen interface, built on [Bubble Tea](https://github.com/charmbracelet/bubbletea),
+to look at, change and add profiles, providers and peak hours. **Only the flag starts it**: a word without dashes is
+still a profile, and `ccgp` alone still prints the help. It needs a terminal (it draws menus and reads keys); for
+scripts use the commands.
 
 ```
-$ ccgp -i
+ ccgp
+ /home/you/.config/cc-go-proxy/config.ktav
 
-ccgp: /home/you/.config/cc-go-proxy/config.ktav
-  1) profiles
-  2) providers
-  0) quit
->
+ › 1 Profiles (3)
+   2 Providers (3)
+   3 Peak hours
+   4 Quit
+
+ ↑/↓ move · enter or number select · esc back · ctrl+c quit
 ```
 
-Type the number or letter of a choice and press Enter; an empty line goes back, the end of the input (Ctrl-D, or
-Ctrl-Z and Enter on Windows) quits. A question with a value in brackets takes it when you press Enter; where a setting
-is asked, `-` removes it and an empty answer keeps it. Answers may also come from a pipe
-(`printf '1\n0\n0\n' | ccgp -i`).
-
-| Menu | What it does |
+| Keys | |
 | --- | --- |
-| **profiles** | A list with provider, type and login state. Open one to see `default_model`, `context_window`, `compact_percent`, the proxy and the model rules, and to set the first four, move the profile to another provider, or remove it (with a second question whether to delete its Claude dir and the logins nothing else uses, like `--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's |
-| **profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
-| **providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url` and `api_key_env`; open the **peak hours** menu |
-| **providers → peak hours** | `ccgp --peak <provider>` as questions: set, add or remove windows, the time zone, clear, pause for a while, resume ([peak hours](peak-hours.md)) |
-| **providers → add** | A new backend with its first profile (a provider cannot exist without a profile). A provider goes when its last profile is removed |
+| `↑` `↓` (or `k` `j`), `enter` | Move, select. A number (1-9) selects that item at once; some items have a letter (`a` add, `r` remove, `p` peak hours) |
+| `esc`, `←`, `q`, `backspace` | Go back; from the first screen, quit. `ctrl+c` quits from anywhere |
+| in a field | `enter` accepts, `esc` cancels, `←` `→` `home` `end` move, `ctrl+u` clears, `ctrl+k` clears to the end, `ctrl+w` deletes a word |
 
-Every screen reads `config.ktav` afresh, and every change is the same edit as the command makes: only the line
+A field starts with the current value; emptying it removes the setting. A value the loader refuses (a compact percent
+of 150, a `base_url` removed from an `anthropic_compat` provider, a wrong window) is shown under the field and nothing
+is written.
+
+| Screen | What it does |
+| --- | --- |
+| **Profiles** | A list with provider, type and login state. Open one to see its provider, login, proxy and model rules, and to set `default_model`, `context_window`, `compact_percent` and `proxy`, move it to another provider, or remove it: with its Claude dir and the logins nothing else uses kept, or deleted (`--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's |
+| **Profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
+| **Providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url` and `api_key_env`; open its **peak hours** |
+| **Providers → add** | A new backend with its first profile (a provider cannot exist without a profile). A provider goes when its last profile is removed |
+| **Peak hours** | Every provider with its windows and whether it is peak now. Open one: add windows, replace them all, remove one, set the time zone, pause (a length, or until the running peak ends), resume, clear — `ccgp --peak <provider>` as menus ([peak hours](peak-hours.md)) |
+
+Every screen reads `config.ktav` afresh, and every change is the edit the matching command makes: only the line
 concerned changes (comments and line endings stay), the result is validated with the real loader, and a
-`config.ktav.bak-<time>` backup is kept. A value the loader refuses (a compact percent of 150, a `base_url` removed from
-an `anthropic_compat` provider) is reported as `error: …` and nothing is written; the menu stays where it was. A
-running server applies a change on its next request. The model rule lists and `effort_map` are shown, not edited here:
-`ccgp --models apply` or the file.
+`config.ktav.bak-<time>` backup is kept. A running server applies a change on its next request. The model rule lists
+and `effort_map` are shown, not edited here: `ccgp --models apply` or the file.
 
 It needs `config.ktav`; in the env-only mode (no config file, `PROXY_TOKEN` in the environment) it says so and exits.
 

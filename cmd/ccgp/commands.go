@@ -36,7 +36,7 @@ func commands() []command {
 		{name: "--import", args: "<profile> [count]", desc: "Same as: ccgp --send claude <profile>", ensureConfig: true, run: sessionsImportCmd},
 		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
 		{name: "--profile", args: "add|list [--json]|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
-		{name: "--interactive", args: "", desc: "Menus to view, edit and add profiles and providers (also: -i)", ensureConfig: true, run: interactiveCmd},
+		{name: "--interactive", args: "", desc: "Full-screen interface to view, edit and add profiles, providers and peak hours (also: -i)", ensureConfig: true, run: interactiveCmd},
 		{name: "-i", args: "", desc: "Same as: ccgp --interactive", ensureConfig: true, run: interactiveCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
 		{name: "--connections", args: "[active N] [total N] [proxy URL|off [profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd},
@@ -204,7 +204,7 @@ Profiles:
   ccgp --profile rm <name> [--yes] [--purge]      Remove a profile (its provider too when unused; --purge deletes data)
 
 Menus and peak hours:
-  ccgp -i                                         Menus to view, edit and add profiles and providers
+  ccgp -i                                         Full-screen interface to view, edit and add profiles, providers, peak hours
   ccgp --peak                                     Peak hours of every provider, and whether it is peak now
   ccgp --peak zai set mon-fri 14:00-18:00         Refuse zai's requests in those hours (zone: ccgp --peak zai tz Asia/Shanghai)
   ccgp --peak zai pause 2h                        Work anyway for two hours (resume ends the pause)

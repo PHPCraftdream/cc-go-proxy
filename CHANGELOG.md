@@ -35,13 +35,16 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
-- `ccgp --interactive` (`-i`): menus to look at, change and add profiles and providers. Profiles: the list with
-  provider, type and login state; a profile's `default_model`, `context_window`, `compact_percent`, `proxy`, its
-  provider, its removal; adding one as `--profile add` does (`--like`, `--provider`, `--type`). Providers: the list
-  with type, profiles and a mark for peak hours; `base_url`, `api_key_env`, the peak hours menu (windows, zone, pause,
-  resume); adding a provider with its first profile. Only the flag starts it. Every change is the edit of the matching
-  command (validated with the real loader, backup kept); answers may come from a pipe. The editors behind the menus
-  are new in `internal/config` (`SetProfileKeyText`, `SetProviderKeyText`).
+- `ccgp --interactive` (`-i`): a full-screen interface on [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+  (new dependencies: bubbletea and lipgloss, MIT) to look at, change and add profiles, providers and peak hours.
+  Profiles: the list with provider, type and login state; a profile's `default_model`, `context_window`,
+  `compact_percent`, `proxy`, its provider, its removal (with or without `--purge`); adding one as `--profile add` does
+  (`--like`, `--provider`, `--type`). Providers: the list with type, profiles and a mark for peak hours; `base_url`,
+  `api_key_env`; adding a provider with its first profile. Peak hours: every provider and whether it is peak now; add,
+  replace and remove windows, the time zone, pause, resume, clear. Arrow keys, numbers and letters; fields start with
+  the current value. Only the flag starts it, and it needs a terminal. Every change is the edit of the matching command
+  (validated with the real loader, backup kept); a value the loader refuses is shown under the field. The editors
+  behind it are new in `internal/config` (`SetProfileKeyText`, `SetProviderKeyText`).
 - Peak hours of a provider. A provider in config.ktav may have `peak` windows (`days`, `from`, `to`) and a `peak_tz`
   (a name like `Asia/Shanghai`, an offset like `+08:00`, or the machine's zone); a request to `/v1/messages` that
   arrives inside one is refused with an HTTP 400 `invalid_request_error` that names the window and when the requests

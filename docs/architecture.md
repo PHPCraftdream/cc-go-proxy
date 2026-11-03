@@ -26,7 +26,7 @@ directory). HTTP endpoints: [api.md](api.md).
 | Path | Role |
 | --- | --- |
 | `cmd/ccgpy` | `ccgpy <profile> …`: starts the `ccgp` next to it (or in `PATH`) as `ccgp <profile> --dangerously-skip-permissions …`; passes the terminal and exit code through |
-| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` from one table (`commands.go`); see [cli.md](cli.md). `--interactive` / `-i` (`interactive.go`) is a menu layer over the same editors: line-based numbered menus on any reader and writer, so tests play whole sessions from a script |
+| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` from one table (`commands.go`); see [cli.md](cli.md). `--interactive` / `-i` (`interactive.go`, `tui.go`, `tui_screens.go`) is a Bubble Tea interface over the same editors: a stack of screens (menus, one-line fields, confirmations) built from a config that is read again after every change; tests drive the model with key messages and read its `View` |
 | `internal/config` | Ktav config (`providers[]`, `profiles[]`), model rules (`ResolveModel`), managed blocks, surgical text editing with backup and validation (profile add/remove, `SetProfileKeyText` / `SetProviderKeyText` for single settings, `SetProviderPeakText`), defaults; provider peak hours (`peak.go`: windows, zone, `PeakSchedule.At`) and the pause file (`peak_pause.go`) |
 | `internal/creds` | Generated secrets: profile URL tokens, API keys, OAuth file paths; the token index |
 | `internal/securefile` | Atomic owner-only writes (Windows DACL / Unix `0600`) |
@@ -60,5 +60,7 @@ directory). HTTP endpoints: [api.md](api.md).
 ## Dependencies
 
 [fiber](https://github.com/gofiber/fiber) for HTTP, [ktav-lang/golang](https://github.com/ktav-lang/golang) for the
-config (its pure-Go package, no native library), `golang.org/x/sys` and `x/term`. All are permissively licensed; CI enforces an allowlist
+config (its pure-Go package, no native library), [Bubble Tea](https://github.com/charmbracelet/bubbletea) and
+[lipgloss](https://github.com/charmbracelet/lipgloss) for `ccgp --interactive` (MIT, with their terminal helpers),
+`golang.org/x/sys` and `x/term`. All are permissively licensed; CI enforces an allowlist
 (see [releasing.md](releasing.md)).

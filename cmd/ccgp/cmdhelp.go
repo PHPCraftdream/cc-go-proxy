@@ -267,32 +267,41 @@ Examples:
 	"--interactive": `ccgp --interactive
 ccgp -i
 
-Menus to look at, change and add profiles and providers without remembering
-the commands. Only this flag starts it; every other command stays as it is.
+A full-screen interface (Bubble Tea) to look at, change and add profiles,
+providers and peak hours without remembering the commands. Only this flag
+starts it; every other command stays as it is. It needs a terminal.
+
+Keys: up/down (or j/k) move, enter or the number of an item selects it, esc
+(or left, q) goes back, ctrl+c quits. In a field: enter accepts, esc cancels,
+left/right/home/end move, ctrl+u clears, ctrl+w deletes a word. A field starts
+with the current value; emptying it removes the setting.
+
 Each screen reads config.ktav afresh and every change goes through the same
 editor as the commands: validated with the real loader, with a
-config.ktav.bak-<time> backup. Answer with the number (or letter) of a choice;
-an empty line goes back, the end of the input (Ctrl-D, Ctrl-Z on Windows)
-quits. Answers can also come from a pipe.
+config.ktav.bak-<time> backup. A value the loader refuses is shown under the
+field and nothing is written.
 
-  profiles   list them (login, provider, type); open one to see its settings and
-             set default_model, context_window, compact_percent, proxy, move it
-             to another provider, or remove it; add one:
-             - another account of the kind a profile has (--profile add --like)
-             - another profile on a login that exists (--provider)
-             - a new backend: codex, codex_api, anthropic_compat, claude (--type)
-  providers  list them (type, profiles, peak hours); open one to see its
-             base_url, api_key_env, login, effort_map, peak hours and profiles,
-             set base_url and api_key_env, and manage its peak hours (windows,
-             zone, pause); add a provider (it comes with its first profile)
+  Profiles     list them (login, provider, type); open one to see its settings
+               and set default_model, context_window, compact_percent, proxy,
+               move it to another provider, or remove it (also with --purge);
+               add one:
+               - another account of the kind a profile has (--profile add --like)
+               - another profile on a login that exists (--provider)
+               - a new backend: codex, codex_api, anthropic_compat, claude (--type)
+  Providers    list them (type, profiles, peak hours); open one to see its
+               base_url, api_key_env, login, effort_map, peak hours and
+               profiles; set base_url and api_key_env; open its peak hours;
+               add a provider (it comes with its first profile)
+  Peak hours   the providers and whether it is peak now; open one to add,
+               replace or remove windows, set the time zone, pause, resume
+               or clear (ccgp --peak, see its help)
 
 A provider goes when its last profile is removed. Models (the rule lists) and
-effort_map are shown and edited with ccgp --models or in the file.
+effort_map are shown, not edited here: ccgp --models, or the file.
 
 Examples:
   ccgp --interactive
   ccgp -i
-  printf '1\n0\n0\n' | ccgp -i       (profiles, back, quit)
 `,
 	"-i": `ccgp -i
 

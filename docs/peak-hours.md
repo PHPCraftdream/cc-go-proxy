@@ -88,7 +88,9 @@ stay, the result is validated with the real loader, a `config.ktav.bak-<time>` b
 applies the change on its next request. `pause` and `resume` do **not** touch the config: a pause is a state, kept
 in `creds/peak-pause.ktav` (per provider, with an end time), and it ends by itself.
 
-`ccgp --interactive` has the same under *providers → a provider → peak hours*.
+`ccgp --interactive` has the same as menus: *Peak hours → a provider* (or *Providers → a provider → peak hours*): add,
+replace and remove windows, the zone, pause, resume, clear, with the state shown above the menu
+([interactive mode](cli.md#interactive-mode)).
 
 ## In the config
 
