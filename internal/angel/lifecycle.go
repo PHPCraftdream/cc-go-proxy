@@ -80,12 +80,12 @@ func beginRun(dir, version string) (*Lifecycle, string) {
 	}}
 	_ = ktavfile.Write(runPath(dir), lc.Run)
 	lc.crash = openCrash(dir)
-	go lc.beat()
+	go lc.beat(heartbeat)
 	return lc, note
 }
 
-func (l *Lifecycle) beat() {
-	t := time.NewTicker(heartbeat)
+func (l *Lifecycle) beat(every time.Duration) {
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
