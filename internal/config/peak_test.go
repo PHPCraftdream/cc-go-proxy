@@ -558,10 +558,10 @@ func TestZoneNameAndNegativeWait(t *testing.T) {
 
 func TestSetProviderPeakTextKeepsComments(t *testing.T) {
 	base := strings.Replace(peakBase, "        type: anthropic_compat\n",
-		"        type: anthropic_compat\n        ## my note about peak hours\n        # peak: [ the old way\n", 1)
+		"        type: anthropic_compat\n        ## my note about peak hours\n        ## peak: [ the old way\n", 1)
 	windows := []PeakWindow{{From: "14:00", To: "18:00"}}
 	set, err := SetProviderPeakText(base, "zai", windows, "UTC")
-	if err != nil || !strings.Contains(set, "## my note about peak hours\n        # peak: [ the old way\n") {
+	if err != nil || !strings.Contains(set, "## my note about peak hours\n        ## peak: [ the old way\n") {
 		t.Fatalf("set: %v\n%s", err, set)
 	}
 	if pr := providerPtr(mustLoad(t, set), "zai"); !reflect.DeepEqual(pr.Peak, windows) {

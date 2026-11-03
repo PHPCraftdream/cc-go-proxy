@@ -204,8 +204,10 @@ func TestInteractiveSetsAndRemovesTheProfileProxy(t *testing.T) {
 
 func TestInteractiveMovesAProfileToAnotherProvider(t *testing.T) {
 	r := runUI(t, uiConfig, "1\n1\n5\n1\n0\n0\n0\n")
-	has(t, r.out, "move codex to which provider?", "1) zai")
-	lacks(t, r.out, "1) work")
+	// Neither the profile's own provider nor a Claude one is offered.
+	if !strings.Contains(r.out, "move codex to which provider?\n  1) zai\n  0) cancel\n") {
+		t.Errorf("the provider choice:\n%s", r.out)
+	}
 	if pf := r.config(t).Profiles["codex"]; pf.Provider != "zai" {
 		t.Errorf("provider = %q", pf.Provider)
 	}
@@ -291,8 +293,11 @@ func TestInteractiveAddsAProfileOnAnExistingProvider(t *testing.T) {
 	if pf == nil || pf.Provider != "zai" || len(pf.Models) != 1 || pf.Models[0].Model != "my-model" || pf.Models[0].ContextWindow != 123456 {
 		t.Errorf("extra: %+v", pf)
 	}
-	has(t, r.out, "on which provider?", "1) codex", "2) zai", `created profile "extra" sharing provider "zai"`)
-	lacks(t, r.out, "3) work")
+	// A Claude provider is no choice here.
+	if !strings.Contains(r.out, "on which provider?\n  1) codex\n  2) zai\n  0) cancel\n") {
+		t.Errorf("the provider choice:\n%s", r.out)
+	}
+	has(t, r.out, `created profile "extra" sharing provider "zai"`)
 
 	// The window has a default.
 	r = runUI(t, uiConfig, "1\na\n2\n2\nextra\nmy-model\n\n0\n0\n")

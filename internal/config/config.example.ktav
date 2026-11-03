@@ -69,14 +69,14 @@ providers: [
         ## them. `days` is optional (mon-fri, sat,sun; absent: every day); a `to` before `from`
         ## runs past midnight. `ccgp --peak zai set mon-fri 14:00-18:00` writes this, and
         ## `ccgp --peak zai pause 2h` lets requests through for a while.
-        # peak_tz: Asia/Shanghai
-        # peak: [
-        #     {
-        #         days: mon-fri
-        #         from: 14:00
-        #         to: 18:00
-        #     }
-        # ]
+        ## peak_tz: Asia/Shanghai
+        ## peak: [
+        ##     {
+        ##         days: mon-fri
+        ##         from: 14:00
+        ##         to: 18:00
+        ##     }
+        ## ]
     }
 ]
 
