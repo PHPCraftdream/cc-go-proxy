@@ -101,6 +101,7 @@ type Translator struct {
 
 	started bool
 	next    int
+	sent    []string          // kinds of the blocks started, a repeat in a row once
 	open    map[string]*block // item id -> open block
 	toolUse bool
 	done    bool
@@ -157,9 +158,10 @@ func (t *Translator) Run(r io.Reader) error {
 	return nil
 }
 
-// ContentSent reports whether the client has been sent a content block; after
-// that a broken stream can no longer be asked for again.
-func (t *Translator) ContentSent() bool { return t.next > 0 }
+// Sent names the kinds of content block the client has been sent, in order
+// ("thinking, text"), "" before the first. After the first a broken stream can no
+// longer be asked for again; which kinds went out tells how far the answer got.
+func (t *Translator) Sent() string { return strings.Join(t.sent, ", ") }
 
 // canRetryTransport reports whether a broken stream may be asked for again:
 // retries are allowed and the client has seen no content yet.
@@ -313,6 +315,9 @@ func describeError(code, msg, fallback string) string {
 func (t *Translator) openBlock(itemID, kind string, cb map[string]any) {
 	b := &block{index: t.next, kind: kind}
 	t.next++
+	if n := len(t.sent); n == 0 || t.sent[n-1] != kind {
+		t.sent = append(t.sent, kind)
+	}
 	t.open[itemID] = b
 	t.Emit("content_block_start", map[string]any{"type": "content_block_start", "index": b.index, "content_block": cb})
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -57,6 +58,13 @@ type upstreamTrace struct {
 }
 
 func newUpstreamTrace() *upstreamTrace { return &upstreamTrace{start: time.Now()} }
+
+// traceCall puts a new trace on ctx: the transport's hooks and connpool's
+// observer, so the call can tell which connection it used.
+func traceCall(ctx context.Context) (context.Context, *upstreamTrace) {
+	u := newUpstreamTrace()
+	return connpool.WithObserver(httptrace.WithClientTrace(ctx, u.clientTrace()), u.observer()), u
+}
 
 func (u *upstreamTrace) clientTrace() *httptrace.ClientTrace {
 	at := func(f func(now time.Time)) {

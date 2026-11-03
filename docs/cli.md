@@ -109,15 +109,22 @@ ccgp --serve -s                    # foreground, one line per request (stop with
 ### Reading the log
 
 Every request has one line: start time, status, the time until the backend's reply headers, the route and, for
-failures, the error and the connection it was on (`| conn reused (idle …)`). A successful `GET …/model` or `/health`
+failures, the error and the connection it was on (`| conn reused (idle …)`). A request to Codex or to an
+Anthropic-style provider (z.ai) that had to open a connection of its own ends with `| conn new (tls …, pool …)`;
+over an open connection it has no such mark, so the share of marked lines shows whether connections are kept
+(`upstream stats` below counts them too). A successful `GET …/model` or `/health`
 has no line (Claude Code asks every minute); a failed one has. Lines carry the time only, so a line
-`--- 2026-11-02 ---` opens the log of a server and every new day. A streamed Codex answer that goes wrong or is slow
+`--- 2026-11-02 ---` opens the log of a server and every new day; a line is placed by the day its request began (one
+that began before midnight and is written after it stays above the new line). A streamed Codex answer that goes wrong or is slow
 gets a second line. It is written when the answer ends but stamped with the start of the call, like the request's own
 line, so it can stand far below that line; its timing ends with `total 15m1.327s, ended 10:45:19`, the time it ended:
 
 - `stream failed after …`: the stream broke after it started (`after` is the time since the start of the call, the
   same as `total`). The reason, then the raw backend event that ended it
   (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
+  `not retried: content already sent (thinking)` names the kinds of block the client had got (`thinking`, `text`,
+  `tool_use`): after thinking alone Claude Code asks again by itself (twice), after text or a tool call it keeps what
+  came and shows `Server error mid-response`; ccgp cannot start the request over in either case.
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened

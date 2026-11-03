@@ -58,12 +58,14 @@ func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detai
 }
 
 // notRetriedNote explains a failed stream that ccgp did not ask for again: the
-// client had already got content, so the request is Claude Code's to resend.
-func notRetriedNote(contentSent bool) string {
-	if !contentSent {
+// client had already got content (sent: its kinds, see Translator.Sent), so the
+// request is Claude Code's to resend. After thinking only it does, a few times;
+// after text or a tool call it keeps what came and does not.
+func notRetriedNote(sent string) string {
+	if sent == "" {
 		return ""
 	}
-	return "not retried: content already sent"
+	return "not retried: content already sent (" + sent + ")"
 }
 
 // overloadBackoff is the pause before each retry of an overloaded backend.
@@ -204,7 +206,7 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 		logStreamCanceled(logOut, trace.start, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
 	case tr.Failed != "":
 		logStreamFailure(logOut, trace.start, profile, mapped, tr.Failed, tr.Detail,
-			joinNonEmpty(notRetriedNote(tr.ContentSent()), trace.silenceText(end), ids, trace.summary(tr, end, bodyBytes)))
+			joinNonEmpty(notRetriedNote(tr.Sent()), trace.silenceText(end), ids, trace.summary(tr, end, bodyBytes)))
 	case trace.slow(end):
 		logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 	}

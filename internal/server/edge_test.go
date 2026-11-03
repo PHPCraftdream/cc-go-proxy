@@ -239,7 +239,7 @@ func TestFailedStreamLogsHowLongItWasSilent(t *testing.T) {
 		w.(http.Flusher).Flush()
 		time.Sleep(200 * time.Millisecond)
 	}), time.Minute)
-	for _, want := range []string{"stream failed after", "not retried: content already sent", " | silent for "} {
+	for _, want := range []string{"stream failed after", "not retried: content already sent (text)", " | silent for "} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q: %q", want, log)
 		}

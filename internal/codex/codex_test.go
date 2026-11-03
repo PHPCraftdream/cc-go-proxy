@@ -440,6 +440,32 @@ func TestTranslatorRetriesOverloadBeforeOutput(t *testing.T) {
 	}
 }
 
+// Sent tells how far a stream got, which decides what the client does with a
+// failure: after thinking only it asks again, after text or a call it keeps them.
+func TestTranslatorSentNamesTheKindsOfBlocks(t *testing.T) {
+	created := `{"type":"response.created","response":{"id":"r"}}`
+	think := `{"type":"response.output_item.added","item":{"id":"rs","type":"reasoning"}}`
+	text := `{"type":"response.output_item.added","item":{"id":"m","type":"message"}}`
+	text2 := `{"type":"response.output_item.added","item":{"id":"m2","type":"message"}}`
+	call := `{"type":"response.output_item.added","item":{"id":"f","type":"function_call","call_id":"c","name":"Read"}}`
+	tests := []struct{ name, body, want string }{
+		{"nothing", sseBody(created, overloadedEvent), ""},
+		{"thinking only", sseBody(created, think, overloadedEvent), "thinking"},
+		{"thinking, text", sseBody(created, think, text, overloadedEvent), "thinking, text"},
+		{"a tool call", sseBody(created, think, call, overloadedEvent), "thinking, tool_use"},
+		{"a kind twice in a row is named once", sseBody(created, text, text2, overloadedEvent), "text"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Translator{Model: "m", Emit: func(string, any) {}}
+			_ = tr.Run(strings.NewReader(tt.body))
+			if got := tr.Sent(); got != tt.want {
+				t.Errorf("Sent = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTranslatorDoesNotRetry(t *testing.T) {
 	created := `{"type":"response.created","response":{"id":"r"}}`
 	text := `{"type":"response.output_item.added","item":{"id":"m","type":"message"}}`

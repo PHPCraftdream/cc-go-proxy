@@ -8,8 +8,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -201,6 +203,77 @@ func TestForwardAnthropicBadRequestAndUnreachableUpstream(t *testing.T) {
 	resp, err = app.Test(httptest.NewRequest("POST", "/v1/messages", strings.NewReader(sampleRequest)))
 	if err != nil || resp.StatusCode != 502 {
 		t.Errorf("unreachable upstream: %v, %v", resp, err)
+	}
+}
+
+// zaiLines sends n requests through handleAnthropicCompat with the access log
+// on, over a client of one lane, and returns the log lines.
+func zaiLines(t *testing.T, upstreamURL string, n int) []string {
+	t.Helper()
+	old := upstreamClient
+	upstreamClient = &http.Client{Transport: connpool.NewRouter(0, 1, 1, nil)}
+	t.Cleanup(func() { upstreamClient = old })
+
+	var al syncBuf
+	cfg := compatConfig(upstreamURL, nil)
+	app := fiber.New()
+	app.Use(accessLog(&al))
+	app.Post("/v1/messages", func(c *fiber.Ctx) error { return handleAnthropicCompat(c, cfg) })
+	for range n {
+		req := httptest.NewRequest(fiber.MethodPost, "/v1/messages", strings.NewReader(sampleRequest))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		time.Sleep(100 * time.Millisecond) // the transport takes the connection back after the body ended
+	}
+	return strings.Split(strings.TrimSpace(al.String()), "\n")
+}
+
+// The line of a request that opened its own connection says so; one that went
+// over an open connection stays quiet. Counting the first kind shows whether the
+// connections to the provider are kept.
+func TestZaiLineMarksAConnectionOpenedForTheRequest(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"type":"message"}`)
+	}))
+	defer up.Close()
+
+	lines := zaiLines(t, up.URL, 2)
+	if len(lines) != 2 {
+		t.Fatalf("log = %q, want 2 lines", lines)
+	}
+	if !strings.Contains(lines[0], " [zai] ") || !strings.Contains(lines[0], " | conn new (") {
+		t.Errorf("first request opened the connection: %q", lines[0])
+	}
+	if strings.Contains(lines[1], " | conn") {
+		t.Errorf("second request reused it: %q", lines[1])
+	}
+}
+
+// A refusal or an unreachable upstream says which connection it was on.
+func TestZaiFailureLinesNameTheConnection(t *testing.T) {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`)
+	}))
+	defer refusing.Close()
+	if lines := zaiLines(t, refusing.URL, 1); !strings.Contains(lines[0], " 429 - ") || !strings.Contains(lines[0], " | conn new (dns ") {
+		t.Errorf("429 line lacks the connection: %q", lines)
+	}
+
+	gone := httptest.NewServer(http.NotFoundHandler())
+	url := gone.URL
+	gone.Close()
+	if lines := zaiLines(t, url, 1); !strings.Contains(lines[0], " 502 - ") || !strings.Contains(lines[0], " | conn new (dns ") {
+		t.Errorf("502 line lacks the connection: %q", lines)
 	}
 }
 

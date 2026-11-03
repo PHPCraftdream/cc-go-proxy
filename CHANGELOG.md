@@ -25,6 +25,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   failed request (403, 429, 502, …) ends with the connection it was on (`conn new (dns …, tls …)`, `conn reused (idle …)`),
   and the address in an edge's block page (`[IP: …]`) is no longer cut off.
 
+- Log: a request to z.ai (or another Anthropic-style provider) that opened a connection of its own ends with
+  `| conn new (tls …, pool …)`, and a refused or failed one with the connection it was on, as for Codex. A line written
+  just after midnight by a request that began before it stays above the new `--- date ---` line.
+
 - Log: the lines `slow stream`, `stream failed` and `stream canceled by client` are stamped with the start of the
   call (they were stamped with the moment the reply headers came in, except the slow one), count `after` from the same
   start as `total`, and the timing ends with `ended HH:MM:SS`, the time the answer ended: such a line is written when
@@ -62,8 +66,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   for 44.6s`, `not written out, …` or `no connection after …`. A stuck upload and a silent backend look different.
 - The token part of a call's timing ends with `| cache miss` when a prompt of 10000 tokens or more was not read from the
   backend's cache at all: such a request waits much longer for its first token.
-- A `stream failed` line says `| not retried: content already sent` when the client had got part of the answer: ccgp
-  cannot start such a request over, Claude Code sends it again.
+- A `stream failed` line says `| not retried: content already sent (thinking, text)` when the client had got part of
+  the answer, and which kinds of block: ccgp cannot start such a request over; Claude Code asks again by itself after
+  thinking alone, and keeps what came after text or a tool call.
 - A `stream failed` line says `silent for X`: how long the reply had been quiet before it broke. About 45 s means ccgp's
   health ping closed a connection the network no longer carried (the line says so); data right up to the end means a
   reset by the backend or the network.

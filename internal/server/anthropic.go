@@ -94,6 +94,7 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 	c.Locals(localsModel, requested+" -> "+backend)
 
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
+	ctx, trace := traceCall(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(pr.BaseURL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		cancel()
@@ -117,11 +118,19 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 	resp, err := upstreamClient.Do(req)
 	if err != nil {
 		cancel()
+		c.Locals(localsConn, trace.connText())
 		if estimateOnFailure {
 			return c.JSON(fiber.Map{"input_tokens": estimateTokens(body)})
 		}
 		return anthropicError(c, fiber.StatusBadGateway, "api_error", "upstream request failed: "+err.Error())
 	}
+	// The request line marks a connection opened for this request; a refusal says
+	// which connection it was on.
+	conn := trace.newConnText()
+	if resp.StatusCode/100 != 2 {
+		conn = trace.connText()
+	}
+	c.Locals(localsConn, conn)
 
 	if estimateOnFailure && resp.StatusCode/100 != 2 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))

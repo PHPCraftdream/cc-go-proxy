@@ -581,10 +581,10 @@ func TestRetryAfterParsing(t *testing.T) {
 }
 
 func TestNotRetriedNote(t *testing.T) {
-	if got := notRetriedNote(true); got != "not retried: content already sent" {
+	if got := notRetriedNote("thinking, text"); got != "not retried: content already sent (thinking, text)" {
 		t.Errorf("with content = %q", got)
 	}
-	if got := notRetriedNote(false); got != "" {
+	if got := notRetriedNote(""); got != "" {
 		t.Errorf("without content = %q", got)
 	}
 }
