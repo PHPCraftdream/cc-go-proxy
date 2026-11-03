@@ -248,7 +248,7 @@ func TestZaiLineMarksAConnectionOpenedForTheRequest(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("log = %q, want 2 lines", lines)
 	}
-	if !strings.Contains(lines[0], " [zai] ") || !strings.Contains(lines[0], " | conn new (") {
+	if !strings.Contains(lines[0], " glm-5.3-flash | conn new (") {
 		t.Errorf("first request opened the connection: %q", lines[0])
 	}
 	if strings.Contains(lines[1], " | conn") {
