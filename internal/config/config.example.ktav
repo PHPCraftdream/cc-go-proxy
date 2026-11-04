@@ -29,6 +29,8 @@ connections.total: 10
 ## socks5://[user:pass@]host:port, socks5h://…, http://… or https://… (CONNECT).
 ## Without it HTTPS_PROXY / HTTP_PROXY from the environment apply.
 ## `ccgp --connections proxy URL|off` sets and removes it.
+## A provider may have its own line `proxy: <URL>` or `proxy: none`, and a profile too; the nearest
+## level that sets one replaces the ones above it whole: profile, then provider, then this one.
 ## connections.proxy: socks5://127.0.0.1:1080
 
 ## A real Claude Code with an account of its own (no proxy, a clean config directory) is
@@ -92,7 +94,8 @@ providers: [
 ## compacts earlier. The last rule `match: *` catches every other model name.
 ##
 ## proxy: a profile may have its own line `proxy: <URL>` (a different proxy) or `proxy: none` (no proxy at
-## all); without it the global `connections.proxy` above applies. `ccgp --connections proxy … profile NAME`.
+## all); without it the proxy of its provider applies, else the global `connections.proxy` above.
+## `ccgp --connections proxy … profile NAME` (or `provider NAME` for a provider).
 profiles: [
     {
         name: codex

@@ -72,9 +72,13 @@ func profileInfo(a *app, name string) string {
 		b.WriteString("\nthe real Claude Code: nothing goes through ccgp")
 		return b.String()
 	}
-	proxy := "global (" + a.cfg.ProxyChoice(name).String() + ")"
-	if pf.Proxy != "" {
-		proxy = a.cfg.ProxyChoice(name).String() + " (its own)"
+	choice := a.cfg.ProxyChoice(name).String()
+	proxy := "global (" + choice + ")"
+	switch a.cfg.ProxyLevel(name) {
+	case config.ProxyLevelProfile:
+		proxy = choice + " (its own)"
+	case config.ProxyLevelProvider:
+		proxy = choice + " (of provider " + pf.Provider + ")"
 	}
 	fmt.Fprintf(&b, "\nproxy     %s\nmodels    %d rule(s)", proxy, len(pf.Models))
 	for i, r := range pf.Models {
@@ -128,7 +132,7 @@ func profileMenu(name string) *menu {
 			proxy := menuItem{
 				label: fmt.Sprintf("%-16s %s", "proxy", dash(pf.Proxy)),
 				run: push(func() screen {
-					return newInput(head, "proxy", "a proxy URL (socks5://…, http://…), none (no proxy at all), or empty (the global proxy)", pf.Proxy,
+					return newInput(head, "proxy", "a proxy URL (socks5://…, http://…), none (no proxy at all), or empty (the provider's proxy, else the global one)", pf.Proxy,
 						func(a *app, v string) (screen, error) {
 							p := ""
 							if v != "" {
@@ -407,6 +411,14 @@ func providerInfo(a *app, name string) string {
 		fmt.Fprintf(&b, "base_url     %s\napi_key_env  %s\n", dash(pr.BaseURL), dash(pr.APIKeyEnv))
 	}
 	fmt.Fprintf(&b, "login        %s\n", loginState(a.store, pr))
+	if pr.Type != config.ProviderTypeClaude {
+		choice := a.cfg.ProviderProxy(name).String()
+		if pr.Proxy != "" {
+			fmt.Fprintf(&b, "proxy        %s (its own)\n", choice)
+		} else {
+			fmt.Fprintf(&b, "proxy        global (%s)\n", choice)
+		}
+	}
 	if len(pr.EffortMap) > 0 {
 		keys := make([]string, 0, len(pr.EffortMap))
 		for k := range pr.EffortMap {
@@ -450,6 +462,23 @@ func providerMenu(name string) *menu {
 			if pr.Type != config.ProviderTypeCodex {
 				items = append(items, setKey("api_key_env", pr.APIKeyEnv, "the environment variable that holds the API key"))
 			}
+			proxy := menuItem{
+				label: fmt.Sprintf("%-14s %s", "proxy", dash(pr.Proxy)),
+				run: push(func() screen {
+					return newInput(head, "proxy", "a proxy URL (socks5://…, http://…), none (no proxy at all), or empty (the global proxy); a profile's own proxy wins", pr.Proxy,
+						func(a *app, v string) (screen, error) {
+							p := ""
+							if v != "" {
+								var err error
+								if p, err = providerProxyValue(a.cfg, v, name); err != nil {
+									return nil, err
+								}
+							}
+							return nil, a.edit(func(text string) (string, error) { return config.SetProviderProxyText(text, name, p) })
+						})
+				}),
+			}
+			items = append(items, proxy)
 			return append(items, menuItem{label: "peak hours…", hot: "p", run: push(func() screen { return peakMenu(name) })})
 		},
 	}

@@ -35,6 +35,15 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- A proxy per provider. The proxy settings now cascade global → provider → profile: a provider in config.ktav may have
+  `proxy:` (a proxy URL, or `none` for a direct connection), and the nearest level that sets one **replaces** the
+  ones above it whole, nothing is merged (a profile's `proxy` beats its provider's, the provider's beats
+  `connections.proxy`, which beats `HTTPS_PROXY` / `HTTP_PROXY`). `ccgp --connections proxy URL|none|inherit provider NAME`
+  sets it; the output lists the providers and profiles that have their own, and `--json` gives the level each profile's
+  proxy comes from. In `ccgp -i`: *Providers → a provider → proxy*, and a profile's screen says where its proxy comes
+  from. `--login`, the model catalog and `--doctor` use the proxy the provider's profiles agree on, else the
+  provider's own, else the global one; `ccgp --profile add NAME --like P` carries the provider's proxy over. A
+  provider of type `claude` takes none. Old configs work as before.
 - `ccgp --interactive` (`-i`): a full-screen interface on [Bubble Tea](https://github.com/charmbracelet/bubbletea)
   (new dependencies: bubbletea and lipgloss, MIT) to look at, change and add profiles, providers and peak hours.
   Profiles: the list with provider, type and login state; a profile's `default_model`, `context_window`,

@@ -201,8 +201,8 @@ Manage profiles (and their providers) in config.ktav. Every change is
 validated with the real loader and keeps a config.ktav.bak-<time> backup.
 
   add [name] --like <profile>      new profile with its OWN login, copying the
-                                   source's provider type, URL, peak hours and
-                                   model rules (no name: the next free <source>N)
+                                   source's provider type, URL, peak hours, proxy
+                                   and model rules (no name: the next free <source>N)
   add <name> --provider <provider> new profile on an existing login
   add <name> --type <t> ...        new backend: codex | codex_api |
                                    anthropic_compat [--base-url URL]
@@ -234,7 +234,7 @@ Edit the new file to configure providers, profiles and model names.
 Example:
   ccgp --config reset
 `,
-	"--connections": `ccgp --connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]
+	"--connections": `ccgp --connections [active N] [total N] [proxy URL|off [provider NAME | profile NAME]] [--json]
 
 Show or set how many connections ccgp keeps to each backend (config.ktav:
 connections.active, connections.total). Active connections take new
@@ -249,17 +249,26 @@ cut. The running server applies changes on its next request.
   proxy URL  send every upstream request (models, logins, catalog) through a
              proxy: socks5://[user:pass@]host:port (socks5h too: the proxy
              resolves names), http://… or https://… (CONNECT); off: none
+  proxy V provider NAME
+             a proxy of one provider, for all its profiles
   proxy V profile NAME
-             a proxy of one profile; it replaces the global one for it.
-             V: a proxy URL; none (or off): no proxy at all for the profile;
-             inherit: remove the override, the global proxy applies again
+             a proxy of one profile
+             V: a proxy URL; none (or off): no proxy at all; inherit: remove
+             the override, the level above applies again
   --json     print the values as JSON
+
+The levels replace each other whole, nothing is merged: a profile's proxy
+beats its provider's, the provider's beats the global one, the global one
+beats HTTPS_PROXY / HTTP_PROXY from the environment. "none" at a level means
+direct and ends the search.
 
 Examples:
   ccgp --connections
   ccgp --connections active 7 total 10
   ccgp --connections proxy socks5://127.0.0.1:1080
   ccgp --connections proxy off
+  ccgp --connections proxy http://corp-proxy:3128 provider codex
+  ccgp --connections proxy none provider zai
   ccgp --connections proxy socks5://10.0.0.2:1080 profile work
   ccgp --connections proxy none profile home
   ccgp --connections proxy inherit profile work
@@ -282,15 +291,18 @@ config.ktav.bak-<time> backup. A value the loader refuses is shown under the
 field and nothing is written.
 
   Profiles     list them (login, provider, type); open one to see its settings
-               and set default_model, context_window, compact_percent, proxy,
-               move it to another provider, or remove it (also with --purge);
+               and set default_model, context_window, compact_percent, proxy
+               (it says whether the proxy is its own, its provider's or the
+               global one), move it to another provider, or remove it (also
+               with --purge);
                add one:
                - another account of the kind a profile has (--profile add --like)
                - another profile on a login that exists (--provider)
                - a new backend: codex, codex_api, anthropic_compat, claude (--type)
   Providers    list them (type, profiles, peak hours); open one to see its
-               base_url, api_key_env, login, effort_map, peak hours and
-               profiles; set base_url and api_key_env; open its peak hours;
+               base_url, api_key_env, proxy, login, effort_map, peak hours and
+               profiles; set base_url, api_key_env and proxy (for all its
+               profiles; a profile's own proxy wins); open its peak hours;
                add a provider (it comes with its first profile)
   Peak hours   the providers and whether it is peak now; open one to add,
                replace or remove windows, set the time zone, pause, resume

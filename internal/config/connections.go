@@ -48,15 +48,24 @@ func effectiveConnections(active, total int64) (int, int) {
 	return int(active), int(total)
 }
 
-// ProxyNone, as a profile's proxy, means "no proxy" (the global one is not inherited).
+// ProxyNone, as a provider's or profile's proxy, means "no proxy" (nothing is
+// inherited from the levels above).
 const ProxyNone = "none"
 
 func validateProfileProxy(profile, proxy string) error {
+	return validateScopeProxy("profile", profile, proxy)
+}
+
+func validateProviderProxy(provider, proxy string) error {
+	return validateScopeProxy("provider", provider, proxy)
+}
+
+func validateScopeProxy(kind, name, proxy string) error {
 	if proxy == "" || proxy == ProxyNone {
 		return nil
 	}
 	if _, err := proxydial.Parse(proxy); err != nil {
-		return fmt.Errorf("profile %q: proxy: %w (a proxy URL, or %s)", profile, err, ProxyNone)
+		return fmt.Errorf("%s %q: proxy: %w (a proxy URL, or %s)", kind, name, err, ProxyNone)
 	}
 	return nil
 }
@@ -79,27 +88,80 @@ func (c *Config) ProxyURL() *url.URL {
 	return u
 }
 
-// ProxyChoice is the way out of a profile's requests: its own proxy, or "none"
-// (direct, nothing inherited), or else the global connections.proxy, else the
+// proxySetting reads the proxy value of one level (a profile or a provider):
+// ok is false when the level sets none and the level above decides. A level
+// that sets one replaces the upper ones whole, it is never merged with them.
+func proxySetting(v string) (ch proxydial.Choice, ok bool) {
+	switch v {
+	case "":
+		return ch, false
+	case ProxyNone:
+		return proxydial.Choice{Direct: true}, true
+	}
+	u, err := proxydial.Parse(v)
+	if err != nil {
+		return ch, false
+	}
+	return proxydial.Choice{URL: u}, true
+}
+
+// ProviderProxy is the way out of a provider's profiles that set none: the
+// provider's own proxy, or "none", else the global connections.proxy, else the
 // environment's.
-func (c *Config) ProxyChoice(profile string) proxydial.Choice {
-	if pf := c.Profiles[profile]; pf != nil {
-		switch pf.Proxy {
-		case "":
-		case ProxyNone:
-			return proxydial.Choice{Direct: true}
-		default:
-			if u, err := proxydial.Parse(pf.Proxy); err == nil {
-				return proxydial.Choice{URL: u}
-			}
+func (c *Config) ProviderProxy(provider string) proxydial.Choice {
+	if pr := c.Providers[provider]; pr != nil {
+		if ch, ok := proxySetting(pr.Proxy); ok {
+			return ch
 		}
 	}
 	return proxydial.Choice{URL: c.ProxyURL()}
 }
 
+// ProxyChoice is the way out of a profile's requests, from the nearest level
+// that sets one: the profile's proxy, the provider's, the global
+// connections.proxy, the environment's. "none" at a level means direct and
+// nothing from the levels above applies.
+func (c *Config) ProxyChoice(profile string) proxydial.Choice {
+	pf := c.Profiles[profile]
+	if pf == nil {
+		return proxydial.Choice{URL: c.ProxyURL()}
+	}
+	if ch, ok := proxySetting(pf.Proxy); ok {
+		return ch
+	}
+	return c.ProviderProxy(pf.Provider)
+}
+
+// Levels of the proxy cascade, as ProxyLevel names them.
+const (
+	ProxyLevelProfile  = "profile"
+	ProxyLevelProvider = "provider"
+	ProxyLevelGlobal   = "global"
+)
+
+// ProxyLevel names the level that decides a profile's proxy: ProxyLevelProfile,
+// ProxyLevelProvider, ProxyLevelGlobal, or "" when none sets one (the
+// environment's proxy applies, if any).
+func (c *Config) ProxyLevel(profile string) string {
+	if pf := c.Profiles[profile]; pf != nil {
+		if _, ok := proxySetting(pf.Proxy); ok {
+			return ProxyLevelProfile
+		}
+		if pr := c.Providers[pf.Provider]; pr != nil {
+			if _, ok := proxySetting(pr.Proxy); ok {
+				return ProxyLevelProvider
+			}
+		}
+	}
+	if c.ProxyURL() != nil {
+		return ProxyLevelGlobal
+	}
+	return ""
+}
+
 // ProviderProxyChoice is the way out for what belongs to a provider rather
 // than a request (login, the model catalog): the proxy its profiles agree on,
-// the global one when they differ or there is none.
+// the provider's own (else the global one) when they differ or there are none.
 func (c *Config) ProviderProxyChoice(provider string) proxydial.Choice {
 	var common proxydial.Choice
 	found := false
@@ -109,12 +171,12 @@ func (c *Config) ProviderProxyChoice(provider string) proxydial.Choice {
 		}
 		ch := c.ProxyChoice(name)
 		if found && ch.Key() != common.Key() {
-			return proxydial.Choice{URL: c.ProxyURL()}
+			return c.ProviderProxy(provider)
 		}
 		common, found = ch, true
 	}
 	if !found {
-		return proxydial.Choice{URL: c.ProxyURL()}
+		return c.ProviderProxy(provider)
 	}
 	return common
 }

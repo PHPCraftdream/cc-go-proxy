@@ -572,11 +572,11 @@ func TestTUIListsAndShowsProviders(t *testing.T) {
 	h.has("Providers", "codex codex codex", "work claude work", "zai anthropic_compat zai", "+ add a provider")
 	h.press("3")
 	h.has("Provider zai", "type anthropic_compat", "base_url https://api.z.ai/api/anthropic", "api_key_env -",
-		"peak hours none", "profiles zai", "1 base_url https://api.z.ai/api/anthropic", "2 api_key_env -", "3 peak hours…")
+		"peak hours none", "profiles zai", "proxy global (", "1 base_url https://api.z.ai/api/anthropic", "2 api_key_env -", "3 proxy -", "4 peak hours…")
 
 	h = newTUI(t, uiConfig)
 	h.press("2", "1")
-	h.has("Provider codex", "1 base_url -", "2 peak hours…")
+	h.has("Provider codex", "1 base_url -", "2 proxy -", "3 peak hours…")
 	h.lacks("2 api_key_env")
 
 	h = newTUI(t, uiConfig)
@@ -752,7 +752,7 @@ func TestTUIPausesAndResumesPeakHours(t *testing.T) {
 
 func TestTUIPeakHoursOfAProvider(t *testing.T) {
 	h := newTUI(t, uiConfig)
-	h.press("2", "3", "3")
+	h.press("2", "3", "4")
 	h.has("Peak hours of zai")
 	h.press("1")
 	h.typ("mon-fri 14:00-18:00")

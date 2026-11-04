@@ -6,9 +6,10 @@ import (
 	"strings"
 )
 
-// Scalar keys of an object that `ccgp --interactive` may set. The profile's
-// proxy has its own editor (SetProfileProxyText), the peak hours too
-// (SetProviderPeakText); models and effort_map are lists and stay hand work.
+// Scalar keys of an object that `ccgp --interactive` may set. The proxy of a
+// profile and of a provider have their own editors (SetProfileProxyText,
+// SetProviderProxyText), the peak hours too (SetProviderPeakText); models and
+// effort_map are lists and stay hand work.
 var (
 	profileKeys  = []string{"default_model", "context_window", "compact_percent", "provider"}
 	providerKeys = []string{"base_url", "api_key_env"}
@@ -48,6 +49,21 @@ func SetProviderKeyText(text, provider, key, value string) (string, error) {
 	if !inList(providerKeys, key) {
 		return "", fmt.Errorf("provider key %q cannot be set here (%s)", key, strings.Join(providerKeys, ", "))
 	}
+	return setProviderKey(text, provider, key, value)
+}
+
+// SetProviderProxyText sets proxy in the provider's object in config text: a
+// proxy URL, ProxyNone, or "" to remove the line (the provider inherits the
+// global proxy again). The line goes after the provider's name, type, base_url
+// and api_key_env lines.
+func SetProviderProxyText(text, provider, proxy string) (string, error) {
+	if err := validateProviderProxy(provider, proxy); err != nil {
+		return "", err
+	}
+	return setProviderKey(text, provider, "proxy", proxy)
+}
+
+func setProviderKey(text, provider, key, value string) (string, error) {
 	lines := strings.Split(text, "\n")
 	prs, err := findList(lines, "providers")
 	if err != nil {

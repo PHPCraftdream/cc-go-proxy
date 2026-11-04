@@ -39,7 +39,7 @@ func commands() []command {
 		{name: "--interactive", args: "", desc: "Full-screen interface to view, edit and add profiles, providers and peak hours (also: -i)", ensureConfig: true, run: interactiveCmd},
 		{name: "-i", args: "", desc: "Same as: ccgp --interactive", ensureConfig: true, run: interactiveCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
-		{name: "--connections", args: "[active N] [total N] [proxy URL|off [profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd},
+		{name: "--connections", args: "[active N] [total N] [proxy URL|off [provider NAME | profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd},
 		{name: "--peak", args: "[provider [set|add WINDOW...|rm N...|tz ZONE|clear|pause [DURATION]|resume]] [--json]", desc: "Show or set the peak hours of a provider, when its profiles' requests are refused", ensureConfig: true, run: peakCmd},
 		{name: "--which", args: "<profile> <model> [--json]", desc: "Show where a Claude model is routed in a profile (offline)", ensureConfig: true, run: whichCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
@@ -202,6 +202,12 @@ Profiles:
   ccgp --profile add <name> --type claude         The real Claude Code with its own login (a clean dir: settings only, no ids or tokens)
   ccgp --profile list                             Show profiles, providers, login state and Claude dirs
   ccgp --profile rm <name> [--yes] [--purge]      Remove a profile (its provider too when unused; --purge deletes data)
+
+Proxy (SOCKS5 or HTTP; the nearest level replaces the ones above it: profile, provider, global):
+  ccgp --connections proxy socks5://127.0.0.1:1080            Everybody goes through it (off removes it)
+  ccgp --connections proxy http://corp:3128 provider codex    All profiles of one provider
+  ccgp --connections proxy none profile home                  One profile, directly (inherit: the level above again)
+  ccgp --connections                                          Show the limits and every proxy
 
 Menus and peak hours:
   ccgp -i                                         Full-screen interface to view, edit and add profiles, providers, peak hours

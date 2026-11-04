@@ -60,6 +60,8 @@ type ProviderSpec struct {
 	// Peak and PeakTZ are the provider's peak hours (see SetProviderPeakText).
 	Peak   []PeakWindow
 	PeakTZ string
+	// Proxy is the provider's proxy: a URL or ProxyNone ("": the global one).
+	Proxy string
 }
 
 type ProfileSpec struct {
@@ -232,6 +234,9 @@ func renderProvider(indent string, p *ProviderSpec) []string {
 	}
 	if p.APIKeyEnv != "" {
 		add("api_key_env", p.APIKeyEnv)
+	}
+	if p.Proxy != "" {
+		add("proxy", p.Proxy)
 	}
 	if len(p.EffortMap) > 0 {
 		keys := make([]string, 0, len(p.EffortMap))

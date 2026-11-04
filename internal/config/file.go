@@ -64,6 +64,10 @@ type Provider struct {
 	// machine's own.
 	Peak   []PeakWindow `json:"peak"`
 	PeakTZ string       `json:"peak_tz"`
+	// Proxy overrides connections.proxy for every profile of this provider (a
+	// profile's own proxy still wins): a proxy URL, or "none" for no proxy.
+	// Absent: the global setting applies.
+	Proxy string `json:"proxy"`
 }
 
 // Profile binds a URL token (managed in creds) to a provider and model mapping.
@@ -161,8 +165,8 @@ func (fc *fileConfig) validate() error {
 		switch pr.Type {
 		case ProviderTypeCodex, ProviderTypeCodexAPI:
 		case ProviderTypeClaude:
-			if pr.BaseURL != "" || pr.APIKeyEnv != "" || len(pr.EffortMap) > 0 {
-				return fmt.Errorf("provider %q: type %q takes no base_url, api_key_env or effort_map (it signs in inside Claude Code)", pr.Name, pr.Type)
+			if pr.BaseURL != "" || pr.APIKeyEnv != "" || len(pr.EffortMap) > 0 || pr.Proxy != "" {
+				return fmt.Errorf("provider %q: type %q takes no base_url, api_key_env, effort_map or proxy (it signs in inside Claude Code)", pr.Name, pr.Type)
 			}
 		case ProviderTypeAnthropicCompat:
 			if pr.BaseURL == "" {
@@ -172,6 +176,9 @@ func (fc *fileConfig) validate() error {
 			return fmt.Errorf("provider %q: type must be %q, %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat, ProviderTypeClaude)
 		}
 		if err := validatePeak(pr); err != nil {
+			return err
+		}
+		if err := validateProviderProxy(pr.Name, pr.Proxy); err != nil {
 			return err
 		}
 		providers[pr.Name] = pr.Type

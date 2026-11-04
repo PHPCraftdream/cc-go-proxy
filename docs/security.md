@@ -16,7 +16,7 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - Everything secret lives in `<config dir>/cc-go-proxy/creds/`: profile tokens, API keys, rotating OAuth
   tokens. Files are written atomically and are readable only by the current user (Windows: an explicit
   owner-only DACL; Unix: mode `0600`).
-- `config.ktav` holds no secrets, except a proxy password if you put one into `connections.proxy`. Every ccgp write
+- `config.ktav` holds no secrets, except a proxy password if you put one into a `proxy` setting (`connections.proxy`, a provider's or a profile's). Every ccgp write
   of the file is owner-only (as the creds files); a copy you edit by hand keeps the permissions it has. `ccgp --connections`
   and the server log print the password as `***`. It is written only on your command (`ccgp --profile add` / `rm`,
   `ccgp --connections`, `ccgp --peak`, `ccgp --interactive`, `ccgp --models apply`, `ccgp --config reset`); the profile, connections and peak commands validate

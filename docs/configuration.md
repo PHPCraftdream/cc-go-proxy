@@ -23,13 +23,13 @@ The config is **yours**: ccgp reads it and changes it only on your command.
   overwrite each other's backup).
 - `ccgp --models apply`, and the refresh after a fresh `ccgp --login codex`, rewrite only the lines between a
   profile's `ccgp:managed-models` markers ([below](#generated-model-mappings)); no backup is made.
-- `ccgp --connections active N total N proxy URL|off` rewrites (or adds, or removes) the `connections.*` lines the
-  same way, with a backup.
+- `ccgp --connections active N total N proxy URL|off [provider NAME | profile NAME]` rewrites (or adds, or removes)
+  the `connections.*` lines, or the `proxy` line of a provider or a profile, the same way, with a backup.
 - `ccgp --peak <provider> set|add|rm|tz|clear` rewrites the provider's `peak` and `peak_tz` keys
   ([below](#peak-hours)) the same way, with a backup.
 - `ccgp --interactive` ([full-screen interface](cli.md#interactive-mode)) makes the same kind of edit for one setting at a time:
   a profile's `default_model`, `context_window`, `compact_percent`, `proxy` or `provider`, a provider's `base_url`,
-  `api_key_env` or peak hours, and the adding and removing of profiles.
+  `api_key_env`, `proxy` or peak hours, and the adding and removing of profiles.
 - `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
 Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens, and the pauses of
@@ -121,39 +121,65 @@ Without it ccgp follows `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the envir
 connections to the proxy are renewed and warmed up like the direct ones. A change applies on the next request, with
 no restart; `ccgp --connections proxy socks5://127.0.0.1:1080` sets it, `ccgp --connections proxy off` removes it.
 
-**A proxy per profile.** `connections.proxy` is the global setting; a profile may override it with `proxy:` in its
-object, and the profile's setting wins:
+**The proxy cascade: global, provider, profile.** `connections.proxy` is the global setting. A provider may override
+it with `proxy:` in its object, and a profile with `proxy:` in its own. The nearest level that sets one wins, and it
+**replaces** the levels above it whole (nothing is merged): a profile's proxy beats its provider's, the provider's
+beats the global one, the global one beats the environment's.
 
-| In the profile | The profile's requests go |
+| A level says | The requests of what it covers go |
 | --- | --- |
-| no `proxy` line | through the global `connections.proxy` (else the environment's) |
-| `proxy: socks5://other:1080` | through that proxy, whatever the global one is |
-| `proxy: none` | directly, the global proxy and the environment's are both ignored |
+| no `proxy` line | as the level above says: profile → its provider → `connections.proxy` → the environment's |
+| `proxy: socks5://other:1080` | through that proxy, whatever the levels above say |
+| `proxy: none` | directly: nothing above it applies, neither a proxy nor the environment's |
 
 ```
 connections.proxy: socks5://10.0.0.2:1080       # everybody
 
+providers: [
+    {
+        name: codex
+        type: codex
+        proxy: http://corp-proxy:3128      # every profile of codex goes through the corporate proxy ...
+    }
+    {
+        name: zai
+        type: anthropic_compat
+        base_url: https://api.z.ai/api/anthropic
+        proxy: none                        # ... every profile of zai goes out directly
+    }
+]
+
 profiles: [
     {
         name: work
-        provider: codex
-        proxy: http://corp-proxy:3128      # work goes through the corporate proxy
+        provider: codex                    # no proxy line: the provider's, corp-proxy
     }
     {
         name: home
-        provider: codex2
-        proxy: none                        # home goes out directly
+        provider: codex
+        proxy: socks5://home-gw:1080       # its own beats the provider's
+    }
+    {
+        name: lab
+        provider: zai
+        proxy: none                        # direct, as its provider
     }
 ]
 ```
 
-`ccgp --connections proxy URL profile work` sets a profile's proxy, `proxy none profile home` sets `none`,
-`proxy inherit profile work` removes the line; `ccgp --connections` lists the profiles that have their own. Each way
-out has its own set of connections (up to `connections.active` / `total` each). Things that belong to a provider,
-not to a request, use the proxy that all the profiles of the provider agree on, and the global one when they differ:
-`--login`, the model catalog of `--models`, the backend probe of `--doctor`. `--update` uses the global proxy.
-The password lives in `config.ktav` (every ccgp write of it is owner-only); `ccgp --connections` and the server log
-show it as `***`.
+`ccgp --connections proxy URL provider codex` sets a provider's proxy and `proxy URL profile work` a profile's;
+`none` makes it direct and `inherit` removes the line, so the level above applies again. `ccgp --connections` lists
+the providers and profiles that have their own, `--json` also gives the level each profile's proxy comes from
+(`profile`, `provider`, `global` or empty for the environment's). The interface (`ccgp -i`) edits both: *Providers →
+a provider → proxy* and *Profiles → a profile → proxy*; a profile's screen says where its proxy comes from. A provider
+of type `claude` (the real Claude Code) and its profiles have no proxy setting.
+
+Each way out has its own set of connections (up to `connections.active` / `total` each). Things that belong to a
+provider, not to a request, use the proxy that all the profiles of the provider agree on, and the provider's own
+(else the global) one when they differ or it has no profile: `--login`, the model catalog of `--models`, the backend
+probe of `--doctor`. `--update` uses the global proxy. A provider made by `ccgp --profile add NAME --like P` has the
+proxy of `P`'s provider. The password lives in `config.ktav` (every ccgp write of it is owner-only); `ccgp --connections`
+and the server log show it as `***`.
 
 ### `providers[]`
 
@@ -165,6 +191,7 @@ show it as `***`.
 | `api_key_env` | Take the key from this environment variable instead of the creds directory. |
 | `effort_map` | `anthropic_compat` only: rewrite Claude Code's effort level (`low`, `medium`, `high`, `xhigh`, `max`) before forwarding, for providers with fewer levels. |
 | `peak`, `peak_tz` | Peak hours: when the provider's requests are refused ([below](#peak-hours)). Not allowed for `claude`. |
+| `proxy` | A proxy URL, or `none`, for every profile of the provider; a profile's own `proxy` wins, `connections.proxy` is replaced ([the cascade](#layout)). Not allowed for `claude`. |
 
 ### Peak hours
 
@@ -210,7 +237,7 @@ and the window in an error, and a running server keeps the previous settings unt
 | `models[]` | Ordered rules; the first whose `match` glob fits the requested Claude model wins. |
 | `context_window` | Optional override of the window the launcher tells Claude Code about. |
 | `compact_percent` | Optional 1-100: compact earlier than Claude Code's default. |
-| `proxy` | Optional: a proxy URL for this profile, or `none` for a direct connection; without it the global `connections.proxy` applies ([above](#listen)). |
+| `proxy` | Optional: a proxy URL for this profile, or `none` for a direct connection; without it the proxy of its provider applies, else the global `connections.proxy` ([the cascade](#layout)). |
 | `default_model` | Legacy; prefer a final `match: *` rule. |
 
 A rule is `match` (glob on the Claude model name, e.g. `*opus*`), `model` (what the backend is asked for)
@@ -234,8 +261,8 @@ ccgp --profile rm codex2 [--yes] [--purge]
   account is a new provider + new profile; another mapping for the same account is a new profile on the
   existing provider.
 - `--like <profile>` creates a new provider (its own login) and a profile named after it, copying the source
-  profile's provider type, `base_url` and `effort_map` (not `api_key_env`) and its model rules, managed markers
-  included. Without a name the next free `<source>N` is used (`codex` -> `codex2`); the provider gets the same name.
+  profile's provider type, `base_url`, `effort_map`, [peak hours](peak-hours.md) and `proxy` (not `api_key_env`) and
+  its model rules, managed markers included. Without a name the next free `<source>N` is used (`codex` -> `codex2`); the provider gets the same name.
 - `--provider <provider>` adds a profile to an existing login. With `--model M` it gets one catch-all rule
   (`--window N` sets the window, default 272000 — the command says so); without, the rules of the provider's
   first profile (by name) are copied. If the provider has no profile yet, the new one gets no rules and the

@@ -226,9 +226,11 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 			return []string{"off", "none", "inherit", "socks5://", "http://"}
 		case "profile":
 			return call(n.profiles)
+		case "provider":
+			return call(n.providers)
 		}
 		if len(sub) >= 2 && sub[len(sub)-2] == "proxy" {
-			return []string{"profile"}
+			return []string{"provider", "profile"}
 		}
 		return []string{"active", "total", "proxy", "--json"}
 	case "--interactive", "-i":

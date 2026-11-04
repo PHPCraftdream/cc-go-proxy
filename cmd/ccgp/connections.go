@@ -11,7 +11,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
-const connectionsUsage = "usage: ccgp --connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]"
+const connectionsUsage = "usage: ccgp --connections [active N] [total N] [proxy URL|off [provider NAME | profile NAME]] [--json]"
 
 func connectionsCmd(args []string) error { return connections(os.Stdout, args) }
 
@@ -21,7 +21,8 @@ func connections(w io.Writer, args []string) error {
 	jsonOut := false
 	set := map[string]int64{}
 	var order []string
-	proxy, setProxy, proxyProfile := "", false, ""
+	proxy, setProxy := "", false
+	scope, scopeName := "", "" // "provider" or "profile" and its name; "": the global proxy
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; a {
 		case "--json":
@@ -45,8 +46,8 @@ func connections(w io.Writer, args []string) error {
 			}
 			proxy, setProxy = args[i+1], true
 			i++
-			if i+2 < len(args) && args[i+1] == "profile" {
-				proxyProfile = args[i+2]
+			if i+2 < len(args) && (args[i+1] == "profile" || args[i+1] == "provider") {
+				scope, scopeName = args[i+1], args[i+2]
 				i += 2
 			}
 		default:
@@ -58,7 +59,12 @@ func connections(w io.Writer, args []string) error {
 		return err
 	}
 	if setProxy {
-		if proxy, err = proxyValue(cfg, proxy, proxyProfile); err != nil {
+		if scope == "provider" {
+			proxy, err = providerProxyValue(cfg, proxy, scopeName)
+		} else {
+			proxy, err = proxyValue(cfg, proxy, scopeName)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -75,8 +81,10 @@ func connections(w io.Writer, args []string) error {
 				}
 			}
 			switch {
-			case setProxy && proxyProfile != "":
-				return config.SetProfileProxyText(text, proxyProfile, proxy)
+			case setProxy && scope == "provider":
+				return config.SetProviderProxyText(text, scopeName, proxy)
+			case setProxy && scope == "profile":
+				return config.SetProfileProxyText(text, scopeName, proxy)
 			case setProxy:
 				return config.SetConnectionsProxyText(text, proxy)
 			}
@@ -92,14 +100,20 @@ func connections(w io.Writer, args []string) error {
 	active, total := cfg.ConnectionLimits()
 	shownProxy := proxydial.Redact(cfg.ConnectionsProxy)
 	if jsonOut {
+		// Per provider and profile: the proxy in force, whether the object sets it
+		// itself, and (profiles) the level it comes from.
+		providers := map[string]any{}
+		for name, pr := range cfg.Providers {
+			providers[name] = map[string]any{"proxy": cfg.ProviderProxy(name).String(), "own": pr.Proxy != ""}
+		}
 		profiles := map[string]any{}
 		for name, pf := range cfg.Profiles {
-			profiles[name] = map[string]any{"proxy": cfg.ProxyChoice(name).String(), "own": pf.Proxy != ""}
+			profiles[name] = map[string]any{"proxy": cfg.ProxyChoice(name).String(), "own": pf.Proxy != "", "level": cfg.ProxyLevel(name)}
 		}
 		return writeJSON(w, map[string]any{
 			"active": active, "total": total,
 			"active_default": cfg.ConnectionsActive == 0, "total_default": cfg.ConnectionsTotal == 0,
-			"proxy": shownProxy, "profiles": profiles,
+			"proxy": shownProxy, "providers": providers, "profiles": profiles,
 		})
 	}
 	def := func(v int64) string {
@@ -115,9 +129,14 @@ func connections(w io.Writer, args []string) error {
 	} else {
 		_, _ = fmt.Fprintf(w, "proxy:  %s\n", shownProxy)
 	}
+	for _, name := range sortedKeys(cfg.Providers) {
+		if cfg.Providers[name].Proxy != "" {
+			_, _ = fmt.Fprintf(w, "provider %s: proxy %s (its own; replaces the global one for its profiles)\n", name, cfg.ProviderProxy(name))
+		}
+	}
 	for _, name := range sortedKeys(cfg.Profiles) {
 		if pf := cfg.Profiles[name]; pf.Proxy != "" {
-			_, _ = fmt.Fprintf(w, "profile %s: proxy %s (its own; the others use the global one)\n", name, cfg.ProxyChoice(name))
+			_, _ = fmt.Fprintf(w, "profile %s: proxy %s (its own; replaces the provider's and the global one)\n", name, cfg.ProxyChoice(name))
 		}
 	}
 	if len(set) > 0 || setProxy {
@@ -128,6 +147,27 @@ func connections(w io.Writer, args []string) error {
 		}
 	}
 	return nil
+}
+
+// providerProxyValue is proxyValue for "proxy VALUE provider NAME": "none" /
+// "off" writes none (direct, the global proxy is not inherited), "inherit" /
+// "default" removes the override.
+func providerProxyValue(cfg *config.Config, value, provider string) (string, error) {
+	pr, ok := cfg.Providers[provider]
+	if !ok {
+		return "", fmt.Errorf("unknown provider %q (configured: %s)", provider, names(cfg.Providers))
+	}
+	if pr.Type == config.ProviderTypeClaude {
+		return "", fmt.Errorf("provider %q is a Claude profile: it does not go through ccgp, so it has no proxy setting", provider)
+	}
+	switch value {
+	case "inherit", "default":
+		return "", nil
+	case "off", "none":
+		return config.ProxyNone, nil
+	}
+	_, err := proxydial.Parse(value)
+	return value, err
 }
 
 // proxyValue turns the words of "proxy VALUE [profile NAME]" into the text for

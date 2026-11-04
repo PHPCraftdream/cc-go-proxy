@@ -12,6 +12,11 @@ to a provider and to model-mapping rules ([configuration.md](configuration.md)).
 
 `ccgp --login <provider>` authenticates; every `ccgp <profile>` run also does it when credentials are missing.
 
+Every provider (except `claude`) can have its own way out to the network: `ccgp --connections proxy http://corp:3128
+provider codex` sends all its profiles through that proxy (SOCKS5 or HTTP; `none` = directly), replacing the global one;
+a profile's own proxy replaces the provider's ([the cascade](configuration.md#layout)). It can have peak hours as well
+([peak hours](peak-hours.md)).
+
 Claude Code asks for token counts all the time (`/v1/messages/count_tokens`). `anthropic_compat` forwards the call to
 the endpoint; `codex` and `codex_api` have no counting endpoint, so ccgp answers with a length-based estimate
 (about four bytes of request per token).

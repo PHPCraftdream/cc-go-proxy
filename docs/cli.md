@@ -209,7 +209,7 @@ model, provider, context window and which rule matched (`rule <glob>`, `default_
 
 ## Machine-readable output
 
-`--status`, `--profile list`, `--models` (the read-only form), `--which`, `--peak` and `--doctor` accept `--json`: one
+`--status`, `--profile list`, `--models` (the read-only form), `--which`, `--connections`, `--peak` and `--doctor` accept `--json`: one
 pretty-printed document on stdout. Field names are lowerCamelCase; URL tokens, API keys and OAuth tokens never appear.
 Without the flag the text output is unchanged. `--status` still exits with code 3 when the server is not running,
 after printing the JSON.
@@ -223,7 +223,7 @@ after printing the JSON.
 | `--profile add\|list\|rm` | `add NAME --like P` (own login), `--provider P` (existing login), `--type codex\|codex_api\|anthropic_compat\|claude` (new backend; `claude` = the real Claude Code, own clean directory and sign-in), `list [--json]`, `rm NAME [--yes] [--purge]`; see [configuration](configuration.md#creating-and-removing-profiles) |
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
-| `--connections [active N] [total N] [proxy URL|off [profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy, global or of one profile (`none` = direct, `inherit` = the global one again); see [configuration](configuration.md#layout) |
+| `--connections [active N] [total N] [proxy URL|off [provider NAME \| profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy: global, of one provider or of one profile; each level replaces the ones above it (`none` = direct, `inherit` = the level above again); see [configuration](configuration.md#layout) |
 | `--interactive`, `-i` | Full-screen interface to view, edit and add profiles, providers and peak hours; needs a terminal; see [interactive mode](#interactive-mode) |
 | `--peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider, when the requests of its profiles are refused; see [peak hours](peak-hours.md) |
 
@@ -238,7 +238,11 @@ ccgp --models                            # what the backend offers and the tier 
 ccgp --models apply codex                # write that mapping into the config
 ccgp --which codex claude-opus-4-1       # where a model name goes, offline
 ccgp --connections                       # show the limits and the proxy
-ccgp --connections proxy socks5://127.0.0.1:1080
+ccgp --connections proxy socks5://127.0.0.1:1080                # everybody
+ccgp --connections proxy http://corp:3128 provider codex        # all profiles of codex: replaces the global one
+ccgp --connections proxy none profile home                      # one profile, direct: replaces both
+ccgp --connections proxy inherit profile home                   # remove it: the level above applies again
+ccgp --connections --json                                       # limits, proxies, and the level each profile's comes from
 ccgp --peak                              # the peak hours of every provider and whether it is peak now
 ccgp --peak zai set mon-fri 14:00-18:00  # refuse requests in them ...
 ccgp --peak zai tz Asia/Shanghai         # ... the hours are given in this zone
@@ -277,9 +281,9 @@ is written.
 
 | Screen | What it does |
 | --- | --- |
-| **Profiles** | A list with provider, type and login state. Open one to see its provider, login, proxy and model rules, and to set `default_model`, `context_window`, `compact_percent` and `proxy`, move it to another provider, or remove it: with its Claude dir and the logins nothing else uses kept, or deleted (`--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's |
+| **Profiles** | A list with provider, type and login state. Open one to see its provider, login, proxy (and the level it comes from: its own, its provider's, the global one) and model rules, and to set `default_model`, `context_window`, `compact_percent` and `proxy`, move it to another provider, or remove it: with its Claude dir and the logins nothing else uses kept, or deleted (`--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's |
 | **Profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
-| **Providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url` and `api_key_env`; open its **peak hours** |
+| **Providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the proxy, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url`, `api_key_env` and `proxy` (for all its profiles; a profile's own wins); open its **peak hours** |
 | **Providers → add** | A new backend with its first profile (a provider cannot exist without a profile). A provider goes when its last profile is removed |
 | **Peak hours** | Every provider with its windows and whether it is peak now. Open one: add windows, replace them all, remove one, set the time zone, pause (a length, or until the running peak ends), resume, clear — `ccgp --peak <provider>` as menus ([peak hours](peak-hours.md)) |
 
@@ -321,7 +325,7 @@ inside the npm package, and the next npm install would put the packaged version 
 | `CCGP_HOME` | all | A home directory for config, logins, tokens, Claude dirs and log ([own home](#own-home-a-setup-that-shares-nothing)) |
 | `CCGP_CONFIG` | all | Another config file |
 | `HOST`, `PORT` | server | Listen address; win over `listen` in the config |
-| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | all outbound connections | Used when no `connections.proxy` / profile `proxy` is set |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | all outbound connections | Used when no `proxy` is set at any level (profile, provider, `connections.proxy`) |
 | `CLAUDE_CONFIG_DIR` | profile runs | Your own Claude Code directory, the read-only source of the mirrored settings (a profile's own directory is set by ccgp) |
 | `ANTHROPIC_MODEL` | profile runs | The session's main model, for the compaction window |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | profile runs | Set by ccgp from the profile; yours win |
