@@ -302,7 +302,7 @@ is written.
 | **Peak hours** | Every provider with its windows and whether it is peak now. Open one: add windows, replace them all, remove one, set the time zone, pause (a length, or until the running peak ends), resume, clear — `ccgp --peak <provider>` as menus ([peak hours](peak-hours.md)) |
 | **Config and connections** | `connections.active`, `connections.total`, the global proxy (`--connections`), and *reset to the default* (`--config reset`, after a question) |
 | **Models** | Show the mapping of every profile or of one (`--models`), write the newest models into them (`--models apply`, after a question), and *where does a model name go?* (`--which`) |
-| **Sessions** | Copy the latest sessions of the current directory: *import* into a profile, *export* from one, *send* from one profile to another (`--import`, `--export`, `--send`), with an optional count |
+| **Sessions** | Copy the latest sessions of the current directory: *import* into a profile, *export* from one, *send* from one profile to another (`--import`, `--export`, `--send`), with an optional count; it asks what to do with a session that went on differently on both sides: leave it, keep both (`--fork`), or replace the old one (`--force`) |
 | **Server** | Status, start, stop, restart, the log, the checks (`--doctor`), the version, a look for a newer release (`--update --check`) and the update itself (`--update`, after a question) |
 
 Every screen reads `config.ktav` afresh, and every change is the edit the matching command makes: only the line
@@ -325,8 +325,10 @@ It needs `config.ktav`; in the env-only mode (no config file, `PROXY_TOKEN` in t
 
 ## Sessions
 
-`--send <from> <to> [count]`, `--import <profile> [count]`, `--export <profile> [count]`: see
-[sessions](sessions.md).
+`--send <from> <to> [count] [--fork|--force]`, `--import <profile> [count] [--fork|--force]`,
+`--export <profile> [count] [--fork|--force]`: see [sessions](sessions.md). A session the destination already has and
+that went on differently ("diverged") is skipped, unless `--fork` writes it as a new session next to the old one or
+`--force` replaces the destination (the old file is kept as `.bak-<time>`).
 
 ```sh
 cd ~/projects/app
@@ -334,6 +336,8 @@ ccgp --import codex          # your Claude Code's latest sessions of this direct
 ccgp codex -c                # carry on
 ccgp --send codex zai 3      # three latest sessions between two profiles
 ccgp --export zai            # profile zai -> your own Claude Code
+ccgp --import codex 1 --fork   # it diverged: keep both, then: ccgp codex --resume <the new id>
+ccgp --import codex 1 --force  # it diverged: the source's version wins, the old file is kept
 ```
 
 ## Updating

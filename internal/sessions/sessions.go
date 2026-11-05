@@ -38,10 +38,12 @@ const (
 	Unchanged               // already identical
 	Ahead                   // destination holds more than the source; left alone
 	Diverged                // both sides changed; destination left alone
+	Forked                  // diverged; the source was written under a new id (Options.Fork)
+	Replaced                // diverged or ahead; the old destination was kept as a backup and replaced (Options.Force)
 )
 
 func (s Status) String() string {
-	return [...]string{"copied", "updated", "unchanged", "ahead", "diverged"}[s]
+	return [...]string{"copied", "updated", "unchanged", "ahead", "diverged", "forked", "replaced"}[s]
 }
 
 // Skipped reports statuses where the destination was deliberately not written.
@@ -55,6 +57,14 @@ type Options struct {
 	// Project, when set, limits the copy to that projects/ folder (the sessions
 	// of one working directory); the count then applies within it.
 	Project string
+	// Fork writes a session whose destination diverged under a new id (the same
+	// one every time, so a rerun extends it), leaving the destination alone.
+	Fork bool
+	// Force replaces a destination that diverged or is ahead of the source; the
+	// old file is kept next to it as <name>.bak-<time>. Excludes Fork.
+	Force bool
+	// rewrite swaps a session id for another in jsonl files (set for forks).
+	rewrite *idSwap
 	// OnStart, when set, is called before each session; i counts from 1 up to n.
 	OnStart func(i, n int, s Session)
 	// OnProgress, when set, reports how much of a transcript is processed while
@@ -75,9 +85,11 @@ const defaultProgressEvery = 2 * time.Second
 type Result struct {
 	Session Session
 	Status  Status
-	Files   int   // sidecar files written
-	Removed int   // thinking blocks removed
-	Err     error // set when the session could not be copied
+	Files   int    // sidecar files written
+	Removed int    // thinking blocks removed
+	Fork    string // id of the fork the session was written as (Options.Fork)
+	Backup  string // path the replaced destination was kept at (Options.Force)
+	Err     error  // set when the session could not be copied
 }
 
 // List returns the sessions of a config dir, most recently modified first.
@@ -128,10 +140,14 @@ func List(configDir string) ([]Session, error) {
 // Copy copies the count most recently modified sessions of srcDir into dstDir.
 // The source is only read. An existing destination file is written only when
 // it is an earlier part of the new content (transcripts are append-only), so
-// work done on either side is never lost; other cases are reported as skipped.
+// work done on either side is never lost; other cases are reported as skipped,
+// unless Options.Fork or Options.Force says what to do with them.
 func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 	if count < 1 {
 		return nil, fmt.Errorf("sessions: count must be at least 1, got %d", count)
+	}
+	if opt.Fork && opt.Force {
+		return nil, errors.New("sessions: fork and force exclude each other")
 	}
 	if sameDir(srcDir, dstDir) {
 		return nil, errors.New("sessions: source and destination are the same directory")
@@ -173,17 +189,27 @@ func inProject(list []Session, project string) []Session {
 
 func copySession(dstDir string, s Session, opt Options) Result {
 	res := Result{Session: s}
-	dst := filepath.Join(dstDir, projectsDir, s.Project, s.ID+".jsonl")
+	dstFile := func(id string) string { return filepath.Join(dstDir, projectsDir, s.Project, id+".jsonl") }
+	dst := dstFile(s.ID)
 	var prog func(done, total int64)
 	if opt.OnProgress != nil {
 		prog = func(done, total int64) { opt.OnProgress(s, done, total) }
 	}
-	st, removed, err := syncFile(s.Path, dst, true, opt, prog)
+	st, removed, backup, err := place(s.Path, dst, true, opt, prog)
+	if err == nil && st == Diverged && opt.Fork {
+		id := forkID(s.ID)
+		dst = dstFile(id)
+		opt.rewrite = &idSwap{old: s.ID, new: id}
+		res.Fork = id
+		if st, removed, backup, err = place(s.Path, dst, true, opt, prog); st == Copied || st == Updated {
+			st = Forked
+		}
+	}
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	res.Status, res.Removed = st, removed
+	res.Status, res.Removed, res.Backup = st, removed, backup
 	if st.Skipped() {
 		return res
 	}
@@ -205,12 +231,12 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		if err != nil {
 			return err
 		}
-		st, n, err := syncFile(p, filepath.Join(dstSide, rel), strings.HasSuffix(p, ".jsonl"), opt, nil)
+		st, n, _, err := place(p, filepath.Join(dstSide, rel), strings.HasSuffix(p, ".jsonl"), opt, nil)
 		if err != nil {
 			return err
 		}
 		res.Removed += n
-		if st == Copied || st == Updated {
+		if st == Copied || st == Updated || st == Replaced {
 			res.Files++
 		}
 		return nil

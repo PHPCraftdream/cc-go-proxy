@@ -11,6 +11,8 @@ ccgp --send zai claude       # the 10 latest sessions of this directory in the z
 ccgp --send claude zai       # this directory's latest sessions in your Claude Code -> the zai profile
 ccgp --import zai            # alias of: ccgp --send claude zai
 ccgp --export zai 3          # alias of: ccgp --send zai claude
+ccgp --import zai 1 --fork   # a session that was continued on both sides: keep both versions
+ccgp --import zai 1 --force  # ... or replace the profile's version (the old file is kept)
 ```
 
 `from` and `to` are a configured profile name or the word `claude` (your own Claude Code directory); they must
@@ -53,8 +55,36 @@ Transcripts only grow, so ccgp compares as it copies, in a stream (gigabyte sess
 | `unchanged` | Identical. |
 | `ahead` | The destination already has more; left alone. |
 | `diverged` | Both sides changed differently; the destination is left alone. |
+| `forked` | `--fork`: it diverged, so the source was written as a new session next to the old one. |
+| `replaced` | `--force`: the destination was replaced; the old file is kept beside it. |
 
-Nothing is ever overwritten. A session still being written is copied up to its last complete line.
+Without a flag nothing is ever overwritten. A session still being written is copied up to its last complete line.
+
+## When a session diverged
+
+A session can be continued on both sides: you went on in the profile, and also in your own Claude Code (or the same
+session lives in two profiles). The two files then share a beginning and differ after it, and `ccgp --send` does not
+guess which one is right: it reports `diverged`, leaves the destination alone, and `ccgp <profile> --resume <id>` opens
+the destination's version, not the source's. Two flags say what to do (they exclude each other and work with `--send`,
+`--import` and `--export`):
+
+```sh
+ccgp --send claude codex 1 --fork    # keep both
+ccgp --send claude codex 1 --force   # take the source's version
+```
+
+- `--fork` writes the source as a **new session** in the destination, with a new id (the same id on every run, made
+  from the original's, so the next run finds it and only appends what came after). The id is swapped in every line of
+  the transcript and in the transcripts of its subagents; tool results are copied as they are. The old session stays
+  as it was. The run says `open a fork with: ccgp <profile> --resume <new id>`. If the fork was continued on its own
+  too, it diverges in turn: it is reported and left alone (move or delete that file to get a fresh fork).
+- `--force` replaces the destination with the source. The old file is renamed to `<id>.jsonl.bak-<time>` in the same
+  folder, so nothing is lost (a backup is not a session: `/resume` does not list it; rename it back to
+  `<id>.jsonl` to return to it). It also applies to a destination that is `ahead`. Files of the session's folder
+  (`<id>/`) that differ are replaced the same way, each with its own `.bak-<time>`.
+
+Sessions that do not diverge are copied as always. The interface asks the same in the *Sessions* screens (copy / copy and
+fork / copy and force).
 
 ## Thinking blocks
 
@@ -71,5 +101,6 @@ for byte.
 ## Boundaries
 
 `claude` as the **source** only reads your Claude Code directory. `claude` as the **destination** is the only
-way ccgp writes into it, under `projects/` only, and only adds or extends files. The directory is
+way ccgp writes into it, under `projects/` only, and only adds or extends files (`--force` into `claude` renames the
+file it replaces, and keeps it). The directory is
 `$CLAUDE_CONFIG_DIR` if set, else `~/.claude`.

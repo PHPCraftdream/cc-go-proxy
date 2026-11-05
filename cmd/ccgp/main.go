@@ -5,8 +5,8 @@
 //	ccgp --serve [-d] [-s]            run server in foreground
 //	ccgp --start|--stop|--status      manage background server
 //	ccgp --login <provider> [--device] (re)authenticate a provider
-//	ccgp --send <from> <to> [n]       copy the n latest sessions of the current directory between "claude" and profiles
-//	ccgp --import|--export <profile> [n]  aliases of send: claude -> profile / profile -> claude
+//	ccgp --send <from> <to> [n] [--fork|--force]  copy the n latest sessions of the current directory between "claude" and profiles
+//	ccgp --import|--export <profile> [n] [--fork|--force]  aliases of send: claude -> profile / profile -> claude
 //	ccgp --profile add|list|rm        manage profiles (and their providers) in config.ktav
 //
 // Commands are written with a leading "--"; a bare word is always a profile.

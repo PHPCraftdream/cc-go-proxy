@@ -3,6 +3,8 @@ package sessions
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -55,6 +57,9 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		}
 		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
 	}
+	if jsonl && opt.rewrite != nil {
+		in = newSwapReader(in, opt.rewrite)
+	}
 	removed := 0
 	if jsonl && opt.StripThinking {
 		bw := bufio.NewWriterSize(p, copyBuf)
@@ -72,6 +77,75 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 	}
 	st, err := p.finish()
 	return st, removed, err
+}
+
+// place is syncFile plus Options.Force: a destination that diverged from the
+// source or is ahead of it is renamed to <dst>.bak-<time> and written afresh.
+// backup is that path, empty when nothing was replaced.
+func place(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (st Status, removed int, backup string, err error) {
+	st, removed, err = syncFile(src, dst, jsonl, opt, prog)
+	if err != nil || !opt.Force || (st != Diverged && st != Ahead) {
+		return st, removed, "", err
+	}
+	stamp := time.Now().Format("20060102-150405")
+	backup = dst + ".bak-" + stamp
+	for i := 1; ; i++ {
+		if _, serr := os.Lstat(backup); errors.Is(serr, fs.ErrNotExist) {
+			break
+		}
+		backup = fmt.Sprintf("%s.bak-%s-%d", dst, stamp, i)
+	}
+	if err = os.Rename(dst, backup); err != nil {
+		return 0, 0, "", err
+	}
+	if _, removed, err = syncFile(src, dst, jsonl, opt, prog); err != nil {
+		_ = os.Rename(backup, dst) // nothing was written: put the old file back
+		return 0, 0, "", err
+	}
+	return Replaced, removed, backup, nil
+}
+
+// idSwap names a session id and the one that takes its place.
+type idSwap struct{ old, new string }
+
+// forkID is the id a diverged session is written under: derived from the
+// original, so the next fork of it lands on the same file and extends it.
+func forkID(id string) string {
+	h := sha256.Sum256([]byte("ccgp fork " + id))
+	h[6] = h[6]&0x0f | 0x40 // version 4 layout, as Claude Code's own ids
+	h[8] = h[8]&0x3f | 0x80
+	x := hex.EncodeToString(h[:16])
+	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
+}
+
+// swapReader replaces a session id with another, line by line: transcripts
+// name their session in every line (and the sidecar paths in tool results).
+type swapReader struct {
+	br  *bufio.Reader
+	sw  *idSwap
+	buf []byte
+	err error
+}
+
+func newSwapReader(r io.Reader, sw *idSwap) *swapReader {
+	return &swapReader{br: bufio.NewReaderSize(r, copyBuf), sw: sw}
+}
+
+func (s *swapReader) Read(p []byte) (int, error) {
+	for len(s.buf) == 0 {
+		if s.err != nil {
+			return 0, s.err
+		}
+		var line []byte
+		line, s.err = s.br.ReadBytes('\n')
+		if s.sw.old != "" && bytes.Contains(line, []byte(s.sw.old)) {
+			line = bytes.ReplaceAll(line, []byte(s.sw.old), []byte(s.sw.new))
+		}
+		s.buf = line
+	}
+	n := copy(p, s.buf)
+	s.buf = s.buf[n:]
+	return n, nil
 }
 
 // progressReader reports how much of a stream was read, at most once per interval.

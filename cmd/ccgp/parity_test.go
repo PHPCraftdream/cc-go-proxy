@@ -105,9 +105,15 @@ func features() []feature {
 		{[]string{"--login --device"}, []string{"providers/provider/login_device"}},
 		{[]string{"--logout"}, []string{"providers/provider/logout"}},
 
-		{[]string{"--send"}, []string{"sessions/send/name/name"}},
-		{[]string{"--import"}, []string{"sessions/import/name"}},
-		{[]string{"--export"}, []string{"sessions/export/name"}},
+		{[]string{"--send"}, []string{"sessions/send/name/name/copy"}},
+		{[]string{"--send --fork"}, []string{"sessions/send/name/name/fork"}},
+		{[]string{"--send --force"}, []string{"sessions/send/name/name/force"}},
+		{[]string{"--import"}, []string{"sessions/import/name/copy"}},
+		{[]string{"--import --fork"}, []string{"sessions/import/name/fork"}},
+		{[]string{"--import --force"}, []string{"sessions/import/name/force"}},
+		{[]string{"--export"}, []string{"sessions/export/name/copy"}},
+		{[]string{"--export --fork"}, []string{"sessions/export/name/fork"}},
+		{[]string{"--export --force"}, []string{"sessions/export/name/force"}},
 
 		{[]string{"--status"}, []string{"server/status"}},
 		{[]string{"--start"}, []string{"server/start"}},
@@ -614,10 +620,16 @@ func cmdRuns() []cmdRun {
 		{[]string{"--login"}, []string{"--login", "zai"}, true, press([]string{"providers", "provider:zai", "login"})},
 		{[]string{"--logout"}, []string{"--logout", "codex", "--yes"}, false, press([]string{"providers", "provider:codex", "logout"}, "y")},
 
-		{[]string{"--import"}, []string{"--import", "zai"}, false, typed([]string{"sessions", "import", "name:zai"}, "")},
-		{[]string{"--import"}, []string{"--import", "zai", "3"}, false, typed([]string{"sessions", "import", "name:zai"}, "3")},
-		{[]string{"--export"}, []string{"--export", "codex", "2"}, false, typed([]string{"sessions", "export", "name:codex"}, "2")},
-		{[]string{"--send"}, []string{"--send", "codex", "zai"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai"}, "")},
+		{[]string{"--import"}, []string{"--import", "zai"}, false, typed([]string{"sessions", "import", "name:zai", "copy"}, "")},
+		{[]string{"--import"}, []string{"--import", "zai", "3"}, false, typed([]string{"sessions", "import", "name:zai", "copy"}, "3")},
+		{[]string{"--import --fork"}, []string{"--import", "zai", "--fork"}, false, typed([]string{"sessions", "import", "name:zai", "fork"}, "")},
+		{[]string{"--import --force"}, []string{"--import", "zai", "2", "--force"}, false, typed([]string{"sessions", "import", "name:zai", "force"}, "2")},
+		{[]string{"--export"}, []string{"--export", "codex", "2"}, false, typed([]string{"sessions", "export", "name:codex", "copy"}, "2")},
+		{[]string{"--export --fork"}, []string{"--export", "codex", "2", "--fork"}, false, typed([]string{"sessions", "export", "name:codex", "fork"}, "2")},
+		{[]string{"--export --force"}, []string{"--export", "codex", "--force"}, false, typed([]string{"sessions", "export", "name:codex", "force"}, "")},
+		{[]string{"--send"}, []string{"--send", "codex", "zai"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "copy"}, "")},
+		{[]string{"--send --fork"}, []string{"--send", "codex", "zai", "1", "--fork"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "fork"}, "1")},
+		{[]string{"--send --force"}, []string{"--send", "codex", "zai", "--force"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "force"}, "")},
 	}
 }
 

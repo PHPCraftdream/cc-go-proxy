@@ -164,32 +164,48 @@ Examples:
   ccgp --models apply codex
   ccgp --models apply zai
 `,
-	"--send": `ccgp --send <from> <to> [count]
+	"--send": `ccgp --send <from> <to> [count] [--fork|--force]
 
 Copy the latest session transcripts of the current directory from one side
 to the other. A side is "claude" (your own Claude Code) or a profile name;
 the two must differ. Default count: 10, newest first. Only sessions of the
 directory you run it in are copied (what "ccgp <profile> -c" and /resume
-list). Never overwrites diverged data; a session being written is copied up
-to its last complete line. Thinking blocks are removed when the two sides use
-different providers (their signatures are not valid elsewhere).
+list). A session being written is copied up to its last complete line.
+Thinking blocks are removed when the two sides use different providers (their
+signatures are not valid elsewhere).
+
+A session the destination already has is extended when the destination is an
+earlier part of it. When the two sides went on differently ("diverged": the
+session was continued on both) the destination is not touched and the session
+is skipped, unless you say what to do:
+  --fork   write the source as a new session next to the old one (a new id,
+           the same one on every run, so the next run extends it); both
+           versions stay: "ccgp <profile> --resume <id>" opens the new one
+  --force  replace the destination with the source; the old file is kept as
+           <id>.jsonl.bak-<time> (also for a destination that is ahead)
+The two flags exclude each other.
 
 Examples:
   ccgp --send claude codex
   ccgp --send codex claude 3
   ccgp --send codex codex2 1
+  ccgp --send claude codex 1 --fork
+  ccgp --send claude codex 1 --force
 `,
-	"--import": `ccgp --import <profile> [count]
+	"--import": `ccgp --import <profile> [count] [--fork|--force]
 
 Same as: ccgp --send claude <profile>
+--fork keeps a diverged session as a new one, --force replaces the old copy.
 
 Examples:
   ccgp --import codex
   ccgp --import work 3
+  ccgp --import codex 1 --fork
 `,
-	"--export": `ccgp --export <profile> [count]
+	"--export": `ccgp --export <profile> [count] [--fork|--force]
 
 Same as: ccgp --send <profile> claude
+--fork keeps a diverged session as a new one, --force replaces the old copy.
 
 Examples:
   ccgp --export codex

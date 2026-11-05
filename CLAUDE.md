@@ -41,7 +41,8 @@ Guidance for Claude Code when working in this repository.
 - Rotated OAuth refresh tokens are persisted before use (`Session.refreshLocked`).
 - Codex backend calls happen before streaming starts so upstream HTTP status reaches the client.
 - The user's own Claude Code dir is only read, except `ccgp --send ... claude` / `ccgp --export`, which may add or
-  extend files under `projects/` (append-only rule in `sessions.syncFile`; never overwrites diverged data).
+  extend files under `projects/` (append-only rule in `sessions.syncFile`; diverged data is left alone, unless `--fork` writes it under a new id or
+  `--force` renames the old file to `.bak-<time>` first: nothing is ever lost).
   Credentials, `history.jsonl`, `sessions/` are never copied in either direction.
 
 ## Releases and licensing

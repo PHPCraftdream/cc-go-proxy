@@ -263,12 +263,14 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 		return []string{"--json"}
 	case "--import", "--export":
 		if len(sub) == 0 {
-			return call(n.profiles)
+			return append(call(n.profiles), sessionVerbs...)
 		}
+		return sessionVerbs
 	case "--send":
 		if len(sub) < 2 {
-			return append(call(n.profiles), "claude")
+			return append(call(n.profiles), append([]string{"claude"}, sessionVerbs...)...)
 		}
+		return sessionVerbs
 	case "--profile":
 		return profileCandidates(sub, prev, n)
 	case "--provider":

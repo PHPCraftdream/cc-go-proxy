@@ -35,6 +35,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- `--fork` and `--force` for `--send`, `--import` and `--export`: a session that was continued on both sides used to
+  be skipped with `diverged` and no way out (`ccgp <profile> --resume` then opened the old copy). `--fork` writes the
+  source as a new session next to the old one (a new id made from the original's, the same on every run, so a rerun
+  only appends; the id is swapped in the transcript and in the subagents' transcripts) and prints the `--resume`
+  line; `--force` replaces the destination, which is kept as `<id>.jsonl.bak-<time>` (also for one that is `ahead`).
+  The interface asks which in the Sessions screens; help, completion and `docs/sessions.md` describe both.
 - The command line and the interface cover each other, both ways, and a test keeps it so (`cmd/ccgp/parity_test.go`:
   it crawls every screen and every command and compares what an edit leaves in `config.ktav` from both sides). New
   commands: `ccgp --profile set|unset NAME KEY [VALUE]` (`default_model`, `context_window`, `compact_percent`,

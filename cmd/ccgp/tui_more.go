@@ -165,17 +165,43 @@ func modelsProfileMenu(name string) *menu {
 
 // ---- sessions ----
 
-// countInput asks how many sessions, and runs the command with it.
-func countInput(title string, args ...string) *input {
+// countInput asks how many sessions, and runs the command with it; flag (when
+// not empty) goes after the count.
+func countInput(title, flag string, args ...string) *input {
 	return commandInput(title, "how many", "the latest N sessions of this directory (empty: 10)", "", title, func(v string) ([]string, error) {
-		if v == "" {
-			return args, nil
+		list := append([]string{}, args...)
+		if v != "" {
+			if n, err := strconv.Atoi(v); err != nil || n < 1 {
+				return nil, fmt.Errorf("a positive number, got %q", v)
+			}
+			list = append(list, v)
 		}
-		if n, err := strconv.Atoi(v); err != nil || n < 1 {
-			return nil, fmt.Errorf("a positive number, got %q", v)
+		if flag != "" {
+			list = append(list, flag)
 		}
-		return append(append([]string{}, args...), v), nil
+		return list, nil
 	})
+}
+
+// sessionModeMenu asks what to do with a session the destination already has
+// and that went on differently, then how many sessions.
+func sessionModeMenu(title string, args ...string) *menu {
+	item := func(id, label, flag string) menuItem {
+		return menuItem{id: id, label: label, run: push(func() screen { return countInput(title, flag, args...) })}
+	}
+	return &menu{
+		head: func(*app) string { return title },
+		info: func(*app) string {
+			return styDim.Render("a session that went on differently on both sides: what to do with it?")
+		},
+		items: func(*app) []menuItem {
+			return []menuItem{
+				item("copy", "copy; leave a diverged session as it is", ""),
+				item("fork", "copy; keep a diverged session as a new session (--fork)", "--fork"),
+				item("force", "copy; replace a diverged one, the old file is kept (--force)", "--force"),
+			}
+		},
+	}
 }
 
 func sessionsMenu() *menu {
@@ -188,20 +214,20 @@ func sessionsMenu() *menu {
 			return []menuItem{
 				{id: "import", label: "import: from your Claude Code into a profile", run: func(a *app) tea.Cmd {
 					a.push(chooseNameMenu("Import into which profile?", profileNames, func(a *app, n string) screen {
-						return countInput("Import into "+n, "--import", n)
+						return sessionModeMenu("Import into "+n, "--import", n)
 					}))
 					return nil
 				}},
 				{id: "export", label: "export: from a profile into your Claude Code", run: func(a *app) tea.Cmd {
 					a.push(chooseNameMenu("Export which profile?", profileNames, func(a *app, n string) screen {
-						return countInput("Export "+n, "--export", n)
+						return sessionModeMenu("Export "+n, "--export", n)
 					}))
 					return nil
 				}},
 				{id: "send", label: "send: from one profile to another", run: func(a *app) tea.Cmd {
 					a.push(chooseNameMenu("From which profile?", profileNames, func(a *app, from string) screen {
 						return chooseNameMenu("To which profile?", profileNames, func(a *app, to string) screen {
-							return countInput("Send "+from+" to "+to, "--send", from, to)
+							return sessionModeMenu("Send "+from+" to "+to, "--send", from, to)
 						})
 					}))
 					return nil

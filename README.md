@@ -37,7 +37,8 @@ ccgpy codex                    # same, with every permission prompt off (--dange
 - **Your Claude credentials stay out.** Each profile runs Claude Code in its own config directory with your agents,
   skills, commands and plugins copied in, but never an official login or API key.
 - **Sessions travel.** `ccgp --send` (aliases `ccgp --import` / `ccgp --export`) copy the latest sessions of the
-  current directory between Claude Code and a profile, or between two profiles.
+  current directory between Claude Code and a profile, or between two profiles; a session continued on both sides is
+  kept as a second one (`--fork`) or replaced with the old file kept (`--force`).
 - **Separate setups.** `ccgp --local` / `ccgp --home <dir>` (or a `.ccgp` directory in the project) keep the config,
   logins, tokens, Claude dirs and the log in one directory that shares nothing with the default setup
   ([details](docs/cli.md#own-home-a-setup-that-shares-nothing)).
@@ -157,9 +158,9 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --logout <provider> [--yes]` | Remove the stored login (OAuth tokens or API key) of a provider; the config is not touched |
 | `ccgp --models [apply] [-v] [--json] [profile]` | Show, or write into the config, the newest models per Claude tier |
 | `ccgp --which <profile> <model> [--json]` | Show where a Claude model name is routed in a profile, offline |
-| `ccgp --send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |
-| `ccgp --import <profile> [count]` | Alias of `ccgp --send claude <profile>` |
-| `ccgp --export <profile> [count]` | Alias of `ccgp --send <profile> claude` |
+| `ccgp --send <from> <to> [count] [--fork\|--force]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code). A session continued on both sides is skipped; `--fork` keeps both versions, `--force` replaces the destination (the old file is kept) |
+| `ccgp --import <profile> [count] [--fork\|--force]` | Alias of `ccgp --send claude <profile>` |
+| `ccgp --export <profile> [count] [--fork\|--force]` | Alias of `ccgp --send <profile> claude` |
 | `ccgp --profile add\|list\|rm\|set\|unset` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type codex\|codex_api\|anthropic_compat`), profiles of the real Claude Code with their own account (`--type claude`); `set` / `unset` change one setting of a profile (`default_model`, `context_window`, `compact_percent`, `provider`) |
 | `ccgp --provider [NAME] [--json]` / `set\|unset NAME KEY [VALUE]` | Show the providers, or one in detail (base URL, key variable, login, proxy, peak hours, profiles); set or remove its `base_url` or `api_key_env` |
 | `ccgp --start` / `--stop` / `--restart` | Manage the background server |

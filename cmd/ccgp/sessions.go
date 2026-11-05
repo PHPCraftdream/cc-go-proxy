@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,10 @@ const claudeEndpointLabel = "claude"
 // `ccgp --import|--export <profile> [count]`, all through the same code path.
 // Only the sessions of the directory the command is run in are copied.
 func sessionsCmd(kind string, args []string) error {
+	args, fork, force, err := splitSessionFlags(args)
+	if err != nil {
+		return err
+	}
 	from, to, count, err := parseSendCommand(kind, args)
 	if err != nil {
 		return err
@@ -72,8 +77,32 @@ func sessionsCmd(kind string, args []string) error {
 	opt := sessions.Options{
 		StripThinking: stripThinkingBetween(src, dst),
 		Project:       projectDirName(cwd),
+		Fork:          fork,
+		Force:         force,
 	}
 	return copySessions(os.Stdout, label, src, dst, count, opt)
+}
+
+// sessionVerbs are the flags of --send, --import and --export.
+var sessionVerbs = []string{"--fork", "--force"}
+
+// splitSessionFlags takes --fork and --force out of the arguments of the
+// session commands.
+func splitSessionFlags(args []string) (rest []string, fork, force bool, err error) {
+	for _, a := range args {
+		switch a {
+		case "--fork":
+			fork = true
+		case "--force":
+			force = true
+		default:
+			rest = append(rest, a)
+		}
+	}
+	if fork && force {
+		return nil, false, false, errors.New("--fork and --force exclude each other: --fork keeps both versions, --force replaces the destination")
+	}
+	return rest, fork, force, nil
 }
 
 // projectDirName is how Claude Code names the projects/ folder of a working
@@ -109,7 +138,7 @@ func parseSendCommand(kind string, args []string) (from, to string, count int, e
 
 func parseSendArgs(args []string) (from, to string, count int, err error) {
 	if len(args) < 2 || len(args) > 3 {
-		return "", "", 0, fmt.Errorf("usage: ccgp --send <from> <to> [count]   (from/to: \"claude\" or a profile; count: how many latest sessions of the current directory, default %d)", defaultSessionCount)
+		return "", "", 0, fmt.Errorf("usage: ccgp --send <from> <to> [count] [--fork|--force]   (from/to: \"claude\" or a profile; count: how many latest sessions of the current directory, default %d)", defaultSessionCount)
 	}
 	count = defaultSessionCount
 	if len(args) == 3 {
@@ -124,7 +153,7 @@ func parseSendArgs(args []string) (from, to string, count int, err error) {
 
 func parseSessionArgs(kind string, args []string) (profile string, count int, err error) {
 	if len(args) < 1 || len(args) > 2 {
-		return "", 0, fmt.Errorf("usage: ccgp --%s <profile> [count]   (count: how many latest sessions of the current directory, default %d)", kind, defaultSessionCount)
+		return "", 0, fmt.Errorf("usage: ccgp --%s <profile> [count] [--fork|--force]   (count: how many latest sessions of the current directory, default %d)", kind, defaultSessionCount)
 	}
 	count = defaultSessionCount
 	if len(args) == 2 {
@@ -162,7 +191,8 @@ func stripThinkingBetween(from, to endpoint) bool {
 // copySessions copies and reports as it goes (transcripts can be gigabytes);
 // it is the testable core of send. label opens the first output line.
 func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt sessions.Options) error {
-	var done, same, skipped, failed, stripped int
+	var done, same, skipped, diverged, failed, stripped int
+	var forks []string
 	opened := false
 	open := func() {
 		if !opened {
@@ -193,11 +223,30 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 		case r.Status == sessions.Copied || r.Status == sessions.Updated:
 			done++
 			stripped += r.Removed
+		case r.Status == sessions.Forked:
+			done++
+			stripped += r.Removed
+			line += "  (both versions kept: this one is the new session " + r.Fork + ")"
+			forks = append(forks, r.Fork)
+		case r.Status == sessions.Replaced:
+			done++
+			stripped += r.Removed
+			line += "  (the old one is kept as " + r.Backup + ")"
 		case r.Status == sessions.Unchanged:
 			same++
+			if r.Fork != "" {
+				line += "  (as the session " + r.Fork + ")"
+				forks = append(forks, r.Fork)
+			}
 		default:
 			skipped++
+			if r.Status == sessions.Diverged {
+				diverged++
+			}
 			line += "  (" + skipReason(r.Status) + ")"
+			if r.Fork != "" {
+				line += "; the fork " + r.Fork + " went its own way too and was left alone"
+			}
 		}
 		_, _ = fmt.Fprintln(w, line)
 	}
@@ -221,6 +270,12 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 	}
 	if dst.provider != "" && done > 0 {
 		_, _ = fmt.Fprintf(w, "next: ccgp %s -c (or /resume): sessions are listed per project directory\n", dst.label)
+	}
+	if dst.provider != "" && len(forks) > 0 {
+		_, _ = fmt.Fprintf(w, "open a fork with: ccgp %s --resume %s\n", dst.label, forks[0])
+	}
+	if diverged > 0 && !opt.Fork && !opt.Force {
+		_, _ = fmt.Fprintln(w, "diverged sessions: --fork writes them as new sessions next to the old ones, --force replaces the old ones (kept as .bak-<time>)")
 	}
 	if failed > 0 {
 		return exitError(1)
