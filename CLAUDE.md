@@ -67,6 +67,11 @@ Guidance for Claude Code when working in this repository.
   item, a screen item (`menuItem.id`, required on every item) needs a command, and both go into `features()` in the
   test, with a run that proves they do the same (the same file left behind, or the same command started). What cannot
   be in the interface goes into `cliOnly` with its reason. Help, completion, README, `docs/cli.md` follow.
+- Strings from the fiber context (`c.Get`, `c.Params`, `c.Query`, …) alias fasthttp's request buffer, which the next
+  request overwrites. Kept anywhere (a variable, a header of an upstream request) they must be copied with
+  `ownString`: the HTTP/2 transport keeps header strings in its HPACK table, and strings that change under it panic the
+  whole server (`id (N) <= evictCount (M)`, in a goroutine that cannot be recovered). `header_strings_test.go` checks
+  the source for it.
 - Windows finds a `ccgp.exe` in the current directory before `PATH`: a stale build in the repo root hides the
   installed one (it is git-ignored; `scripts\deploy.cmd` installs into `%USERPROFILE%\bin`).
 

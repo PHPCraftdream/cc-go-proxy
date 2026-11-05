@@ -103,15 +103,15 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.OpenAIAPIKey)
 	req.Header.Set("User-Agent", "ccgp")
-	version := c.Get("anthropic-version")
+	version := ownString(c.Get("anthropic-version"))
 	if version == "" {
 		version = "2023-06-01"
 	}
 	req.Header.Set("anthropic-version", version)
-	if beta := c.Get("anthropic-beta"); beta != "" {
+	if beta := ownString(c.Get("anthropic-beta")); beta != "" {
 		req.Header.Set("anthropic-beta", beta)
 	}
-	if accept := c.Get("Accept"); accept != "" {
+	if accept := ownString(c.Get("Accept")); accept != "" {
 		req.Header.Set("Accept", accept)
 	}
 
@@ -217,3 +217,11 @@ func mapEffort(m map[string]any, efforts map[string]string) {
 		oc["effort"] = to
 	}
 }
+
+// ownString copies a string that fiber took from the request buffer. c.Get and
+// friends return strings that alias fasthttp's buffers, which the next request
+// on the connection overwrites; the HTTP/2 transport keeps header strings in its
+// HPACK table, and a table whose strings change under it panics the whole
+// server ("id (N) <= evictCount (M)"). Header values that go upstream must be
+// copied.
+func ownString(s string) string { return strings.Clone(s) }

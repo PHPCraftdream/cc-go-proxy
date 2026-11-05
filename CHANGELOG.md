@@ -122,6 +122,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- The server could die with `panic: id (N) <= evictCount (M)` from Go's HTTP/2 header encoder, and every request
+  after it failed until the next start. The headers `anthropic-version`, `anthropic-beta` and `Accept` that go to an
+  Anthropic-style provider (z.ai) were strings that fiber takes from the request buffer, which the next request
+  overwrites; the HTTP/2 transport keeps header strings in its HPACK table, and a table whose strings change under it
+  panics in a goroutine of its own, which cannot be recovered. They are copied now.
 - The commented `connections.proxy` example of the default config was a single-`#` line, which Ktav takes for text,
   not a comment; it is a `##` comment now. The docs and the contributor notes say that comments are `##`.
 - The interface options that only `~/.claude.json` holds did not reach the profiles: `leftArrowOpensAgents: false`

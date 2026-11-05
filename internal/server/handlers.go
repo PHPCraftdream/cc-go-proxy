@@ -55,7 +55,7 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 
 	// Validate API key (if configured)
 	if cfg.AnthropicAPIKey != "" {
-		apiKey := c.Get("x-api-key")
+		apiKey := ownString(c.Get("x-api-key"))
 		if apiKey != cfg.AnthropicAPIKey {
 			return c.Status(401).JSON(fiber.Map{
 				"type": "error",

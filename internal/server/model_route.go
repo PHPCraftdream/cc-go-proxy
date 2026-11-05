@@ -9,7 +9,7 @@ import (
 
 // modelRoute reports configured routing, not an upstream inference result.
 func modelRoute(c *fiber.Ctx) error {
-	requested := c.Query("requested")
+	requested := ownString(c.Query("requested"))
 	if requested == "" || len(requested) > 256 || strings.ContainsAny(requested, "\r\n\x00") {
 		return c.SendStatus(fiber.StatusBadRequest)
 	}
