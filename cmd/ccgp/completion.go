@@ -271,6 +271,8 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 		}
 	case "--profile":
 		return profileCandidates(sub, prev, n)
+	case "--provider":
+		return providerCandidates(sub, n)
 	}
 	return nil
 }
@@ -278,7 +280,7 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 // profileCandidates completes `ccgp --profile <add|list|rm> ...`.
 func profileCandidates(sub []string, prev string, n completionNames) []string {
 	if len(sub) == 0 {
-		return []string{"add", "list", "rm"}
+		return []string{"add", "list", "rm", "set", "unset"}
 	}
 	switch sub[0] {
 	case "add":
@@ -295,6 +297,37 @@ func profileCandidates(sub []string, prev string, n completionNames) []string {
 		return []string{"--json"}
 	case "rm":
 		return append(call(n.profiles), "--yes", "--purge")
+	case "set", "unset":
+		switch len(sub) {
+		case 1:
+			return call(n.profiles)
+		case 2:
+			if sub[0] == "unset" {
+				return []string{"default_model", "context_window", "compact_percent"}
+			}
+			return config.ProfileKeys()
+		case 3:
+			if sub[0] == "set" && sub[2] == "provider" {
+				return call(n.providers)
+			}
+		}
 	}
 	return nil
+}
+
+// providerCandidates completes `ccgp --provider [NAME] [--json] | set|unset NAME KEY [VALUE]`.
+func providerCandidates(sub []string, n completionNames) []string {
+	if len(sub) == 0 {
+		return append(call(n.providers), "set", "unset", "--json")
+	}
+	if sub[0] == "set" || sub[0] == "unset" {
+		switch len(sub) {
+		case 1:
+			return call(n.providers)
+		case 2:
+			return config.ProviderKeys()
+		}
+		return nil
+	}
+	return []string{"--json"}
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -29,10 +28,14 @@ func mainMenu() *menu {
 		info: func(a *app) string { return styDim.Render(a.cfg.ConfigFile) },
 		items: func(a *app) []menuItem {
 			return []menuItem{
-				{label: fmt.Sprintf("Profiles (%d)", len(a.cfg.Profiles)), run: push(func() screen { return profilesMenu() })},
-				{label: fmt.Sprintf("Providers (%d)", len(a.cfg.Providers)), run: push(func() screen { return providersMenu() })},
-				{label: "Peak hours", run: push(func() screen { return peakListMenu() })},
-				{label: "Quit", run: func(a *app) tea.Cmd {
+				{id: "profiles", label: fmt.Sprintf("Profiles (%d)", len(a.cfg.Profiles)), run: push(func() screen { return profilesMenu() })},
+				{id: "providers", label: fmt.Sprintf("Providers (%d)", len(a.cfg.Providers)), run: push(func() screen { return providersMenu() })},
+				{id: "peak", label: "Peak hours", run: push(func() screen { return peakListMenu() })},
+				{id: "config", label: "Config and connections", run: push(func() screen { return configMenu() })},
+				{id: "models", label: "Models", run: push(func() screen { return modelsMenu() })},
+				{id: "sessions", label: "Sessions", run: push(func() screen { return sessionsMenu() })},
+				{id: "server", label: "Server", run: push(func() screen { return serverMenu() })},
+				{id: navQuit, label: "Quit", run: func(a *app) tea.Cmd {
 					a.quit = true
 					return tea.Quit
 				}},
@@ -51,11 +54,11 @@ func profilesMenu() *menu {
 			for _, r := range buildProfileRows(a.cfg, a.store, a.claudeBase) {
 				name := r.Name
 				items = append(items, menuItem{
-					label: fmt.Sprintf("%-14s %-14s %-17s %s", r.Name, r.Provider, r.Type, r.Login),
-					run:   push(func() screen { return profileMenu(name) }),
+					id: "profile", label: fmt.Sprintf("%-14s %-14s %-17s %s", r.Name, r.Provider, r.Type, r.Login),
+					run: push(func() screen { return profileMenu(name) }),
 				})
 			}
-			return append(items, menuItem{label: "+ add a profile", hot: "a", run: push(func() screen { return addProfileMenu() })})
+			return append(items, menuItem{id: "add", label: "+ add a profile", hot: "a", run: push(func() screen { return addProfileMenu() })})
 		},
 	}
 }
@@ -114,7 +117,7 @@ func profileMenu(name string) *menu {
 			head := "Profile " + name
 			setKey := func(key, current, hint string) menuItem {
 				return menuItem{
-					label: fmt.Sprintf("%-16s %s", key, dash(current)),
+					id: key, label: fmt.Sprintf("%-16s %s", key, dash(current)),
 					run: push(func() screen {
 						return editKeyInput(head, key, hint+"; empty removes the setting", current, func(text, v string) (string, error) {
 							return config.SetProfileKeyText(text, name, key, v)
@@ -122,7 +125,7 @@ func profileMenu(name string) *menu {
 					}),
 				}
 			}
-			remove := menuItem{label: "remove the profile", hot: "r", run: func(a *app) tea.Cmd {
+			remove := menuItem{id: "rm", label: "remove the profile", hot: "r", run: func(a *app) tea.Cmd {
 				a.push(removeMenu(name, len(a.stack)-1))
 				return nil
 			}}
@@ -130,7 +133,7 @@ func profileMenu(name string) *menu {
 				return []menuItem{remove}
 			}
 			proxy := menuItem{
-				label: fmt.Sprintf("%-16s %s", "proxy", dash(pf.Proxy)),
+				id: "proxy", label: fmt.Sprintf("%-16s %s", "proxy", dash(pf.Proxy)),
 				run: push(func() screen {
 					return newInput(head, "proxy", "a proxy URL (socks5://…, http://…), none (no proxy at all), or empty (the provider's proxy, else the global one)", pf.Proxy,
 						func(a *app, v string) (screen, error) {
@@ -150,7 +153,7 @@ func profileMenu(name string) *menu {
 				setKey("context_window", zeroDash(pf.ContextWindow), "tokens; Claude Code compacts before this"),
 				setKey("compact_percent", zeroDash(pf.CompactPercent), "0-100: where Claude Code compacts"),
 				proxy,
-				{label: "move to another provider…", run: push(func() screen { return moveMenu(name, pf.Provider) })},
+				{id: "move", label: "move to another provider…", run: push(func() screen { return moveMenu(name, pf.Provider) })},
 				remove,
 			}
 		},
@@ -169,7 +172,7 @@ func moveMenu(name, current string) *menu {
 				}
 				to := n
 				items = append(items, menuItem{
-					label: fmt.Sprintf("%-14s %s", to, a.cfg.Providers[to].Type),
+					id: "provider", label: fmt.Sprintf("%-14s %s", to, a.cfg.Providers[to].Type),
 					run: func(a *app) tea.Cmd {
 						err := a.edit(func(text string) (string, error) { return config.SetProfileKeyText(text, name, "provider", to) })
 						if err != nil {
@@ -209,9 +212,9 @@ func removeMenu(name string, depth int) *menu {
 		head: func(*app) string { return "Remove profile " + name },
 		items: func(a *app) []menuItem {
 			return []menuItem{
-				{label: "remove it; keep its Claude dir and logins", run: remove(false)},
-				{label: "remove it and delete its Claude dir and the logins nothing else uses (--purge)", run: remove(true)},
-				{label: "cancel", run: func(a *app) tea.Cmd {
+				{id: "rm_keep", label: "remove it; keep its Claude dir and logins", run: remove(false)},
+				{id: "rm_purge", label: "remove it and delete its Claude dir and the logins nothing else uses (--purge)", run: remove(true)},
+				{id: navCancel, label: "cancel", run: func(a *app) tea.Cmd {
 					a.pop()
 					return nil
 				}},
@@ -290,7 +293,7 @@ func addProfileMenu() *menu {
 		head: func(*app) string { return "Add a profile" },
 		items: func(a *app) []menuItem {
 			return []menuItem{
-				{label: "another account of the kind a profile has: its own login, its settings copied (--like)", run: func(a *app) tea.Cmd {
+				{id: "add_like", label: "another account of the kind a profile has: its own login, its settings copied (--like)", run: func(a *app) tea.Cmd {
 					w := &wizard{depth: len(a.stack) - 1}
 					a.push(chooseNameMenu("Copy which profile?", profileNames, func(a *app, n string) screen {
 						w.opts.Like, w.base, w.claude = n, n, isClaudeProfile(a.cfg, a.cfg.Profiles[n])
@@ -298,7 +301,7 @@ func addProfileMenu() *menu {
 					}))
 					return nil
 				}},
-				{label: "another profile on a login that exists: shares its provider (--provider)", run: func(a *app) tea.Cmd {
+				{id: "add_provider", label: "another profile on a login that exists: shares its provider (--provider)", run: func(a *app) tea.Cmd {
 					w := &wizard{depth: len(a.stack) - 1}
 					a.push(chooseNameMenu("On which provider?", providerNames, func(a *app, n string) screen {
 						w.opts.Provider, w.base = n, n
@@ -306,7 +309,7 @@ func addProfileMenu() *menu {
 					}))
 					return nil
 				}},
-				{label: "a new backend: a new provider and its first profile (--type)", run: func(a *app) tea.Cmd {
+				{id: "add_type", label: "a new backend: a new provider and its first profile (--type)", run: func(a *app) tea.Cmd {
 					a.push(backendKindMenu(&wizard{depth: len(a.stack) - 1}))
 					return nil
 				}},
@@ -324,7 +327,7 @@ func chooseNameMenu(head string, names func(*config.Config) []string, next func(
 			var items []menuItem
 			for _, n := range names(a.cfg) {
 				name := n
-				items = append(items, menuItem{label: name, run: func(a *app) tea.Cmd {
+				items = append(items, menuItem{id: "name", label: name, run: func(a *app) tea.Cmd {
 					a.push(next(a, name))
 					return nil
 				}})
@@ -337,7 +340,7 @@ func chooseNameMenu(head string, names func(*config.Config) []string, next func(
 // backendKindMenu picks the type of a new provider.
 func backendKindMenu(w *wizard) *menu {
 	kind := func(label, typ string) menuItem {
-		return menuItem{label: label, run: func(a *app) tea.Cmd {
+		return menuItem{id: "kind_" + typ, label: label, run: func(a *app) tea.Cmd {
 			w.opts.Type, w.base, w.claude = typ, backendNames[typ], typ == config.ProviderTypeClaude
 			switch typ {
 			case config.ProviderTypeAnthropicCompat:
@@ -390,9 +393,9 @@ func providersMenu() *menu {
 				if len(pr.Peak) > 0 {
 					label += "  [peak hours]"
 				}
-				items = append(items, menuItem{label: label, run: push(func() screen { return providerMenu(name) })})
+				items = append(items, menuItem{id: "provider", label: label, run: push(func() screen { return providerMenu(name) })})
 			}
-			return append(items, menuItem{label: "+ add a provider (with its first profile)", hot: "a", run: func(a *app) tea.Cmd {
+			return append(items, menuItem{id: "add", label: "+ add a provider (with its first profile)", hot: "a", run: func(a *app) tea.Cmd {
 				a.push(backendKindMenu(&wizard{depth: len(a.stack)}))
 				return nil
 			}})
@@ -401,41 +404,7 @@ func providersMenu() *menu {
 }
 
 func providerInfo(a *app, name string) string {
-	pr, ok := a.cfg.Providers[name]
-	if !ok {
-		return "this provider is gone"
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "type         %s\n", pr.Type)
-	if pr.Type != config.ProviderTypeClaude {
-		fmt.Fprintf(&b, "base_url     %s\napi_key_env  %s\n", dash(pr.BaseURL), dash(pr.APIKeyEnv))
-	}
-	fmt.Fprintf(&b, "login        %s\n", loginState(a.store, pr))
-	if pr.Type != config.ProviderTypeClaude {
-		choice := a.cfg.ProviderProxy(name).String()
-		if pr.Proxy != "" {
-			fmt.Fprintf(&b, "proxy        %s (its own)\n", choice)
-		} else {
-			fmt.Fprintf(&b, "proxy        global (%s)\n", choice)
-		}
-	}
-	if len(pr.EffortMap) > 0 {
-		keys := make([]string, 0, len(pr.EffortMap))
-		for k := range pr.EffortMap {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, k := range keys {
-			parts = append(parts, k+"="+pr.EffortMap[k])
-		}
-		fmt.Fprintf(&b, "effort_map   %s\n", strings.Join(parts, " "))
-	}
-	if pr.Type != config.ProviderTypeClaude {
-		fmt.Fprintf(&b, "peak hours   %s\n", peakSummary(a, name, pr))
-	}
-	fmt.Fprintf(&b, "profiles     %s", dash(strings.Join(profilesOf(a.cfg, name), ", ")))
-	return b.String()
+	return providerText(a.cfg, a.store, a.pauses, a.now(), name)
 }
 
 func providerMenu(name string) *menu {
@@ -450,7 +419,7 @@ func providerMenu(name string) *menu {
 			head := "Provider " + name
 			setKey := func(key, current, hint string) menuItem {
 				return menuItem{
-					label: fmt.Sprintf("%-14s %s", key, dash(current)),
+					id: key, label: fmt.Sprintf("%-14s %s", key, dash(current)),
 					run: push(func() screen {
 						return editKeyInput(head, key, hint+"; empty removes the setting", current, func(text, v string) (string, error) {
 							return config.SetProviderKeyText(text, name, key, v)
@@ -463,7 +432,7 @@ func providerMenu(name string) *menu {
 				items = append(items, setKey("api_key_env", pr.APIKeyEnv, "the environment variable that holds the API key"))
 			}
 			proxy := menuItem{
-				label: fmt.Sprintf("%-14s %s", "proxy", dash(pr.Proxy)),
+				id: "proxy", label: fmt.Sprintf("%-14s %s", "proxy", dash(pr.Proxy)),
 				run: push(func() screen {
 					return newInput(head, "proxy", "a proxy URL (socks5://…, http://…), none (no proxy at all), or empty (the global proxy); a profile's own proxy wins", pr.Proxy,
 						func(a *app, v string) (screen, error) {
@@ -479,36 +448,13 @@ func providerMenu(name string) *menu {
 				}),
 			}
 			items = append(items, proxy)
-			return append(items, menuItem{label: "peak hours…", hot: "p", run: push(func() screen { return peakMenu(name) })})
+			items = append(items, menuItem{id: "peak", label: "peak hours…", hot: "p", run: push(func() screen { return peakMenu(name) })})
+			return append(items, loginItems(name, pr)...)
 		},
 	}
 }
 
 // ---- peak hours ----
-
-// peakSummary sums up a provider's peak hours and whether it is peak now.
-func peakSummary(a *app, name string, pr *config.Provider) string {
-	s, err := pr.PeakSchedule()
-	if err != nil {
-		return "unreadable: " + err.Error()
-	}
-	if s == nil {
-		return "none"
-	}
-	windows := make([]string, 0, len(s.Windows))
-	for _, w := range s.Windows {
-		windows = append(windows, w.String())
-	}
-	now := a.now()
-	state := "open now"
-	if st := s.At(now); st.In {
-		state = "PEAK NOW"
-		if _, paused := a.pauses.Until(name, now); paused {
-			state = "peak now, paused"
-		}
-	}
-	return fmt.Sprintf("%s (%s time); %s", strings.Join(windows, ", "), s.ZoneName(), state)
-}
 
 // peakListMenu lists the providers, to pick the one whose peak hours to edit.
 func peakListMenu() *menu {
@@ -519,8 +465,8 @@ func peakListMenu() *menu {
 			for _, n := range providerNames(a.cfg) {
 				name := n
 				items = append(items, menuItem{
-					label: fmt.Sprintf("%-14s %s", name, peakSummary(a, name, a.cfg.Providers[name])),
-					run:   push(func() screen { return peakMenu(name) }),
+					id: "provider", label: fmt.Sprintf("%-14s %s", name, peakSummary(a.cfg.Providers[name], name, a.now(), a.pauses)),
+					run: push(func() screen { return peakMenu(name) }),
 				})
 			}
 			return items
@@ -558,8 +504,8 @@ func peakPanel(a *app, provider string) string {
 
 func peakMenu(provider string) *menu {
 	head := "Peak hours of " + provider
-	words := func(prompt, hint, initial string, run func(a *app, fields []string) error) menuItem {
-		return menuItem{label: prompt, run: push(func() screen {
+	words := func(id, prompt, hint, initial string, run func(a *app, fields []string) error) menuItem {
+		return menuItem{id: id, label: prompt, run: push(func() screen {
 			return newInput(head, prompt, hint, initial, func(a *app, v string) (screen, error) {
 				return nil, run(a, strings.Fields(v))
 			})
@@ -589,19 +535,19 @@ func peakMenu(provider string) *menu {
 				tz = "local"
 			}
 			return []menuItem{
-				words("add windows", windowHint, "", func(a *app, f []string) error {
+				words("add", "add windows", windowHint, "", func(a *app, f []string) error {
 					if err := need(f); err != nil {
 						return err
 					}
 					return a.peakDo(append([]string{provider, "add"}, f...)...)
 				}),
-				words("replace all windows", windowHint, strings.Join(current, " "), func(a *app, f []string) error {
+				words("set", "replace all windows", windowHint, strings.Join(current, " "), func(a *app, f []string) error {
 					if err := need(f); err != nil {
 						return err
 					}
 					return a.peakDo(append([]string{provider, "set"}, f...)...)
 				}),
-				{label: "remove a window…", run: func(a *app) tea.Cmd {
+				{id: "rm", label: "remove a window…", run: func(a *app) tea.Cmd {
 					if len(pr.Peak) == 0 {
 						a.errMsg = "there are no windows to remove"
 						return nil
@@ -609,22 +555,22 @@ func peakMenu(provider string) *menu {
 					a.push(removeWindowMenu(provider))
 					return nil
 				}},
-				words("time zone", "a name (Asia/Shanghai), an offset (+08:00), UTC, or local (this machine's)", tz, func(a *app, f []string) error {
+				words("tz", "time zone", "a name (Asia/Shanghai), an offset (+08:00), UTC, or local (this machine's)", tz, func(a *app, f []string) error {
 					if len(f) != 1 {
 						return fmt.Errorf("enter one zone")
 					}
 					return a.peakDo(provider, "tz", f[0])
 				}),
-				words("pause", "how long requests go through: 90m, 2h, 1d (empty: until the running peak ends)", "", func(a *app, f []string) error {
+				words("pause", "pause", "how long requests go through: 90m, 2h, 1d (empty: until the running peak ends)", "", func(a *app, f []string) error {
 					return a.peakDo(append([]string{provider, "pause"}, f...)...)
 				}),
-				{label: "resume (end the pause)", run: func(a *app) tea.Cmd {
+				{id: "resume", label: "resume (end the pause)", run: func(a *app) tea.Cmd {
 					if err := a.peakDo(provider, "resume"); err != nil {
 						a.errMsg = err.Error()
 					}
 					return nil
 				}},
-				{label: "clear all peak hours", run: func(a *app) tea.Cmd {
+				{id: "clear", label: "clear all peak hours", run: func(a *app) tea.Cmd {
 					a.push(&confirmScreen{head: head, question: "Remove all peak hours of " + provider + "?", yes: func(a *app) error {
 						return a.peakDo(provider, "clear")
 					}})
@@ -644,7 +590,7 @@ func removeWindowMenu(provider string) *menu {
 			if pr := a.cfg.Providers[provider]; pr != nil {
 				for i, w := range pr.Peak {
 					n := strconv.Itoa(i + 1)
-					items = append(items, menuItem{label: w.String(), run: func(a *app) tea.Cmd {
+					items = append(items, menuItem{id: "window", label: w.String(), run: func(a *app) tea.Cmd {
 						if err := a.peakDo(provider, "rm", n); err != nil {
 							a.errMsg = err.Error()
 							return nil

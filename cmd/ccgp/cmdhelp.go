@@ -195,7 +195,37 @@ Examples:
   ccgp --export codex
   ccgp --export zai 3
 `,
-	"--profile": `ccgp --profile add|list|rm
+	"--provider": `ccgp --provider [NAME] [--json]
+ccgp --provider set <name> <key> <value>
+ccgp --provider unset <name> <key>
+
+Look at the providers of config.ktav, or set one key of a provider. A provider
+is a backend and its login; profiles use it. Every change is validated with
+the real loader and keeps a config.ktav.bak-<time> backup; the running server
+applies it on its next request.
+
+  (no name)          the providers: type, whether they have peak hours, profiles
+  NAME               one provider: type, base_url, api_key_env, login, proxy
+                     (and where it comes from), effort_map, peak hours, profiles
+  set <name> <key> <value>
+                     base_url (the endpoint) or api_key_env (the environment
+                     variable that holds the API key; not for a codex provider)
+  unset <name> <key> remove the key (an anthropic_compat provider cannot do
+                     without its base_url)
+  --json             print the list (or the one provider) as JSON
+
+The proxy of a provider is set with ccgp --connections proxy URL provider NAME,
+its peak hours with ccgp --peak. New providers come with ccgp --profile add.
+
+Examples:
+  ccgp --provider
+  ccgp --provider zai
+  ccgp --provider set zai base_url https://api.z.ai/api/anthropic
+  ccgp --provider set myai api_key_env MYAI_KEY
+  ccgp --provider unset myai api_key_env
+  ccgp --provider --json
+`,
+	"--profile": `ccgp --profile add|list|rm|set|unset
 
 Manage profiles (and their providers) in config.ktav. Every change is
 validated with the real loader and keeps a config.ktav.bak-<time> backup.
@@ -215,6 +245,13 @@ validated with the real loader and keeps a config.ktav.bak-<time> backup.
   rm <name> [--yes] [--purge]      remove a profile (and its provider when
                                    nothing else uses it); --purge also deletes
                                    its Claude dir and unused provider credentials
+  set <name> <key> <value>         one setting of a profile: default_model (the
+                                   backend model every Claude name goes to),
+                                   context_window (tokens), compact_percent
+                                   (0-100) or provider (move it to another
+                                   provider)
+  unset <name> <key>               remove default_model, context_window or
+                                   compact_percent
 
 add never signs in: ccgp <name> does on its first start.
 
@@ -224,6 +261,11 @@ Examples:
   ccgp --profile add myai --type anthropic_compat --base-url https://example.internal/api --model my-model
   ccgp --profile add work --type claude
   ccgp --profile list --json
+  ccgp --profile set zai default_model glm-5.3-flash
+  ccgp --profile set zai context_window 1000000
+  ccgp --profile set zai compact_percent 70
+  ccgp --profile set codex2 provider codex
+  ccgp --profile unset zai compact_percent
   ccgp --profile rm codex2 --purge
 `,
 	"--config": `ccgp --config reset
@@ -276,8 +318,9 @@ Examples:
 	"--interactive": `ccgp --interactive
 ccgp -i
 
-A full-screen interface (Bubble Tea) to look at, change and add profiles,
-providers and peak hours without remembering the commands. Only this flag
+A full-screen interface (Bubble Tea) that does what the commands do: look at,
+change and add profiles, providers and peak hours, connections, models, sessions,
+the server, without remembering the commands. Only this flag
 starts it; every other command stays as it is. It needs a terminal.
 
 Keys: up/down (or j/k) move, enter or the number of an item selects it, esc
@@ -303,10 +346,26 @@ field and nothing is written.
                base_url, api_key_env, proxy, login, effort_map, peak hours and
                profiles; set base_url, api_key_env and proxy (for all its
                profiles; a profile's own proxy wins); open its peak hours;
+               log in, log in with a device code, log out (--login, --logout);
                add a provider (it comes with its first profile)
   Peak hours   the providers and whether it is peak now; open one to add,
                replace or remove windows, set the time zone, pause, resume
                or clear (ccgp --peak, see its help)
+  Config and connections
+               connections.active, connections.total, the global proxy
+               (--connections); reset the config to the default (--config reset)
+  Models       show the mapping of every profile or one (--models), write the
+               newest models (--models apply), where a model name goes (--which)
+  Sessions     import into a profile, export from one, send between two
+               profiles (--import, --export, --send), with an optional count
+  Server       status, start, stop, restart, the log, the checks (--doctor),
+               the version, a look for a newer release and the update itself
+
+What a command does besides editing the config (the server, a sign-in, models,
+sessions, the update) the interface does by running that command: its output
+is shown on a screen of its own, and a sign-in or an update gets the terminal.
+The commands and the interface cover each other: whatever one can do, the
+other can (not --serve, --completion and --help); a test keeps it so.
 
 A provider goes when its last profile is removed. Models (the rule lists) and
 effort_map are shown, not edited here: ccgp --models, or the file.

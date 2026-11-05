@@ -30,6 +30,7 @@ The config is **yours**: ccgp reads it and changes it only on your command.
 - `ccgp --interactive` ([full-screen interface](cli.md#interactive-mode)) makes the same kind of edit for one setting at a time:
   a profile's `default_model`, `context_window`, `compact_percent`, `proxy` or `provider`, a provider's `base_url`,
   `api_key_env`, `proxy` or peak hours, and the adding and removing of profiles.
+- `ccgp --profile set|unset` and `ccgp --provider set|unset` rewrite one key of a profile or a provider the same way, with a backup.
 - `ccgp --config reset` writes the default template and keeps the old file as a backup.
 
 Everything machine-managed (profile URL tokens, API keys, the rotating OAuth tokens, and the pauses of

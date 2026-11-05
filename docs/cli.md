@@ -220,7 +220,8 @@ after printing the JSON.
 | --- | --- |
 | `--login <provider> [--device]` | Sign in (Codex: browser OAuth, or a device code; others: API key) |
 | `--logout <provider> [--yes]` | Remove the stored OAuth tokens or API key of a provider after a confirmation. The config file is not touched, and `--yes` is required without a terminal |
-| `--profile add\|list\|rm` | `add NAME --like P` (own login), `--provider P` (existing login), `--type codex\|codex_api\|anthropic_compat\|claude` (new backend; `claude` = the real Claude Code, own clean directory and sign-in), `list [--json]`, `rm NAME [--yes] [--purge]`; see [configuration](configuration.md#creating-and-removing-profiles) |
+| `--profile add\|list\|rm\|set\|unset` | `add NAME --like P` (own login), `--provider P` (existing login), `--type codex\|codex_api\|anthropic_compat\|claude` (new backend; `claude` = the real Claude Code, own clean directory and sign-in), `list [--json]`, `rm NAME [--yes] [--purge]`, `set NAME KEY VALUE` / `unset NAME KEY` (`default_model`, `context_window`, `compact_percent`, and `provider` to move the profile; `unset` not for `provider`); see [configuration](configuration.md#creating-and-removing-profiles) |
+| `--provider [NAME] [--json] \| set\|unset NAME KEY [VALUE]` | The providers (type, peak hours, profiles), one provider in detail (base_url, api_key_env, login, proxy and where it comes from, effort map, peak hours), or set / remove its `base_url` or `api_key_env`. The proxy is `--connections proxy … provider NAME`, the peak hours `--peak` |
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
 | `--connections [active N] [total N] [proxy URL|off [provider NAME \| profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy: global, of one provider or of one profile; each level replaces the ones above it (`none` = direct, `inherit` = the level above again); see [configuration](configuration.md#layout) |
@@ -234,6 +235,13 @@ ccgp --logout codex --yes                # forget the login (the config stays)
 ccgp --profile add codex2 --like codex   # a second account of the same kind, then: ccgp codex2
 ccgp --profile add work --type claude    # a real Claude Code profile with its own account
 ccgp --profile list --json
+ccgp --profile set zai default_model glm-5.3-flash   # one setting of a profile ...
+ccgp --profile set zai2 provider codex               # ... also moving it to another provider
+ccgp --profile unset zai compact_percent
+ccgp --provider                          # the providers
+ccgp --provider zai                      # one in detail
+ccgp --provider set zai base_url https://api.z.ai/api/anthropic
+ccgp --provider unset myai api_key_env
 ccgp --models                            # what the backend offers and the tier mapping
 ccgp --models apply codex                # write that mapping into the config
 ccgp --which codex claude-opus-4-1       # where a model name goes, offline
@@ -253,7 +261,8 @@ ccgp --config reset                      # default config, the old one is kept a
 ## Interactive mode
 
 `ccgp --interactive` (or `ccgp -i`) opens a full-screen interface, built on [Bubble Tea](https://github.com/charmbracelet/bubbletea),
-to look at, change and add profiles, providers and peak hours. **Only the flag starts it**: a word without dashes is
+to do everything the commands do: look at, change and add profiles, providers and peak hours, set the proxy and the
+connections, map models, sign in and out, move sessions, run the server and its checks. **Only the flag starts it**: a word without dashes is
 still a profile, and `ccgp` alone still prints the help. It needs a terminal (it draws menus and reads keys); for
 scripts use the commands.
 
@@ -264,7 +273,11 @@ scripts use the commands.
  › 1 Profiles (3)
    2 Providers (3)
    3 Peak hours
-   4 Quit
+   4 Config and connections
+   5 Models
+   6 Sessions
+   7 Server
+   8 Quit
 
  ↑/↓ move · enter or number select · esc back · ctrl+c quit
 ```
@@ -285,12 +298,28 @@ is written.
 | **Profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
 | **Providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the proxy, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url`, `api_key_env` and `proxy` (for all its profiles; a profile's own wins); open its **peak hours** |
 | **Providers → add** | A new backend with its first profile (a provider cannot exist without a profile). A provider goes when its last profile is removed |
+| **Providers → a provider** (more) | Also: **log in**, **log in with a device code** (Codex) and **log out** (`--login`, `--login --device`, `--logout`; a sign-in gets the terminal while it runs) |
 | **Peak hours** | Every provider with its windows and whether it is peak now. Open one: add windows, replace them all, remove one, set the time zone, pause (a length, or until the running peak ends), resume, clear — `ccgp --peak <provider>` as menus ([peak hours](peak-hours.md)) |
+| **Config and connections** | `connections.active`, `connections.total`, the global proxy (`--connections`), and *reset to the default* (`--config reset`, after a question) |
+| **Models** | Show the mapping of every profile or of one (`--models`), write the newest models into them (`--models apply`, after a question), and *where does a model name go?* (`--which`) |
+| **Sessions** | Copy the latest sessions of the current directory: *import* into a profile, *export* from one, *send* from one profile to another (`--import`, `--export`, `--send`), with an optional count |
+| **Server** | Status, start, stop, restart, the log, the checks (`--doctor`), the version, a look for a newer release (`--update --check`) and the update itself (`--update`, after a question) |
 
 Every screen reads `config.ktav` afresh, and every change is the edit the matching command makes: only the line
 concerned changes (comments and line endings stay), the result is validated with the real loader, and a
 `config.ktav.bak-<time>` backup is kept. A running server applies a change on its next request. The model rule lists
-and `effort_map` are shown, not edited here: `ccgp --models apply` or the file.
+and `effort_map` are shown, not edited here: `ccgp --models apply` or the file. What a command does besides editing
+(the server, sign-in, models, sessions, update) the interface does by running that command: its output is shown on a
+screen of its own, and a sign-in or an update gets the terminal.
+
+### The command line and the interface cover each other
+
+Whatever a command can do the interface can, and whatever the interface offers a command offers, down to single
+settings (`ccgp --profile set zai default_model glm-5.3`, `ccgp --provider set zai base_url …`). The only commands
+the interface does not have are `--serve` (it runs the server in the foreground), `--completion` (a script for the
+shell), `--help` (every screen shows its keys) and the flag that starts the interface itself. A test
+(`cmd/ccgp/parity_test.go`) crawls every screen and every command and fails when either side has something the other
+has not; for the edits it also runs the command and the keys on the same config and compares the files they leave.
 
 It needs `config.ktav`; in the env-only mode (no config file, `PROXY_TOKEN` in the environment) it says so and exits.
 

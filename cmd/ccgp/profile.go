@@ -35,7 +35,7 @@ type profileAddOpts struct {
 // profileCmd implements `ccgp --profile <add|list|rm>`.
 func profileCmd(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge]")
+		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge] | ccgp --profile set <name> <key> <value> | ccgp --profile unset <name> <key>")
 	}
 	if cfg.IsEnvMode() {
 		return errors.New("ccgp --profile needs config.ktav (env-only mode has a single implicit profile)")
@@ -77,8 +77,10 @@ func profileCmd(cfg *config.Config, args []string) error {
 			return err
 		}
 		return profileRemove(os.Stdout, opts, cfg.ConfigFile, cfg, store, base, os.Stdin)
+	case "set", "unset":
+		return profileSet(os.Stdout, cfg, args[1:], args[0] == "unset")
 	}
-	return fmt.Errorf("unknown profile subcommand %q (want add, list or rm)", args[0])
+	return fmt.Errorf("unknown profile subcommand %q (want add, list, rm, set or unset)", args[0])
 }
 
 // parseProfileAdd parses flags; both --flag value and --flag=value work.

@@ -15,11 +15,12 @@ import (
 // command is one CLI command, named with a leading "--". The table below is
 // the single source for dispatch and the help text.
 type command struct {
-	name         string // "--status"
-	args         string // synopsis after the name
-	desc         string // one-line description
-	ensureConfig bool   // create the default config first
-	hidden       bool   // helper command, skipped by printHelp
+	name         string   // "--status"
+	args         string   // synopsis after the name
+	desc         string   // one-line description
+	ensureConfig bool     // create the default config first
+	hidden       bool     // helper command, skipped by printHelp
+	verbs        []string // entry points beyond the command itself ("set default_model"); the parity test and the completion read them
 	run          func(args []string) error
 }
 
@@ -30,23 +31,24 @@ func commands() []command {
 		{name: "--start", args: "", desc: "Start background server", ensureConfig: true, run: startCmd},
 		{name: "--stop", args: "", desc: "Stop background server", run: stopCmd},
 		{name: "--status", args: "[--json]", desc: "Show background server status", run: statusCmd},
-		{name: "--login", args: "<provider> [--device]", desc: "Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)", ensureConfig: true, run: loginCmd},
-		{name: "--models", args: "[apply] [--json] [-v] [profile]", desc: "Show (or write into config) the newest Codex models per Claude tier", ensureConfig: true, run: modelsCmd},
+		{name: "--login", args: "<provider> [--device]", desc: "Authenticate (codex: browser OAuth, --device: device code; codex_api: API key)", ensureConfig: true, run: loginCmd, verbs: []string{"--device"}},
+		{name: "--models", args: "[apply] [--json] [-v] [profile]", desc: "Show (or write into config) the newest Codex models per Claude tier", ensureConfig: true, run: modelsCmd, verbs: []string{"apply"}},
 		{name: "--send", args: "<from> <to> [count]", desc: "Copy the latest sessions (default 10) of the current directory between \"claude\" and a profile", ensureConfig: true, run: sessionsSendCmd},
 		{name: "--import", args: "<profile> [count]", desc: "Same as: ccgp --send claude <profile>", ensureConfig: true, run: sessionsImportCmd},
 		{name: "--export", args: "<profile> [count]", desc: "Same as: ccgp --send <profile> claude", ensureConfig: true, run: sessionsExportCmd},
-		{name: "--profile", args: "add|list [--json]|rm", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd},
-		{name: "--interactive", args: "", desc: "Full-screen interface to view, edit and add profiles, providers and peak hours (also: -i)", ensureConfig: true, run: interactiveCmd},
+		{name: "--profile", args: "add|list [--json]|rm|set|unset", desc: "Manage profiles (and their providers) in config.ktav", ensureConfig: true, run: profileDispatchCmd, verbs: profileVerbs()},
+		{name: "--provider", args: "[NAME] [--json] | set|unset NAME KEY [VALUE]", desc: "Show the providers, or set base_url / api_key_env of one", ensureConfig: true, run: providerCmd, verbs: providerVerbs()},
+		{name: "--interactive", args: "", desc: "Full-screen interface that does everything the commands do (also: -i)", ensureConfig: true, run: interactiveCmd},
 		{name: "-i", args: "", desc: "Same as: ccgp --interactive", ensureConfig: true, run: interactiveCmd},
-		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd},
-		{name: "--connections", args: "[active N] [total N] [proxy URL|off [provider NAME | profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd},
-		{name: "--peak", args: "[provider [set|add WINDOW...|rm N...|tz ZONE|clear|pause [DURATION]|resume]] [--json]", desc: "Show or set the peak hours of a provider, when its profiles' requests are refused", ensureConfig: true, run: peakCmd},
+		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd, verbs: []string{"reset"}},
+		{name: "--connections", args: "[active N] [total N] [proxy URL|off [provider NAME | profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd, verbs: []string{"active", "total", "proxy", "proxy provider", "proxy profile"}},
+		{name: "--peak", args: "[provider [set|add WINDOW...|rm N...|tz ZONE|clear|pause [DURATION]|resume]] [--json]", desc: "Show or set the peak hours of a provider, when its profiles' requests are refused", ensureConfig: true, run: peakCmd, verbs: []string{"set", "add", "rm", "tz", "clear", "pause", "resume"}},
 		{name: "--which", args: "<profile> <model> [--json]", desc: "Show where a Claude model is routed in a profile (offline)", ensureConfig: true, run: whichCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},
 		{name: "--restart", args: "", desc: "Stop and start the background server", ensureConfig: true, run: restartCmd},
 		{name: "--logout", args: "<provider> [--yes]", desc: "Remove the stored login (OAuth tokens or API key) of a provider", ensureConfig: true, run: logoutCmd},
 		{name: "--completion", args: "bash|zsh|powershell", desc: "Print a shell completion script (see its usage error for the install line)", ensureConfig: false, run: completionCmd},
-		{name: "--update", args: "[--check]", desc: "Self-update from the latest GitHub release (--check: only report)", run: updateCmd},
+		{name: "--update", args: "[--check]", desc: "Self-update from the latest GitHub release (--check: only report)", run: updateCmd, verbs: []string{"--check"}},
 		{name: "--doctor", args: "[--offline] [--json]", desc: "Run diagnostics (claude, config, server, logins, backends, files)", ensureConfig: false, run: doctorCmd},
 		{name: "--version", args: "", desc: "Show version", run: versionCmd},
 		{name: "--help", args: "", desc: "Show this help", run: helpCmd},
@@ -201,6 +203,9 @@ Profiles:
   ccgp --profile add <name> --type <t> ...        New backend: codex | codex_api | anthropic_compat [--base-url URL] [--model M]
   ccgp --profile add <name> --type claude         The real Claude Code with its own login (a clean dir: settings only, no ids or tokens)
   ccgp --profile list                             Show profiles, providers, login state and Claude dirs
+  ccgp --profile set <name> <key> <value>         One setting: default_model, context_window, compact_percent, provider (unset removes)
+  ccgp --provider [name]                          Show the providers, or one in detail
+  ccgp --provider set <name> <key> <value>        base_url or api_key_env of a provider (unset removes)
   ccgp --profile rm <name> [--yes] [--purge]      Remove a profile (its provider too when unused; --purge deletes data)
 
 Proxy (SOCKS5 or HTTP; the nearest level replaces the ones above it: profile, provider, global):

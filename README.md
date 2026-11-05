@@ -49,8 +49,9 @@ ccgpy codex                    # same, with every permission prompt off (--dange
   and ccgp refuses its requests then, with a notice in the chat that says when work can go on; `pause` lets you
   through for a while. The provider never sees the refused request ([details](docs/peak-hours.md)).
 - **Interactive setup.** `ccgp --interactive` (or `-i`) is a full-screen interface ([Bubble Tea](https://github.com/charmbracelet/bubbletea))
-  to look at, change and add profiles, providers and peak hours without remembering the commands
-  ([details](docs/cli.md#interactive-mode)).
+  to do everything the commands do without remembering them: profiles and providers (settings, proxy, sign-in), peak
+  hours, connections, models, sessions, the server. The commands and the interface cover each other both ways, and a
+  test keeps it so ([details](docs/cli.md#interactive-mode)).
 - **Plain Ktav config**, created on first run, hot-reloaded. ccgp changes it only on your command (`--profile`,
   `--connections`, `--peak`, `--models apply`, the interactive interface), and every change is validated with the
   real loader and keeps a backup first ([details](docs/configuration.md)).
@@ -159,7 +160,8 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --send <from> <to> [count]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code) |
 | `ccgp --import <profile> [count]` | Alias of `ccgp --send claude <profile>` |
 | `ccgp --export <profile> [count]` | Alias of `ccgp --send <profile> claude` |
-| `ccgp --profile add\|list\|rm` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type codex\|codex_api\|anthropic_compat`), profiles of the real Claude Code with their own account (`--type claude`) |
+| `ccgp --profile add\|list\|rm\|set\|unset` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type codex\|codex_api\|anthropic_compat`), profiles of the real Claude Code with their own account (`--type claude`); `set` / `unset` change one setting of a profile (`default_model`, `context_window`, `compact_percent`, `provider`) |
+| `ccgp --provider [NAME] [--json]` / `set\|unset NAME KEY [VALUE]` | Show the providers, or one in detail (base URL, key variable, login, proxy, peak hours, profiles); set or remove its `base_url` or `api_key_env` |
 | `ccgp --start` / `--stop` / `--restart` | Manage the background server |
 | `ccgp --status [--json]` | Show the server, paths and login state |
 | `ccgp --logs [-f] [-n N]` | Show the tail of the background server log, `-f` follows it |
@@ -167,7 +169,7 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
 | `ccgp --config reset` | Back up the config and write the default one |
 | `ccgp --connections [active N] [total N] [proxy URL\|off [provider NAME \| profile NAME]]` | Show or set the connections kept to each backend (default 7 active, 10 total) and the SOCKS5 / HTTP proxy: global, with a different one or none per provider or per profile (the nearest level wins) |
-| `ccgp --interactive` / `-i` | Full-screen interface to view, edit and add profiles and providers (settings, proxy, base URL) and their peak hours; needs a terminal, only the flag starts it ([interactive mode](docs/cli.md#interactive-mode)) |
+| `ccgp --interactive` / `-i` | Full-screen interface that does everything the commands do: profiles, providers (settings, proxy, sign-in), peak hours, connections, models, sessions, the server; needs a terminal, only the flag starts it. The commands and the interface cover each other, and a test keeps it so ([interactive mode](docs/cli.md#interactive-mode)) |
 | `ccgp --peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider: in them its profiles' requests are refused with a notice in the chat (`mon-fri 14:00-18:00`, in the provider's zone); `pause` works anyway for a while ([peak hours](docs/peak-hours.md)) |
 | `ccgp --update [--check]` | Update ccgp and ccgpy from the latest GitHub release (checksum verified) |
 | `ccgp --completion bash\|zsh\|powershell` | Print a shell completion script |

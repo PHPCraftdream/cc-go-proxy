@@ -35,6 +35,17 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- The command line and the interface cover each other, both ways, and a test keeps it so (`cmd/ccgp/parity_test.go`:
+  it crawls every screen and every command and compares what an edit leaves in `config.ktav` from both sides). New
+  commands: `ccgp --profile set|unset NAME KEY [VALUE]` (`default_model`, `context_window`, `compact_percent`,
+  `provider` to move a profile) and `ccgp --provider [NAME] [--json]` / `set|unset NAME KEY [VALUE]` (the providers,
+  one in detail, `base_url`, `api_key_env`), which until now existed only as fields of the interface. New screens in
+  `ccgp -i`: *Config and connections* (`active`, `total`, the global proxy, reset to the default), *Models*
+  (`--models`, `--models apply`, `--which`), *Sessions* (`--import`, `--export`, `--send`), *Server* (status, start,
+  stop, restart, log, doctor, version, update check and update), and in a provider's menu *log in*, *log in with a
+  device code* and *log out*. What a command does besides editing, a screen does by running that command; a sign-in or
+  an update gets the terminal. Only `--serve`, `--completion` and `--help` have no screen. Every menu item has an id
+  and every command a table of verbs (`command.verbs`) for the test.
 - A proxy per provider. The proxy settings now cascade global → provider → profile: a provider in config.ktav may have
   `proxy:` (a proxy URL, or `none` for a direct connection), and the nearest level that sets one **replaces** the
   ones above it whole, nothing is merged (a profile's `proxy` beats its provider's, the provider's beats

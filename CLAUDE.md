@@ -15,7 +15,7 @@ Guidance for Claude Code when working in this repository.
 | Path | Role |
 | --- | --- |
 | `cmd/ccgpy` | `ccgpy <profile> …`: runs the sibling `ccgp <profile> --dangerously-skip-permissions …`, nothing else |
-| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm`, `--connections` (active/total/proxy), `--peak` (peak hours of a provider, pause), `--interactive`/`-i` (Bubble Tea interface over the same editors: `interactive.go`, `tui.go`, `tui_screens.go`), `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
+| `cmd/ccgp` | CLI: `<profile>` launcher plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm/set/unset`, `--provider` (list, set/unset base_url and api_key_env), `--connections` (active/total/proxy of everybody, a provider or a profile), `--peak` (peak hours of a provider, pause), `--interactive`/`-i` (Bubble Tea interface that covers every command: `interactive.go`, `tui.go`, `tui_screens.go`, `tui_more.go`, `tui_run.go`), `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
 | `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`, `SetProviderPeakText`, `SetProfileKeyText`/`SetProviderKeyText`, `SetProfileProxyText`/`SetProviderProxyText`) with backup and loader validation; provider peak hours (`peak.go`: windows, zone, `PeakSchedule.At`; `peak_pause.go`: the pause file in creds) |
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
@@ -60,7 +60,13 @@ Guidance for Claude Code when working in this repository.
   in test fixtures uses `##`.
 - `ccgp --interactive` is a Bubble Tea model (`tui.go`, `tui_screens.go`): test it by sending `tea.KeyMsg`s to
   `Update` and reading `View`, never by starting a program (no terminal in CI). It must only change the config
-  through `config.EditFile` and the same editors the commands use.
+  through `config.EditFile` and the same editors the commands use; what a command does besides editing, a screen does
+  by running that command (`app.run`, `tui_run.go`; tests replace it with a recorder).
+- **The command line and the interface cover each other, both ways** (`cmd/ccgp/parity_test.go`). Adding either side
+  means adding the other in the same change: a command (or a verb: `command.verbs` in `commands.go`) needs a screen
+  item, a screen item (`menuItem.id`, required on every item) needs a command, and both go into `features()` in the
+  test, with a run that proves they do the same (the same file left behind, or the same command started). What cannot
+  be in the interface goes into `cliOnly` with its reason. Help, completion, README, `docs/cli.md` follow.
 - Windows finds a `ccgp.exe` in the current directory before `PATH`: a stale build in the repo root hides the
   installed one (it is git-ignored; `scripts\deploy.cmd` installs into `%USERPROFILE%\bin`).
 

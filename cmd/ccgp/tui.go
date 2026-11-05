@@ -43,6 +43,10 @@ type app struct {
 	pauses     *config.PeakPauses
 	now        func() time.Time
 
+	// run starts `ccgp args…` for the screens that do what a command does:
+	// with the terminal (login, update) or with its output caught and shown.
+	run func(title string, args []string, terminal bool) tea.Cmd
+
 	stack       []screen
 	msg, errMsg string
 	width       int
@@ -51,7 +55,7 @@ type app struct {
 }
 
 func newApp(store creds.Store, claudeBase string, now func() time.Time) (*app, error) {
-	a := &app{store: store, claudeBase: claudeBase, now: now, pauses: config.NewPeakPauses(store.Dir)}
+	a := &app{store: store, claudeBase: claudeBase, now: now, pauses: config.NewPeakPauses(store.Dir), run: runSelf}
 	if err := a.reload(); err != nil {
 		return nil, err
 	}
@@ -124,6 +128,28 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = m.Width, m.Height
+	case outputMsg:
+		a.msg, a.errMsg = "", ""
+		switch {
+		case m.text != "":
+			a.push(&viewScreen{title: m.title, text: m.text, tail: m.tail})
+			if m.err != nil {
+				a.errMsg = m.err.Error()
+			}
+		case m.err != nil:
+			a.errMsg = m.err.Error()
+		default:
+			a.msg = m.title + ": done"
+		}
+		_ = a.reload() // a command may have changed the config
+	case termDoneMsg:
+		a.msg, a.errMsg = "", ""
+		if m.err != nil {
+			a.errMsg = m.title + ": " + m.err.Error()
+		} else {
+			a.msg = m.title + ": done"
+		}
+		_ = a.reload()
 	case tea.KeyMsg:
 		if m.String() == "ctrl+c" {
 			a.quit = true
@@ -170,6 +196,10 @@ func (a *app) listRows() int {
 // ---- menu ----
 
 type menuItem struct {
+	// id names the item for the parity test (parity_test.go), which crawls every
+	// screen and ties each id path to a command line. An item made from data (a
+	// profile, a provider, a window) has the id of its kind.
+	id    string
 	label string
 	hot   string // a key that picks the item, besides its number
 	run   func(a *app) tea.Cmd
@@ -300,6 +330,7 @@ type input struct {
 	pos               int
 	err               string
 	submit            func(a *app, value string) (screen, error)
+	pending           tea.Cmd // set by submit: what to run once the input is gone
 }
 
 func newInput(head, label, hint, initial string, submit func(a *app, value string) (screen, error)) *input {
@@ -348,6 +379,9 @@ func (in *input) key(a *app, k tea.KeyMsg) tea.Cmd {
 		if next != nil {
 			a.push(next)
 		}
+		cmd := in.pending
+		in.pending = nil
+		return cmd
 	case tea.KeyEsc:
 		a.pop()
 	case tea.KeyLeft:
@@ -397,6 +431,7 @@ func (in *input) key(a *app, k tea.KeyMsg) tea.Cmd {
 type confirmScreen struct {
 	head, question string
 	yes            func(a *app) error
+	then           func(a *app) tea.Cmd // optional: a command to run after a yes that worked
 }
 
 func (c *confirmScreen) header(a *app) string { return c.head }
@@ -409,8 +444,14 @@ func (c *confirmScreen) key(a *app, k tea.KeyMsg) tea.Cmd {
 		if a.top() == screen(c) {
 			a.pop()
 		}
-		if err := c.yes(a); err != nil {
-			a.errMsg = err.Error()
+		if c.yes != nil {
+			if err := c.yes(a); err != nil {
+				a.errMsg = err.Error()
+				return nil
+			}
+		}
+		if c.then != nil {
+			return c.then(a)
 		}
 	case "n", "N", "esc", "enter":
 		a.pop()

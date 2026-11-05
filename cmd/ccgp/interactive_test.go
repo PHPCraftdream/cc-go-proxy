@@ -63,6 +63,7 @@ type tui struct {
 	cfgPath    string
 	claudeBase string
 	store      creds.Store
+	ran        []ran
 }
 
 func newTUI(t *testing.T, cfgText string) *tui {
@@ -79,8 +80,63 @@ func newTUI(t *testing.T, cfgText string) *tui {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.run = h.fakeRun
 	h.a = a
 	return h
+}
+
+// ran is a command the interface started: its arguments, and whether it had
+// the terminal.
+type ran struct {
+	args     []string
+	terminal bool
+}
+
+// fakeRun stands for runSelf: it records the command and answers at once.
+func (h *tui) fakeRun(title string, args []string, terminal bool) tea.Cmd {
+	h.ran = append(h.ran, ran{args: args, terminal: terminal})
+	return func() tea.Msg {
+		if terminal {
+			return termDoneMsg{title: title}
+		}
+		return outputMsg{title: title, text: "output of ccgp " + strings.Join(args, " ")}
+	}
+}
+
+// settle runs the command a key returned and gives its answer to the model,
+// as the program does.
+func (h *tui) settle(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch m := cmd().(type) {
+	case outputMsg, termDoneMsg:
+		h.a.Update(m)
+	}
+}
+
+// open opens items by their ids: "profile:zai" is the item of the id profile
+// whose label starts with zai. It fails when an item is not there.
+func (h *tui) open(path ...string) {
+	h.t.Helper()
+	for _, step := range path {
+		id, name, _ := strings.Cut(step, ":")
+		m, ok := h.a.top().(*menu)
+		if !ok {
+			h.t.Fatalf("the top screen is not a menu at %q:\n%s", step, h.view())
+		}
+		at := -1
+		for i, it := range m.items(h.a) {
+			if it.id == id && (name == "" || strings.Fields(it.label)[0] == name) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			h.t.Fatalf("no item %q on the screen:\n%s", step, h.view())
+		}
+		h.pick(at)
+	}
 }
 
 var (
@@ -99,15 +155,14 @@ var namedKeys = map[string]tea.KeyType{
 func (h *tui) press(keys ...string) {
 	h.t.Helper()
 	for _, k := range keys {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 		if typ, ok := namedKeys[k]; ok {
-			h.a.Update(tea.KeyMsg{Type: typ})
-			continue
+			msg = tea.KeyMsg{Type: typ}
+		} else if k == " " {
+			msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
 		}
-		if k == " " {
-			h.a.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
-			continue
-		}
-		h.a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+		_, cmd := h.a.Update(msg)
+		h.settle(cmd)
 	}
 }
 
@@ -177,7 +232,7 @@ func (h *tui) input() *input {
 
 func TestTUIMainMenu(t *testing.T) {
 	h := newTUI(t, uiConfig)
-	h.has("ccgp", h.cfgPath, "1 Profiles (3)", "2 Providers (3)", "3 Peak hours", "4 Quit", "enter or number select", "esc back")
+	h.has("ccgp", h.cfgPath, "1 Profiles (3)", "2 Providers (3)", "3 Peak hours", "4 Config and connections", "5 Models", "6 Sessions", "7 Server", "8 Quit", "enter or number select", "esc back")
 	h.press("down", "down", "enter")
 	h.has("Peak hours: which provider?")
 	h = newTUI(t, uiConfig)
@@ -186,7 +241,7 @@ func TestTUIMainMenu(t *testing.T) {
 		t.Error("the last item did not quit")
 	}
 
-	for _, k := range []string{"4", "esc", "q", "ctrl+c"} {
+	for _, k := range []string{"8", "esc", "q", "ctrl+c"} {
 		h := newTUI(t, uiConfig)
 		h.press(k)
 		if !h.a.quit {

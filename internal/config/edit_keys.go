@@ -15,6 +15,11 @@ var (
 	providerKeys = []string{"base_url", "api_key_env"}
 )
 
+// ProfileKeys and ProviderKeys are the scalar keys SetProfileKeyText and
+// SetProviderKeyText take.
+func ProfileKeys() []string  { return append([]string(nil), profileKeys...) }
+func ProviderKeys() []string { return append([]string(nil), providerKeys...) }
+
 func inList(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
