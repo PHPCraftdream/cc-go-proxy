@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,7 +28,28 @@ const (
 	// ProviderTypeClaude is the real Claude Code with its own login: nothing goes
 	// through the proxy, ccgp only keeps a clean config dir for the profile.
 	ProviderTypeClaude = "claude"
+	// ProviderTypeClaudeAPI is the real Claude Code on the Claude Platform with an API key
+	// of its own (and optionally another server): nothing goes through the proxy.
+	ProviderTypeClaudeAPI = "claude_api"
 )
+
+// OfficialAnthropicURL is the server of a claude_api provider without a base_url.
+const OfficialAnthropicURL = "https://api.anthropic.com"
+
+// IsOwnType reports whether a provider type runs the real Claude Code, so its
+// profiles do not go through ccgp (no URL token, models, proxy or peak hours).
+func IsOwnType(t string) bool {
+	return t == ProviderTypeClaude || t == ProviderTypeClaudeAPI
+}
+
+// EffectiveBaseURL is the server a provider talks to: its base_url, or for
+// claude_api without one the official Anthropic API.
+func (p *Provider) EffectiveBaseURL() string {
+	if p.BaseURL == "" && p.Type == ProviderTypeClaudeAPI {
+		return OfficialAnthropicURL
+	}
+	return p.BaseURL
+}
 
 // legacyTypeOpenAI is the former name of ProviderTypeCodexAPI.
 const legacyTypeOpenAI = "openai"
@@ -168,12 +190,19 @@ func (fc *fileConfig) validate() error {
 			if pr.BaseURL != "" || pr.APIKeyEnv != "" || len(pr.EffortMap) > 0 || pr.Proxy != "" {
 				return fmt.Errorf("provider %q: type %q takes no base_url, api_key_env, effort_map or proxy (it signs in inside Claude Code)", pr.Name, pr.Type)
 			}
+		case ProviderTypeClaudeAPI:
+			if len(pr.EffortMap) > 0 || pr.Proxy != "" {
+				return fmt.Errorf("provider %q: type %q takes no effort_map or proxy (Claude Code talks to the server itself)", pr.Name, pr.Type)
+			}
+			if u, err := url.Parse(pr.BaseURL); pr.BaseURL != "" && (err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
+				return fmt.Errorf("provider %q: base_url must be an http(s) URL, got %q", pr.Name, pr.BaseURL)
+			}
 		case ProviderTypeAnthropicCompat:
 			if pr.BaseURL == "" {
 				return fmt.Errorf("provider %q: base_url is required for type %q", pr.Name, pr.Type)
 			}
 		default:
-			return fmt.Errorf("provider %q: type must be %q, %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat, ProviderTypeClaude)
+			return fmt.Errorf("provider %q: type must be %q, %q, %q, %q or %q", pr.Name, ProviderTypeCodex, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat, ProviderTypeClaude, ProviderTypeClaudeAPI)
 		}
 		if err := validatePeak(pr); err != nil {
 			return err
@@ -207,8 +236,8 @@ func (fc *fileConfig) validate() error {
 		if !known {
 			return fmt.Errorf("profile %q: unknown provider %q", pf.Name, pf.Provider)
 		}
-		if ptype == ProviderTypeClaude && (pf.Proxy != "" || len(pf.Models) > 0 || pf.DefaultModel != "" || pf.ContextWindow != 0 || pf.CompactPercent != 0) {
-			return fmt.Errorf("profile %q: a %q profile does not go through ccgp, so proxy, models, default_model, context_window and compact_percent do not apply", pf.Name, ProviderTypeClaude)
+		if IsOwnType(ptype) && (pf.Proxy != "" || len(pf.Models) > 0 || pf.DefaultModel != "" || pf.ContextWindow != 0 || pf.CompactPercent != 0) {
+			return fmt.Errorf("profile %q: a %q profile does not go through ccgp, so proxy, models, default_model, context_window and compact_percent do not apply", pf.Name, ptype)
 		}
 		for j, r := range pf.Models {
 			if r.Match == "" || r.Model == "" {

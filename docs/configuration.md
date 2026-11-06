@@ -268,7 +268,7 @@ ccgp --profile rm codex2 [--yes] [--purge]
   (`--window N` sets the window, default 272000 — the command says so); without, the rules of the provider's
   first profile (by name) are copied. If the provider has no profile yet, the new one gets no rules and the
   command tells you to run `ccgp --models apply <name>` (codex and preset providers) or to add a `models` list.
-- `--type <codex|codex_api|anthropic_compat|claude>` [--base-url URL] creates a new backend (OpenRouter, Ollama, any
+- `--type <codex|codex_api|anthropic_compat|claude|claude_api>` [--base-url URL] creates a new backend (OpenRouter, Ollama, any
   Anthropic-compatible API). Without `--model`, a `codex` provider or one whose URL has a built-in preset gets
   an empty managed block, ready for `ccgp --models apply <name>`.
 - `--profile add` never signs in; it prints `run: ccgp <name>` — the launcher signs in on first start.
@@ -305,6 +305,42 @@ example one per Anthropic account:
   loader rejects them), and `--model`, `--window`, `--base-url`, `--models apply`, `--which`, `--login`, `--peak` and
   `--connections proxy … profile` do not apply to it.
 - `--profile rm work` keeps the directory (it holds the sign-in) unless `--purge` is given.
+
+### Profiles with an API key (`--type claude_api`)
+
+`ccgp --profile add api --type claude_api [--base-url URL]` makes a profile of the real Claude Code on the Claude Platform
+with an API key of its own. It is the profile of `--type claude` above (own `CLAUDE_CONFIG_DIR`, the same mirror, no proxy, no
+URL token) with these differences:
+
+- The key is saved by `ccgp --login api` (hidden input, owner-only in the creds directory), asked for at the first start
+  when none is saved, or read from the environment variable named by the provider's `api_key_env`. `ccgp` hands it to
+  `claude` as `ANTHROPIC_API_KEY`, for this profile only.
+- The server is the provider's `base_url`; absent, it is the official one, `https://api.anthropic.com`, and ccgp sets
+  nothing. A `base_url` is passed as `ANTHROPIC_BASE_URL` and must be an `http(s)` URL (the loader checks it).
+  `ccgp --provider set api base_url URL` and `unset` change it.
+- The parent's `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN` and the
+  Bedrock / Vertex / Foundry switches are dropped before the profile's own key and server are added.
+- `--login`, `--logout`, `--provider set base_url|api_key_env` apply to it; `models`, `default_model`, `context_window`,
+  `compact_percent`, `proxy`, `effort_map` and peak hours do not (the loader rejects them), nor do `--model`, `--window`,
+  `--models apply`, `--which`, `--peak` and `--connections proxy … provider|profile`.
+- `--profile rm api` leaves the key in the creds directory unless `--purge` is given.
+
+```
+providers: [
+    ## the official server, the key saved by `ccgp --login api`
+    {
+        name: api
+        type: claude_api
+    }
+    ## another server, the key from the environment
+    {
+        name: gw
+        type: claude_api
+        base_url: https://llm-gateway.example.com
+        api_key_env: GW_KEY
+    }
+]
+```
 
 ### Reserved profile names
 

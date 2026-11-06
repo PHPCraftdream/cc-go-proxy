@@ -71,7 +71,10 @@ func profileInfo(a *app, name string) string {
 	pr := a.cfg.Providers[pf.Provider]
 	var b strings.Builder
 	fmt.Fprintf(&b, "provider  %s (%s)\nlogin     %s", pf.Provider, pr.Type, loginState(a.store, pr))
-	if pr.Type == config.ProviderTypeClaude {
+	if config.IsOwnType(pr.Type) {
+		if pr.Type == config.ProviderTypeClaudeAPI {
+			fmt.Fprintf(&b, "\nserver    %s", pr.EffectiveBaseURL())
+		}
 		b.WriteString("\nthe real Claude Code: nothing goes through ccgp")
 		return b.String()
 	}
@@ -129,8 +132,22 @@ func profileMenu(name string) *menu {
 				a.push(removeMenu(name, len(a.stack)-1))
 				return nil
 			}}
-			if a.cfg.Providers[pf.Provider].Type == config.ProviderTypeClaude {
+			switch pr := a.cfg.Providers[pf.Provider]; pr.Type {
+			case config.ProviderTypeClaude:
 				return []menuItem{remove}
+			case config.ProviderTypeClaudeAPI:
+				// The key and the server belong to the provider, which is this profile's own.
+				return []menuItem{
+					{id: "base_url", label: fmt.Sprintf("%-16s %s", "base_url", dash(pr.BaseURL)), run: push(func() screen {
+						return editKeyInput(head, "base_url", "the server; empty: the official one ("+config.OfficialAnthropicURL+")", pr.BaseURL, func(text, v string) (string, error) {
+							return config.SetProviderKeyText(text, pr.Name, "base_url", v)
+						})
+					})},
+					{id: "login", label: "log in: save the API key", run: func(a *app) tea.Cmd {
+						return a.run("Log in to "+pr.Name, []string{"--login", pr.Name}, true)
+					}},
+					remove,
+				}
 			}
 			proxy := menuItem{
 				id: "proxy", label: fmt.Sprintf("%-16s %s", "proxy", dash(pf.Proxy)),
@@ -341,11 +358,11 @@ func chooseNameMenu(head string, names func(*config.Config) []string, next func(
 func backendKindMenu(w *wizard) *menu {
 	kind := func(label, typ string) menuItem {
 		return menuItem{id: "kind_" + typ, label: label, run: func(a *app) tea.Cmd {
-			w.opts.Type, w.base, w.claude = typ, backendNames[typ], typ == config.ProviderTypeClaude
+			w.opts.Type, w.base, w.claude = typ, backendNames[typ], config.IsOwnType(typ)
 			switch typ {
 			case config.ProviderTypeAnthropicCompat:
 				a.push(w.baseURLInput(true))
-			case config.ProviderTypeCodexAPI:
+			case config.ProviderTypeCodexAPI, config.ProviderTypeClaudeAPI:
 				a.push(w.baseURLInput(false))
 			default:
 				a.push(w.nameInput(a))
@@ -361,6 +378,7 @@ func backendKindMenu(w *wizard) *menu {
 				kind("codex_api: an OpenAI-compatible API with a key", config.ProviderTypeCodexAPI),
 				kind("anthropic_compat: an Anthropic-style endpoint (z.ai and others)", config.ProviderTypeAnthropicCompat),
 				kind("claude: the real Claude Code with an account of its own", config.ProviderTypeClaude),
+				kind("claude_api: the real Claude Code on the Claude Platform, with an API key of its own", config.ProviderTypeClaudeAPI),
 			}
 		},
 	}
@@ -368,7 +386,10 @@ func backendKindMenu(w *wizard) *menu {
 
 func (w *wizard) baseURLInput(required bool) *input {
 	hint := "e.g. https://api.z.ai/api/anthropic"
-	if !required {
+	switch {
+	case w.opts.Type == config.ProviderTypeClaudeAPI:
+		hint = "optional; empty: the official server, " + config.OfficialAnthropicURL
+	case !required:
 		hint = "optional; empty: https://api.openai.com/v1"
 	}
 	return newInput("Add a backend", "base URL", hint, "", func(a *app, v string) (screen, error) {
@@ -430,6 +451,9 @@ func providerMenu(name string) *menu {
 			items := []menuItem{setKey("base_url", pr.BaseURL, "the endpoint")}
 			if pr.Type != config.ProviderTypeCodex {
 				items = append(items, setKey("api_key_env", pr.APIKeyEnv, "the environment variable that holds the API key"))
+			}
+			if pr.Type == config.ProviderTypeClaudeAPI {
+				return append(items, loginItems(name, pr)...) // no proxy, no peak hours
 			}
 			proxy := menuItem{
 				id: "proxy", label: fmt.Sprintf("%-14s %s", "proxy", dash(pr.Proxy)),

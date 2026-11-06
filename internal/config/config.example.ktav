@@ -38,6 +38,9 @@ connections.total: 10
 ##     { name: work   type: claude }       (one object per line group, as below)
 ## and to profiles: { name: work   provider: work }. Sign in inside it with /login.
 ## It takes no base_url, models, proxy, context_window or compact_percent.
+## The same on the Claude Platform with an API key of its own: `ccgp --profile add api --type claude_api`
+## (`{ name: api   type: claude_api }`; the key: `ccgp --login api`; the server is the official one
+## unless the provider has a `base_url`). It takes no models, proxy, context_window or compact_percent.
 providers: [
     ## "codex": your ChatGPT subscription via OAuth (`ccgp --login codex`, or `--device` for device code).
     {

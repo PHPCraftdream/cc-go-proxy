@@ -35,6 +35,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- Profiles of the real Claude Code on the Claude Platform, with an API key of their own: `ccgp --profile add api
+  --type claude_api [--base-url URL]` (provider type `claude_api`). It is a `claude` profile (own Claude Code
+  directory, no proxy, runs next to the others without touching them) that gets a key instead of a subscription login:
+  `ccgp --login api` saves it (or the first start asks, or `api_key_env` names a variable) and ccgp hands it to `claude`
+  as `ANTHROPIC_API_KEY`, for this profile only; the server is the official one unless the provider has a `base_url`
+  (`ccgp --provider set api base_url URL`; passed as `ANTHROPIC_BASE_URL`). The parent's own `ANTHROPIC_*` variables are
+  still dropped. The interface has it under Profiles → add (and the server and the key under the profile). Models,
+  proxy, effort map and peak hours do not apply to it.
 - `--fork` and `--force` for `--send`, `--import` and `--export`: a session that was continued on both sides used to
   be skipped with `diverged` and no way out (`ccgp <profile> --resume` then opened the old copy). `--fork` writes the
   source as a new session next to the old one (a new id made from the original's, the same on every run, so a rerun

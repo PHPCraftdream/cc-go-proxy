@@ -20,7 +20,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
 | `internal/home` | where ccgp keeps its files: default config/cache dirs, or one home directory (`--home <dir>`, `--local` = `./.ccgp`, `CCGP_HOME`, a `.ccgp` dir in the current directory) for config, creds, Claude dirs and log; flag parsing shared with `ccgpy` |
-| `internal/claudehome` | the isolated Claude Code dir of a profile: `Prepare` (proxy profiles: mirror + seeded `.claude.json`, credentials removed) and `PrepareOwn` (profiles of type `claude`, the real Claude Code: mirror only, no account state, the user's own login kept) |
+| `internal/claudehome` | the isolated Claude Code dir of a profile: `Prepare` (proxy profiles: mirror + seeded `.claude.json`, credentials removed) and `PrepareOwn` (profiles of type `claude`, the real Claude Code: mirror only, no account state, the user's own login kept; also `claude_api`, which gets an API key and optional server in `launchOwn`/`apiEnv`; `config.IsOwnType` tells both) |
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client (large bodies zstd-compressed with a plain fallback, `compress.go`) |
@@ -39,6 +39,8 @@ Guidance for Claude Code when working in this repository.
   and the refresh after `ccgp --login` (only the marked `ccgp:managed-models` block) and `ccgp --config reset` (default
   template, old file backed up). Secrets go through `securefile.WriteFile`.
 - Rotated OAuth refresh tokens are persisted before use (`Session.refreshLocked`).
+- The API key of a `claude_api` profile goes only into the environment of that profile's `claude` process, after the
+  parent's `ANTHROPIC_*` / OAuth / cloud-auth variables were dropped (`ownEnv`); never into the proxy, a log or a listing.
 - Codex backend calls happen before streaming starts so upstream HTTP status reaches the client.
 - The user's own Claude Code dir is only read, except `ccgp --send ... claude` / `ccgp --export`, which may add or
   extend files under `projects/` (append-only rule in `sessions.syncFile`; diverged data is left alone, unless `--fork` writes it under a new id or

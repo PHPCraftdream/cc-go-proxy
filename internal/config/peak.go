@@ -389,7 +389,7 @@ func (s *PeakSchedule) ZoneName() string {
 
 // validatePeak checks a provider's peak settings for the loader.
 func validatePeak(pr Provider) error {
-	if pr.Type == ProviderTypeClaude {
+	if IsOwnType(pr.Type) {
 		if len(pr.Peak) > 0 || pr.PeakTZ != "" {
 			return fmt.Errorf("provider %q: type %q takes no peak hours (it does not go through ccgp)", pr.Name, pr.Type)
 		}

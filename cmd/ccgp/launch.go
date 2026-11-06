@@ -31,7 +31,7 @@ func launch(profile string, claudeArgs []string) error {
 		return fmt.Errorf("unknown profile %q (configured: %s)", profile, names(cfg.Profiles))
 	}
 	if isClaudeProfile(cfg, pf) {
-		return launchOwn(profile, claudeArgs)
+		return launchOwn(cfg, profile, claudeArgs)
 	}
 
 	token := cfg.Token // env-only mode
@@ -88,29 +88,67 @@ func runClaude(claude string, args, env []string) error {
 	return nil
 }
 
-// launchOwn runs the real Claude Code for a profile of type claude: no server,
-// no proxy, no token. The profile's config dir gets the shared settings only
-// (see claudehome.PrepareOwn); the account is signed in by Claude Code itself.
-func launchOwn(profile string, claudeArgs []string) error {
+// launchOwn runs the real Claude Code for a profile of type claude or claude_api:
+// no server, no proxy, no token. The profile's config dir gets the shared
+// settings only (see claudehome.PrepareOwn). A claude profile is signed in by
+// Claude Code itself; a claude_api profile gets its API key (and server) from ccgp.
+func launchOwn(cfg *config.Config, profile string, claudeArgs []string) error {
 	claude, err := exec.LookPath("claude")
 	if err != nil {
 		return errors.New("claude not found in PATH")
+	}
+	pr := cfg.Providers[cfg.Profiles[profile].Provider]
+	var extra []string
+	if pr.Type == config.ProviderTypeClaudeAPI {
+		if extra, err = apiEnv(cfg, pr); err != nil {
+			return err
+		}
 	}
 	configDir, err := prepareOwnHome(profile)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(configDir, ".claude.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(configDir, ".claude.json")); err != nil && pr.Type == config.ProviderTypeClaude {
 		fmt.Fprintf(os.Stderr, "ccgp: new Claude profile %q: sign in inside Claude Code (/login); nothing of your own login is copied\n", profile)
 	}
-	return runClaude(claude, claudeArgs, ownEnv(os.Environ(), configDir))
+	return runClaude(claude, claudeArgs, ownEnv(os.Environ(), configDir, extra...))
+}
+
+// apiEnv is the key and server of a claude_api provider for Claude Code's
+// environment. The key is asked for when none is saved; the server is set only
+// when the provider names one (otherwise Claude Code uses the official one).
+func apiEnv(cfg *config.Config, pr *config.Provider) ([]string, error) {
+	if err := login(cfg, pr.Name, false, false); err != nil {
+		return nil, err
+	}
+	key := ""
+	if pr.APIKeyEnv != "" {
+		key = os.Getenv(pr.APIKeyEnv)
+	} else {
+		store, err := credsStore()
+		if err != nil {
+			return nil, err
+		}
+		if key, err = store.APIKey(pr.Name); err != nil {
+			return nil, err
+		}
+	}
+	if key == "" {
+		return nil, fmt.Errorf("provider %q has no API key (ccgp --login %s)", pr.Name, pr.Name)
+	}
+	env := []string{"ANTHROPIC_API_KEY=" + key}
+	if pr.BaseURL != "" {
+		env = append(env, "ANTHROPIC_BASE_URL="+pr.BaseURL)
+	}
+	return env, nil
 }
 
 // ownEnv points Claude Code at the profile's config dir and drops every
-// endpoint/credential variable of the parent, so the profile's account is the
-// only one it can use.
-func ownEnv(env []string, configDir string) []string {
-	out := make([]string, 0, len(env)+1)
+// endpoint/credential variable of the parent, so the profile's own account or
+// key is the only one it can use; extra (the profile's key and server) is added
+// after the drop.
+func ownEnv(env []string, configDir string, extra ...string) []string {
+	out := make([]string, 0, len(env)+1+len(extra))
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
 		if claudehome.IsAuthEnv(k) || strings.EqualFold(k, "CLAUDE_CONFIG_DIR") {
@@ -118,6 +156,7 @@ func ownEnv(env []string, configDir string) []string {
 		}
 		out = append(out, kv)
 	}
+	out = append(out, extra...)
 	return append(out, "CLAUDE_CONFIG_DIR="+configDir)
 }
 

@@ -48,7 +48,7 @@ func profileNames(cfg *config.Config) []string { return sortedKeys(cfg.Profiles)
 func providerNames(cfg *config.Config) []string {
 	var out []string
 	for _, n := range sortedKeys(cfg.Providers) {
-		if cfg.Providers[n].Type != config.ProviderTypeClaude {
+		if !config.IsOwnType(cfg.Providers[n].Type) {
 			out = append(out, n)
 		}
 	}
@@ -69,7 +69,7 @@ func profilesOf(cfg *config.Config, provider string) []string {
 // backendNames are the default profile names for a new backend of each type.
 var backendNames = map[string]string{
 	config.ProviderTypeCodex: "codex", config.ProviderTypeCodexAPI: "codex_api",
-	config.ProviderTypeAnthropicCompat: "custom", config.ProviderTypeClaude: "work",
+	config.ProviderTypeAnthropicCompat: "custom", config.ProviderTypeClaude: "work", config.ProviderTypeClaudeAPI: "api",
 }
 
 func dash(s string) string {

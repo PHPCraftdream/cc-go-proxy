@@ -64,6 +64,13 @@ through the proxy, and the directory is created clean: no `.claude.json`, creden
 own Claude Code, only the settings and tooling listed under [configuration](configuration.md#profiles-of-the-real-claude-code---type-claude).
 The parent's endpoint and credential variables are dropped before `claude` starts.
 
+A profile of type `claude_api` (`ccgp --profile add api --type claude_api`) holds an Anthropic API key that ccgp does
+know: it is saved owner-only in the creds directory by `ccgp --login api` (or read from the variable named by `api_key_env`)
+and given to `claude` as `ANTHROPIC_API_KEY`, in the environment of that one process, after the parent's own credential
+variables were dropped, so no profile sees another's key. It never goes through the proxy or the log, `--profile list`
+and `--provider` show only whether a key exists, and `--profile rm` leaves it in place until `--purge`. A `base_url` of the
+provider is where `claude` sends that key: set it only to a server you trust.
+
 ## Third-party terms
 
 Using a ChatGPT subscription through a third-party client is subject to OpenAI's terms. Anthropic's terms

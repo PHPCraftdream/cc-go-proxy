@@ -236,6 +236,9 @@ func checkBackends(env *doctorEnv, cfg *config.Config) []check {
 	var checks []check
 	for _, name := range sortedKeys(cfg.Providers) {
 		pr := cfg.Providers[name]
+		if config.IsOwnType(pr.Type) {
+			continue // Claude Code talks to the server itself, not through ccgp's proxy settings
+		}
 		u := pr.BaseURL
 		if u == "" && pr.Type == config.ProviderTypeCodex {
 			u = codex.DefaultBaseURL

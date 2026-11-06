@@ -32,7 +32,9 @@ ccgpy codex                    # same, with every permission prompt off (--dange
   Several logins are supported: `ccgp --profile add` clones a profile with its own login (a second ChatGPT account),
   adds a profile to an existing login, or wires up a new backend. `--type claude` makes a profile of the real Claude
   Code (no proxy): a clean config directory of its own and its own sign-in, so you can keep several Claude accounts
-  ([details](docs/configuration.md#profiles-of-the-real-claude-code---type-claude)).
+  ([details](docs/configuration.md#profiles-of-the-real-claude-code---type-claude)). `--type claude_api` is the same with
+  an API key of the Claude Platform of its own and a server you can set, the official one by default
+  ([details](docs/configuration.md#profiles-with-an-api-key---type-claude_api)).
 - **Locked down.** Every request needs `/call/<token>/…`; the server listens on loopback; secrets are owner-only on disk.
 - **Your Claude credentials stay out.** Each profile runs Claude Code in its own config directory with your agents,
   skills, commands and plugins copied in, but never an official login or API key.
@@ -122,6 +124,11 @@ Several Claude accounts, each clean and separate (no proxy, nothing of your own 
 `ccgp --profile add work --type claude`, then `ccgp work` and `/login` inside. Details:
 [profiles of the real Claude Code](docs/configuration.md#profiles-of-the-real-claude-code---type-claude).
 
+A Claude profile on the Claude Platform with an API key of its own, next to the others: `ccgp --profile add api --type
+claude_api`, `ccgp --login api` (the key), then `ccgp api`. The server is the official one; another:
+`--base-url https://…` or `ccgp --provider set api base_url https://…`. Details:
+[profiles with an API key](docs/configuration.md#profiles-with-an-api-key---type-claude_api).
+
 Bring a conversation along: `cd` into the project and `ccgp --import codex` (your Claude Code's latest sessions of this
 directory into profile `codex`), then `ccgp codex -c`. A proxy profile that has none of this directory's sessions gets
 the latest one by itself on its first start. Details: [sessions](docs/sessions.md).
@@ -161,7 +168,7 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --send <from> <to> [count] [--fork\|--force]` | Copy the latest sessions (default 10) of the current directory between two profiles or `claude` (your own Claude Code). A session continued on both sides is skipped; `--fork` keeps both versions, `--force` replaces the destination (the old file is kept) |
 | `ccgp --import <profile> [count] [--fork\|--force]` | Alias of `ccgp --send claude <profile>` |
 | `ccgp --export <profile> [count] [--fork\|--force]` | Alias of `ccgp --send <profile> claude` |
-| `ccgp --profile add\|list\|rm\|set\|unset` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type codex\|codex_api\|anthropic_compat`), profiles of the real Claude Code with their own account (`--type claude`); `set` / `unset` change one setting of a profile (`default_model`, `context_window`, `compact_percent`, `provider`) |
+| `ccgp --profile add\|list\|rm\|set\|unset` | Manage profiles (and their providers) in the config: new logins (`--like`), profiles on an existing login (`--provider`), new backends (`--type codex\|codex_api\|anthropic_compat`), profiles of the real Claude Code with their own account (`--type claude`) or API key (`--type claude_api`); `set` / `unset` change one setting of a profile (`default_model`, `context_window`, `compact_percent`, `provider`) |
 | `ccgp --provider [NAME] [--json]` / `set\|unset NAME KEY [VALUE]` | Show the providers, or one in detail (base URL, key variable, login, proxy, peak hours, profiles); set or remove its `base_url` or `api_key_env` |
 | `ccgp --start` / `--stop` / `--restart` | Manage the background server |
 | `ccgp --status [--json]` | Show the server, paths and login state |

@@ -65,11 +65,15 @@ with --like has a provider of the same name).
              asks for an API key
   claude     nothing to do here: start the profile (ccgp <profile>) and sign
              in inside Claude Code with /login
+  claude_api asks for the Claude Platform API key (or reads api_key_env);
+             ccgp passes it to Claude Code as ANTHROPIC_API_KEY, for this
+             profile only
 
 Examples:
   ccgp --login codex
   ccgp --login codex --device
   ccgp --login zai
+  ccgp --login api
 `,
 	"--which": `ccgp --which <profile> <model> [--json]
 
@@ -255,7 +259,12 @@ validated with the real loader and keeps a config.ktav.bak-<time> backup.
   add <name> --type claude         the real Claude Code with its own login,
                                    nothing through ccgp; only settings, skills
                                    and CLAUDE.md are copied, no ids, no tokens
-      --like, --provider and --type (not claude) accept [--model M [--window N]]:
+  add <name> --type claude_api [--base-url URL]
+                                   the real Claude Code on the Claude Platform
+                                   with an API key of its own (ccgp --login
+                                   <name>, or asked at the first start); the
+                                   server is the official one unless --base-url
+      --like, --provider and --type (not claude, claude_api) accept [--model M [--window N]]:
       one catch-all rule; without it the rules of the source are copied
   list [--json]                    profiles, providers, login state, Claude dirs
   rm <name> [--yes] [--purge]      remove a profile (and its provider when
@@ -276,6 +285,8 @@ Examples:
   ccgp --profile add codex-alt --provider codex
   ccgp --profile add myai --type anthropic_compat --base-url https://example.internal/api --model my-model
   ccgp --profile add work --type claude
+  ccgp --profile add api --type claude_api
+  ccgp --profile add gw --type claude_api --base-url https://llm-gateway.example.com
   ccgp --profile list --json
   ccgp --profile set zai default_model glm-5.3-flash
   ccgp --profile set zai context_window 1000000
@@ -357,7 +368,8 @@ field and nothing is written.
                add one:
                - another account of the kind a profile has (--profile add --like)
                - another profile on a login that exists (--provider)
-               - a new backend: codex, codex_api, anthropic_compat, claude (--type)
+               - a new backend: codex, codex_api, anthropic_compat, claude,
+                 claude_api (--type)
   Providers    list them (type, profiles, peak hours); open one to see its
                base_url, api_key_env, proxy, login, effort_map, peak hours and
                profiles; set base_url, api_key_env and proxy (for all its

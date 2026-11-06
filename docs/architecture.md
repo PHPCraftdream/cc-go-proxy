@@ -15,7 +15,9 @@ token → prepare the isolated Claude Code config directory → run `claude` wit
 
 A profile of type `claude` takes a shorter path: no server, token or sign-in by ccgp. It prepares a clean config
 directory (`claudehome.PrepareOwn`: the shared settings and tooling only, no account state) and runs `claude` with
-that `CLAUDE_CONFIG_DIR` and the parent's credential variables removed; Claude Code talks to Anthropic itself.
+that `CLAUDE_CONFIG_DIR` and the parent's credential variables removed; Claude Code talks to Anthropic itself. A profile
+of type `claude_api` takes the same path and adds `ANTHROPIC_API_KEY` (its saved key, or the one in `api_key_env`) and,
+if the provider has a `base_url`, `ANTHROPIC_BASE_URL` (`launchOwn` / `apiEnv`).
 
 Where ccgp keeps its files (config, creds, Claude dirs, log) is decided once at start by `internal/home`: the default
 user dirs, or one home directory (`--local`, `--home <dir>`, `CCGP_HOME`, a `.ccgp` directory in the current

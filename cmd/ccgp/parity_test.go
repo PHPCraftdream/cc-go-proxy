@@ -58,7 +58,7 @@ func under(prefixes []string, tail string) []string {
 
 func backendKinds(prefix string) []string {
 	var out []string
-	for _, k := range []string{"codex", "codex_api", "anthropic_compat", "claude"} {
+	for _, k := range []string{"codex", "codex_api", "anthropic_compat", "claude", "claude_api"} {
 		out = append(out, prefix+"/kind_"+k)
 	}
 	return out
@@ -77,7 +77,7 @@ func features() []feature {
 		{[]string{"--profile set provider"}, []string{"profiles/profile/move/provider"}},
 
 		{[]string{"--provider"}, []string{"providers", "providers/provider"}},
-		{[]string{"--provider set base_url", "--provider unset base_url"}, []string{"providers/provider/base_url"}},
+		{[]string{"--provider set base_url", "--provider unset base_url"}, []string{"providers/provider/base_url", "profiles/profile/base_url"}},
 		{[]string{"--provider set api_key_env", "--provider unset api_key_env"}, []string{"providers/provider/api_key_env"}},
 
 		{[]string{"--connections"}, []string{"config"}},
@@ -101,7 +101,7 @@ func features() []feature {
 		{[]string{"--which"}, []string{"models/profile/which"}},
 		{[]string{"--config reset"}, []string{"config/reset"}},
 
-		{[]string{"--login"}, []string{"providers/provider/login"}},
+		{[]string{"--login"}, []string{"providers/provider/login", "profiles/profile/login"}},
 		{[]string{"--login --device"}, []string{"providers/provider/login_device"}},
 		{[]string{"--logout"}, []string{"providers/provider/logout"}},
 
@@ -181,6 +181,10 @@ providers: [
         name: work
         type: claude
     }
+    {
+        name: api
+        type: claude_api
+    }
 ]
 
 profiles: [
@@ -195,6 +199,10 @@ profiles: [
     {
         name: work
         provider: work
+    }
+    {
+        name: api
+        provider: api
     }
     {
         name: zai
@@ -474,6 +482,8 @@ func editRuns() []editRun {
 		{[]string{"--provider unset base_url"}, []string{"--provider", "unset", "oai", "base_url"}, nil, emptied("providers", "provider:oai", "base_url")},
 		{[]string{"--provider set api_key_env"}, []string{"--provider", "set", "oai", "api_key_env", "OAI_KEY"}, nil, field([]string{"providers", "provider:oai", "api_key_env"}, "OAI_KEY")},
 		{[]string{"--provider unset api_key_env"}, []string{"--provider", "unset", "zai", "api_key_env"}, nil, emptied(zaiProvider("api_key_env")...)},
+		{[]string{"--provider set base_url"}, []string{"--provider", "set", "api", "base_url", "https://gw.example"}, nil, field([]string{"profiles", "profile:api", "base_url"}, "https://gw.example")},
+		{[]string{"--provider set base_url"}, []string{"--provider", "set", "api", "base_url", "https://gw.example"}, nil, field([]string{"providers", "provider:api", "base_url"}, "https://gw.example")},
 
 		{[]string{"--peak set"}, []string{"--peak", "zai", "set", "sat,sun", "10:00-12:00"}, nil, field(peakZai("set"), "sat,sun 10:00-12:00")},
 		{[]string{"--peak add"}, []string{"--peak", "zai", "add", "sat,sun", "10:00-12:00"}, nil, func(h *tui) { h.open(peakZai("add")...); h.typ("sat,sun 10:00-12:00"); h.press("enter") }},
@@ -490,6 +500,13 @@ func editRuns() []editRun {
 			addFlow([]string{"profiles", "add", "add_type", "kind_anthropic_compat"}, "neo", "https://x.example/anthropic")},
 		{[]string{"--profile add --type"}, []string{"--profile", "add", "neo", "--type", "codex_api", "--base-url", "https://x.example/v1"}, nil,
 			addFlow([]string{"providers", "add", "kind_codex_api"}, "neo", "https://x.example/v1")},
+		{[]string{"--profile add --type"}, []string{"--profile", "add", "neo", "--type", "claude_api", "--base-url", "https://x.example"}, nil,
+			func(h *tui) {
+				h.open("profiles", "add", "add_type", "kind_claude_api")
+				h.typ("https://x.example")
+				h.press("enter")
+				replaceAndEnter(h, "neo") // no model step: a Claude profile has no rules
+			}},
 		{[]string{"--profile rm"}, []string{"--profile", "rm", "zai2", "--yes"}, nil, func(h *tui) { h.open("profiles", "profile:zai2", "rm", "rm_keep") }},
 		{[]string{"--profile rm"}, []string{"--profile", "rm", "zai2", "--yes", "--purge"}, nil, func(h *tui) { h.open("profiles", "profile:zai2", "rm", "rm_purge") }},
 	}
@@ -618,6 +635,7 @@ func cmdRuns() []cmdRun {
 		{[]string{"--login"}, []string{"--login", "codex"}, true, press([]string{"providers", "provider:codex", "login"})},
 		{[]string{"--login --device"}, []string{"--login", "codex", "--device"}, true, press([]string{"providers", "provider:codex", "login_device"})},
 		{[]string{"--login"}, []string{"--login", "zai"}, true, press([]string{"providers", "provider:zai", "login"})},
+		{[]string{"--login"}, []string{"--login", "api"}, true, press([]string{"profiles", "profile:api", "login"})},
 		{[]string{"--logout"}, []string{"--logout", "codex", "--yes"}, false, press([]string{"providers", "provider:codex", "logout"}, "y")},
 
 		{[]string{"--import"}, []string{"--import", "zai"}, false, typed([]string{"sessions", "import", "name:zai", "copy"}, "")},

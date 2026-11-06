@@ -35,7 +35,7 @@ type profileAddOpts struct {
 // profileCmd implements `ccgp --profile <add|list|rm>`.
 func profileCmd(cfg *config.Config, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge] | ccgp --profile set <name> <key> <value> | ccgp --profile unset <name> <key>")
+		return errors.New("usage: ccgp --profile add <name> (--like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude|claude_api>) | ccgp --profile list | ccgp --profile rm <name> [--yes] [--purge] | ccgp --profile set <name> <key> <value> | ccgp --profile unset <name> <key>")
 	}
 	if cfg.IsEnvMode() {
 		return errors.New("ccgp --profile needs config.ktav (env-only mode has a single implicit profile)")
@@ -159,7 +159,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 	}
 	if chosen != 1 {
-		return errors.New("usage: ccgp --profile add <name> --like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude> [--base-url URL] [--model M [--window N]] (exactly one of --like, --provider, --type)")
+		return errors.New("usage: ccgp --profile add <name> --like <profile> | --provider <provider> | --type <codex|codex_api|anthropic_compat|claude|claude_api> [--base-url URL] [--model M [--window N]] (exactly one of --like, --provider, --type)")
 	}
 
 	data, err := os.ReadFile(cfgPath)
@@ -200,8 +200,8 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		if !ok {
 			return fmt.Errorf("unknown provider %q (configured: %s)", opts.Provider, names(cfg.Providers))
 		}
-		if pr.Type == config.ProviderTypeClaude {
-			return fmt.Errorf("provider %q is a Claude profile: every Claude account is its own profile (ccgp --profile add <name> --type claude)", opts.Provider)
+		if config.IsOwnType(pr.Type) {
+			return fmt.Errorf("provider %q is a Claude profile: every Claude account and every API key is its own profile (ccgp --profile add <name> --type %s)", opts.Provider, pr.Type)
 		}
 		providerName, providerType, providerURL = opts.Provider, pr.Type, pr.BaseURL
 		if !opts.HasModel {
@@ -223,12 +223,16 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 			if opts.BaseURL != "" || opts.HasModel || opts.HasWindow {
 				return fmt.Errorf("--type %s goes straight to Claude: --base-url, --model and --window do not apply", opts.Type)
 			}
+		case config.ProviderTypeClaudeAPI:
+			if opts.HasModel || opts.HasWindow {
+				return fmt.Errorf("--type %s goes straight to Claude: --model and --window do not apply", opts.Type)
+			}
 		default:
-			return fmt.Errorf("--type must be %q, %q, %q or %q", config.ProviderTypeCodex, config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat, config.ProviderTypeClaude)
+			return fmt.Errorf("--type must be %q, %q, %q, %q or %q", config.ProviderTypeCodex, config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat, config.ProviderTypeClaude, config.ProviderTypeClaudeAPI)
 		}
 		providerName, providerType, providerURL = opts.Name, opts.Type, opts.BaseURL
 		prov = &config.ProviderSpec{Name: opts.Name, Type: opts.Type, BaseURL: opts.BaseURL}
-		if p, ok := preset.ForBaseURL(opts.BaseURL); ok {
+		if p, ok := preset.ForBaseURL(opts.BaseURL); ok && !config.IsOwnType(opts.Type) {
 			prov.EffortMap = p.EffortMap
 		}
 	}
@@ -244,7 +248,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 		rules = []config.ModelRule{{Match: "*", Model: opts.Model, ContextWindow: window}}
 	}
-	readyForApply := !opts.HasModel && len(rules) == 0 &&
+	readyForApply := !opts.HasModel && len(rules) == 0 && !config.IsOwnType(providerType) &&
 		(providerType == config.ProviderTypeCodex || hasPreset)
 
 	name := opts.Name
@@ -280,6 +284,18 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		return err
 	}
 
+	if providerType == config.ProviderTypeClaudeAPI {
+		server := providerURL
+		if server == "" {
+			server = config.OfficialAnthropicURL + " (the official one)"
+		}
+		_, _ = fmt.Fprintf(w, "created Claude API profile %q: the real Claude Code with an API key of its own, server %s, nothing goes through ccgp\n", name, server)
+		if backup != "" {
+			_, _ = fmt.Fprintf(w, "backup: %s\n", backup)
+		}
+		_, _ = fmt.Fprintf(w, "run: ccgp %s   (asks for the API key on first start; or set it now: ccgp --login %s; only settings, CLAUDE.md, skills and agents are copied from your own Claude Code)\n", name, name)
+		return nil
+	}
 	if providerType == config.ProviderTypeClaude {
 		_, _ = fmt.Fprintf(w, "created Claude profile %q: the real Claude Code with its own login, nothing goes through ccgp\n", name)
 		if backup != "" {
@@ -330,7 +346,7 @@ func buildProfileRows(cfg *config.Config, store creds.Store, claudeBase string) 
 		pf := cfg.Profiles[name]
 		pr := cfg.Providers[pf.Provider]
 		mainModel := "-"
-		if m, ok := (&config.Config{ModelRules: pf.Models, DefaultModel: pf.DefaultModel}).ResolveModel("sonnet"); ok && pr.Type != config.ProviderTypeClaude {
+		if m, ok := (&config.Config{ModelRules: pf.Models, DefaultModel: pf.DefaultModel}).ResolveModel("sonnet"); ok && !config.IsOwnType(pr.Type) {
 			mainModel = m
 		}
 		claudeDir := false
@@ -443,7 +459,7 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 		return fmt.Errorf("drop the URL token of %q: %w", opts.Name, err)
 	}
 	providerRemoved := refs == 1
-	own := isClaudeProfile(cfg, pf)
+	own := cfg.Providers[provider].Type == config.ProviderTypeClaude // the login lives in the Claude dir
 	if providerRemoved {
 		// RemoveProfileText already dropped the provider object from the config.
 		delete(cfg.Providers, provider)
@@ -494,8 +510,8 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 }
 
 // isClaudeProfile reports whether pf runs the real Claude Code (provider type
-// claude) and so does not go through ccgp.
+// claude or claude_api) and so does not go through ccgp.
 func isClaudeProfile(cfg *config.Config, pf *config.Profile) bool {
 	pr := cfg.Providers[pf.Provider]
-	return pr != nil && pr.Type == config.ProviderTypeClaude
+	return pr != nil && config.IsOwnType(pr.Type)
 }

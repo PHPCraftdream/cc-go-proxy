@@ -104,9 +104,9 @@ func providerRows(cfg *config.Config, store creds.Store, pauses *config.PeakPaus
 	var rows []providerRow
 	for _, name := range sortedKeys(cfg.Providers) {
 		pr := cfg.Providers[name]
-		row := providerRow{Name: name, Type: pr.Type, BaseURL: pr.BaseURL, APIKeyEnv: pr.APIKeyEnv,
+		row := providerRow{Name: name, Type: pr.Type, BaseURL: pr.EffectiveBaseURL(), APIKeyEnv: pr.APIKeyEnv,
 			Login: loginState(store, pr), Profiles: profilesOf(cfg, name)}
-		if pr.Type != config.ProviderTypeClaude {
+		if !config.IsOwnType(pr.Type) {
 			row.Proxy, row.ProxyOwn = cfg.ProviderProxy(name).String(), pr.Proxy != ""
 			row.PeakHours = peakSummary(pr, name, now, pauses)
 		}

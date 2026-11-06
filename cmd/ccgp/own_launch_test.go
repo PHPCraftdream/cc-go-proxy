@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -195,7 +196,7 @@ func TestHelpAndCompletionKnowClaudeType(t *testing.T) {
 			t.Errorf("--type does not offer %q: %q", want, got)
 		}
 	}
-	if got := completeWords([]string{"ccgp", "--profile", "add", "x", "--type", "cl"}, testNames); len(got) != 1 || got[0] != "claude" {
+	if got := completeWords([]string{"ccgp", "--profile", "add", "x", "--type", "cl"}, testNames); !reflect.DeepEqual(got, []string{"claude", "claude_api"}) {
 		t.Errorf("--type cl = %q", got)
 	}
 }

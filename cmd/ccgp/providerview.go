@@ -20,10 +20,14 @@ func providerText(cfg *config.Config, store creds.Store, pauses *config.PeakPaus
 	var b strings.Builder
 	fmt.Fprintf(&b, "type         %s\n", pr.Type)
 	if pr.Type != config.ProviderTypeClaude {
-		fmt.Fprintf(&b, "base_url     %s\napi_key_env  %s\n", dash(pr.BaseURL), dash(pr.APIKeyEnv))
+		base := dash(pr.EffectiveBaseURL())
+		if pr.Type == config.ProviderTypeClaudeAPI && pr.BaseURL == "" {
+			base += " (the default)"
+		}
+		fmt.Fprintf(&b, "base_url     %s\napi_key_env  %s\n", base, dash(pr.APIKeyEnv))
 	}
 	fmt.Fprintf(&b, "login        %s\n", loginState(store, pr))
-	if pr.Type != config.ProviderTypeClaude {
+	if !config.IsOwnType(pr.Type) {
 		fmt.Fprintf(&b, "proxy        %s\n", providerProxyText(cfg, pr))
 	}
 	if len(pr.EffortMap) > 0 {
@@ -38,7 +42,7 @@ func providerText(cfg *config.Config, store creds.Store, pauses *config.PeakPaus
 		}
 		fmt.Fprintf(&b, "effort_map   %s\n", strings.Join(parts, " "))
 	}
-	if pr.Type != config.ProviderTypeClaude {
+	if !config.IsOwnType(pr.Type) {
 		fmt.Fprintf(&b, "peak hours   %s\n", peakSummary(pr, name, now, pauses))
 	}
 	fmt.Fprintf(&b, "profiles     %s", dash(strings.Join(profilesOf(cfg, name), ", ")))

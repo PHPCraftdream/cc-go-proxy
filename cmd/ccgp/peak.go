@@ -120,7 +120,7 @@ func peakProvider(cfg *config.Config, name string) (string, error) {
 		}
 		name, pr = pf.Provider, cfg.Providers[pf.Provider]
 	}
-	if pr == nil || pr.Type == config.ProviderTypeClaude {
+	if pr == nil || config.IsOwnType(pr.Type) {
 		return "", fmt.Errorf("provider %q is a Claude profile: it does not go through ccgp, so it has no peak hours", name)
 	}
 	return name, nil
@@ -263,7 +263,7 @@ func showPeak(w io.Writer, cfg *config.Config, now time.Time, pauses *config.Pea
 		providers = []string{only}
 	} else {
 		for _, name := range sortedKeys(cfg.Providers) {
-			if cfg.Providers[name].Type != config.ProviderTypeClaude {
+			if !config.IsOwnType(cfg.Providers[name].Type) {
 				providers = append(providers, name)
 			}
 		}

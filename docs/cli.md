@@ -35,6 +35,11 @@ A profile of type `claude` (`ccgp --profile add work --type claude`) skips all o
 login by ccgp. `claude` runs with a clean directory of its own and you sign in inside it with `/login`
 ([configuration](configuration.md#profiles-of-the-real-claude-code---type-claude)).
 
+A profile of type `claude_api` (`ccgp --profile add api --type claude_api`) is the same with an API key of the Claude
+Platform instead of a login: `ccgp --login api` saves the key (the first start asks when there is none) and `ccgp api`
+runs `claude` with it as `ANTHROPIC_API_KEY`, against the official server unless the provider has a `base_url`
+([configuration](configuration.md#profiles-with-an-api-key---type-claude_api)).
+
 `ccgpy <profile> …` finds the `ccgp` next to it (else in `PATH`) and runs `ccgp <profile>
 --dangerously-skip-permissions …`; it takes the home flags too (`ccgpy --local work`) and passes the terminal and the
 exit code through. It is for places where running Claude Code without permission prompts is acceptable.
@@ -218,9 +223,9 @@ after printing the JSON.
 
 | Command | |
 | --- | --- |
-| `--login <provider> [--device]` | Sign in (Codex: browser OAuth, or a device code; others: API key) |
+| `--login <provider> [--device]` | Sign in (Codex: browser OAuth, or a device code; others, `claude_api` included: API key) |
 | `--logout <provider> [--yes]` | Remove the stored OAuth tokens or API key of a provider after a confirmation. The config file is not touched, and `--yes` is required without a terminal |
-| `--profile add\|list\|rm\|set\|unset` | `add NAME --like P` (own login), `--provider P` (existing login), `--type codex\|codex_api\|anthropic_compat\|claude` (new backend; `claude` = the real Claude Code, own clean directory and sign-in), `list [--json]`, `rm NAME [--yes] [--purge]`, `set NAME KEY VALUE` / `unset NAME KEY` (`default_model`, `context_window`, `compact_percent`, and `provider` to move the profile; `unset` not for `provider`); see [configuration](configuration.md#creating-and-removing-profiles) |
+| `--profile add\|list\|rm\|set\|unset` | `add NAME --like P` (own login), `--provider P` (existing login), `--type codex\|codex_api\|anthropic_compat\|claude\|claude_api` (new backend; `claude` = the real Claude Code, own clean directory and sign-in; `claude_api` = the same with an API key of the Claude Platform, `--base-url` for another server), `list [--json]`, `rm NAME [--yes] [--purge]`, `set NAME KEY VALUE` / `unset NAME KEY` (`default_model`, `context_window`, `compact_percent`, and `provider` to move the profile; `unset` not for `provider`); see [configuration](configuration.md#creating-and-removing-profiles) |
 | `--provider [NAME] [--json] \| set\|unset NAME KEY [VALUE]` | The providers (type, peak hours, profiles), one provider in detail (base_url, api_key_env, login, proxy and where it comes from, effort map, peak hours), or set / remove its `base_url` or `api_key_env`. The proxy is `--connections proxy … provider NAME`, the peak hours `--peak` |
 | `--models [apply] [-v] [profile]` | Show or write the model mapping |
 | `--config reset` | Back up the config and write the default one |
@@ -234,6 +239,7 @@ ccgp --login zai                         # an API key, asked once
 ccgp --logout codex --yes                # forget the login (the config stays)
 ccgp --profile add codex2 --like codex   # a second account of the same kind, then: ccgp codex2
 ccgp --profile add work --type claude    # a real Claude Code profile with its own account
+ccgp --profile add api --type claude_api # ... with an API key of the Claude Platform (ccgp --login api)
 ccgp --profile list --json
 ccgp --profile set zai default_model glm-5.3-flash   # one setting of a profile ...
 ccgp --profile set zai2 provider codex               # ... also moving it to another provider
@@ -294,8 +300,8 @@ is written.
 
 | Screen | What it does |
 | --- | --- |
-| **Profiles** | A list with provider, type and login state. Open one to see its provider, login, proxy (and the level it comes from: its own, its provider's, the global one) and model rules, and to set `default_model`, `context_window`, `compact_percent` and `proxy`, move it to another provider, or remove it: with its Claude dir and the logins nothing else uses kept, or deleted (`--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's |
-| **Profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
+| **Profiles** | A list with provider, type and login state. Open one to see its provider, login, proxy (and the level it comes from: its own, its provider's, the global one) and model rules, and to set `default_model`, `context_window`, `compact_percent` and `proxy`, move it to another provider, or remove it: with its Claude dir and the logins nothing else uses kept, or deleted (`--purge`). A profile of the real Claude Code (`type: claude`) can only be removed: it has no settings of ccgp's; one with an API key (`type: claude_api`) can also set its server (`base_url`) and log in to save the key |
+| **Profiles → add** | Three ways, as `ccgp --profile add`: *another account of the kind a profile has* (`--like`: its own login, copies the settings and the peak hours), *another profile on a login that exists* (`--provider`), *a new backend* (`--type`: `codex`, `codex_api`, `anthropic_compat`, `claude`, `claude_api`; the last asks for the server, empty = the official one). It asks for the name (a free one is suggested) and, except for a Claude profile, for a catch-all model and its context window |
 | **Providers** | A list with type, profiles and a mark where there are peak hours. Open one to see `base_url`, `api_key_env`, the proxy, the login, the effort map, the peak hours (and whether it is peak now) and the profiles that use it; set `base_url`, `api_key_env` and `proxy` (for all its profiles; a profile's own wins); open its **peak hours** |
 | **Providers → add** | A new backend with its first profile (a provider cannot exist without a profile). A provider goes when its last profile is removed |
 | **Providers → a provider** (more) | Also: **log in**, **log in with a device code** (Codex) and **log out** (`--login`, `--login --device`, `--logout`; a sign-in gets the terminal while it runs) |
@@ -366,7 +372,8 @@ inside the npm package, and the next npm install would put the packaged version 
 | `CCGP_VERSION`, `CCGP_INSTALL_DIR` | `install.sh`, `install.ps1` | Version and directory to install |
 
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN` and the Bedrock / Vertex /
-Foundry switches of the parent are removed before `claude` starts, for proxy and `claude` profiles alike.
+Foundry switches of the parent are removed before `claude` starts, for proxy, `claude` and `claude_api` profiles alike
+(a `claude_api` profile then gets its own key and server).
 
 ## Exit codes
 

@@ -9,10 +9,11 @@ to a provider and to model-mapping rules ([configuration.md](configuration.md)).
 | `codex_api` | OpenAI, OpenRouter, Ollama, any OpenAI-compatible API | Anthropic Messages → Chat Completions | API key |
 | `anthropic_compat` | z.ai GLM, any Anthropic-compatible endpoint | Anthropic Messages, forwarded unconverted | API key |
 | `claude` | The real Claude Code, no proxy | none: `claude` talks to Anthropic itself | your own login inside Claude Code (`/login`), never read by ccgp |
+| `claude_api` | The real Claude Code on the Claude Platform, no proxy | none: `claude` talks to the server itself | an API key of the profile, saved by ccgp (`--login`) or read from `api_key_env`; the server is the official one unless `base_url` says otherwise |
 
 `ccgp --login <provider>` authenticates; every `ccgp <profile>` run also does it when credentials are missing.
 
-Every provider (except `claude`) can have its own way out to the network: `ccgp --connections proxy http://corp:3128
+Every provider (except `claude` and `claude_api`) can have its own way out to the network: `ccgp --connections proxy http://corp:3128
 provider codex` sends all its profiles through that proxy (SOCKS5 or HTTP; `none` = directly), replacing the global one;
 a profile's own proxy replaces the provider's ([the cascade](configuration.md#layout)). It can have peak hours as well
 ([peak hours](peak-hours.md)).
@@ -130,6 +131,33 @@ reads or stores it. The profile has no URL token, no model rules and no `--login
 proxy settings. To bring a conversation in on purpose use [`ccgp --import work`](sessions.md). Details and the exact
 rules: [configuration](configuration.md#profiles-of-the-real-claude-code---type-claude),
 [security](security.md#profiles-of-the-real-claude-code).
+
+## `claude_api` — the real Claude Code on the Claude Platform
+
+The same idea as `claude`, with an API key instead of a subscription login: a profile that does not use the proxy and
+has a Claude Code directory of its own, so it runs next to your subscription profiles, Codex and z.ai without touching
+them. Make one per key (per Platform organisation or project, say) and the usage is counted apart.
+
+```sh
+ccgp --profile add api --type claude_api                       # the official server, https://api.anthropic.com
+ccgp --profile add gw  --type claude_api --base-url https://llm-gateway.example.com   # another server
+ccgp --login api                                               # asks for the key (hidden input), saves it owner-only
+ccgp api                                                       # the first start asks for the key too, when none is saved
+ccgp --provider set api base_url https://llm-gateway.example.com   # change the server later (unset: the official one)
+ccgp --provider set api api_key_env MY_ANTHROPIC_KEY           # or read the key from an environment variable
+```
+
+`ccgp api` runs `claude` with `CLAUDE_CONFIG_DIR=<home>/claude/api`, created and mirrored exactly as for `claude`, and with
+two variables of its own: `ANTHROPIC_API_KEY` (the profile's key) and, only when the provider has a `base_url`,
+`ANTHROPIC_BASE_URL`. Everything else that selects an endpoint or a credential in the parent's environment
+(`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, Bedrock, Vertex, Foundry, and the parent's own `ANTHROPIC_API_KEY` /
+`ANTHROPIC_BASE_URL`) is dropped, so one profile never sees another's key. Without a `base_url` Claude Code uses its own
+default, the official server. The key is in `claude`'s environment, as with any `ANTHROPIC_API_KEY` set by hand.
+
+The profile takes no `models`, `default_model`, `context_window`, `compact_percent`, `proxy`, `effort_map` or peak
+hours (the config loader rejects them): Claude Code talks to the server itself, so the model names are Anthropic's own.
+Claude Code may ask once, at the first start, whether to use the key it found in the environment. `ccgp --profile rm api`
+leaves the key behind unless `--purge` is given. Details: [configuration](configuration.md#profiles-with-an-api-key---type-claude_api).
 
 ## The model identity
 

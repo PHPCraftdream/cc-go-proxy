@@ -45,7 +45,7 @@ func login(cfg *config.Config, provider string, force, device bool) error {
 			autoApplyModels(cfg, pr.Name)
 		}
 		return err
-	case config.ProviderTypeCodexAPI:
+	case config.ProviderTypeCodexAPI, config.ProviderTypeClaudeAPI:
 		_, err := loginAPIKey(store, pr, force)
 		return err
 	case config.ProviderTypeAnthropicCompat:
@@ -126,11 +126,11 @@ func loginAPIKey(store creds.Store, pr *config.Provider, force bool) (fresh bool
 		if k, err := store.APIKey(pr.Name); err != nil || k != "" {
 			return false, err
 		}
-		if isLocal(pr.BaseURL) {
+		if isLocal(pr.BaseURL) && pr.Type != config.ProviderTypeClaudeAPI {
 			return false, nil // local backends (Ollama) need no key
 		}
 	}
-	fmt.Fprintf(os.Stderr, "API key for provider %q (%s): ", pr.Name, pr.BaseURL)
+	fmt.Fprintf(os.Stderr, "API key for provider %q (%s): ", pr.Name, pr.EffectiveBaseURL())
 	key, err := readSecret()
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
@@ -207,7 +207,7 @@ func loginState(store creds.Store, pr *config.Provider) string {
 			return "error: " + err.Error()
 		}
 		return "logged in, tokens refreshed " + t.LastRefresh.Local().Format("2006-01-02 15:04")
-	case config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat:
+	case config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat, config.ProviderTypeClaudeAPI:
 		if pr.APIKeyEnv != "" {
 			if os.Getenv(pr.APIKeyEnv) == "" {
 				return "$" + pr.APIKeyEnv + " is empty"
@@ -220,7 +220,7 @@ func loginState(store creds.Store, pr *config.Provider) string {
 			return "error: " + err.Error()
 		case k != "":
 			return "API key saved"
-		case isLocal(pr.BaseURL):
+		case isLocal(pr.BaseURL) && pr.Type != config.ProviderTypeClaudeAPI:
 			return "no key needed (local)"
 		}
 		return "no API key (ccgp --login " + pr.Name + ")"

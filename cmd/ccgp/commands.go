@@ -202,6 +202,7 @@ Profiles:
   ccgp --profile add <name> --provider <p>        New profile on an existing login [--model M [--window N]]
   ccgp --profile add <name> --type <t> ...        New backend: codex | codex_api | anthropic_compat [--base-url URL] [--model M]
   ccgp --profile add <name> --type claude         The real Claude Code with its own login (a clean dir: settings only, no ids or tokens)
+  ccgp --profile add <name> --type claude_api     The real Claude Code on the Claude Platform with an API key of its own [--base-url URL]
   ccgp --profile list                             Show profiles, providers, login state and Claude dirs
   ccgp --profile set <name> <key> <value>         One setting: default_model, context_window, compact_percent, provider (unset removes)
   ccgp --provider [name]                          Show the providers, or one in detail
