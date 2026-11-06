@@ -226,6 +226,18 @@ func TestProfileRemoveClaudeAPIKeepsOrDeletesTheKey(t *testing.T) {
 
 // ---- the launch ----
 
+// envHas reports whether the dump of claude's environment has a variable whose
+// name starts with prefix: a line that starts with it. The dump also holds
+// whatever the CI sets (a commit message, say), which may name these variables.
+func envHas(dump, prefix string) bool {
+	for _, l := range strings.Split(dump, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func launchedEnv(t *testing.T, out string, wantStatus int, err error) string {
 	t.Helper()
 	var ee exitError
@@ -260,9 +272,14 @@ func TestLaunchClaudeAPIPassesItsKey(t *testing.T) {
 		}
 	}
 	// The official server is Claude Code's own default: nothing is set for it.
-	for _, bad := range []string{"sk-parent", "token-parent", "parent.example", "oauth-parent", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "/call/", "AUTO_COMPACT", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
+	for _, bad := range []string{"sk-parent", "token-parent", "parent.example", "oauth-parent", "/call/"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("%q reached a claude_api profile:\n%s", bad, got)
+		}
+	}
+	for _, bad := range []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_AUTO_COMPACT", "CLAUDE_AUTOCOMPACT", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
+		if envHas(got, bad) {
+			t.Errorf("the variable %s reached a claude_api profile:\n%s", bad, got)
 		}
 	}
 	// Settings crossed, nothing of the user's account did.
@@ -331,7 +348,7 @@ func TestLaunchClaudeAndClaudeAPIDoNotShareCredentials(t *testing.T) {
 	}{{"work", false, "work"}, {"api", true, "api"}} {
 		_ = os.Remove(out)
 		got := launchedEnv(t, out, 3, launch(c.profile, nil))
-		if has := strings.Contains(got, "ANTHROPIC_API_KEY="); has != c.wantKey {
+		if has := envHas(got, "ANTHROPIC_API_KEY="); has != c.wantKey {
 			t.Errorf("%s: ANTHROPIC_API_KEY present = %v, want %v:\n%s", c.profile, has, c.wantKey, got)
 		}
 		base, _ := claudeHomeBase()

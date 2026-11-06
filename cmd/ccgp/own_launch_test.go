@@ -91,9 +91,14 @@ func TestLaunchOwnRunsClaudeDirectly(t *testing.T) {
 	if !strings.Contains(got, "CLAUDE_CONFIG_DIR="+profileDir) {
 		t.Errorf("CLAUDE_CONFIG_DIR is not the profile dir %s:\n%s", profileDir, got)
 	}
-	for _, bad := range []string{"ANTHROPIC_", "OAUTH_TOKEN", "sk-official", "AUTO_COMPACT", "ENABLE_CLAUDEAI_MCP_SERVERS", "/call/"} {
+	for _, bad := range []string{"sk-official", "/call/"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("%q reached a Claude profile:\n%s", bad, got)
+		}
+	}
+	for _, bad := range []string{"ANTHROPIC_", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_AUTO_COMPACT", "CLAUDE_AUTOCOMPACT", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
+		if envHas(got, bad) {
+			t.Errorf("the variable %s reached a Claude profile:\n%s", bad, got)
 		}
 	}
 
