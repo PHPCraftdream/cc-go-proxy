@@ -122,3 +122,58 @@ func TestFingerprintSystemIsNotTheFirstMessage(t *testing.T) {
 		t.Errorf("items = %d, want 2", f.Items)
 	}
 }
+
+func hashesOf(t *testing.T, body string) []uint64 {
+	t.Helper()
+	req, _, err := ConvertRequest([]byte(body), "gpt-5", "work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ItemHashes(req)
+}
+
+func TestItemHashes(t *testing.T) {
+	base := hashesOf(t, fpBody("sys", "Read", "u", 4))
+	if len(base) != 5 {
+		t.Fatalf("%d hashes, want 5 (system prompt and 4 messages)", len(base))
+	}
+	again := hashesOf(t, fpBody("sys", "Read", "u", 4))
+	for i := range base {
+		if base[i] != again[i] {
+			t.Errorf("item %d hashes differently for the same request", i)
+		}
+	}
+	seen := map[uint64]bool{}
+	for _, h := range base {
+		if seen[h] {
+			t.Errorf("two different items share the hash %d", h)
+		}
+		seen[h] = true
+	}
+	// A longer history keeps the hashes of the items it had.
+	grown := hashesOf(t, fpBody("sys", "Read", "u", 6))
+	if len(grown) != 7 {
+		t.Fatalf("%d hashes, want 7", len(grown))
+	}
+	for i := range base {
+		if grown[i] != base[i] {
+			t.Errorf("item %d changed when only the tail grew", i)
+		}
+	}
+	// Another system prompt changes item 0 only.
+	other := hashesOf(t, fpBody("sys 2", "Read", "u", 4))
+	if other[0] == base[0] {
+		t.Error("the system prompt changed but item 0 did not")
+	}
+	for i := 1; i < len(base); i++ {
+		if other[i] != base[i] {
+			t.Errorf("item %d changed with the system prompt", i)
+		}
+	}
+}
+
+func TestItemHashesOfAnEmptyRequest(t *testing.T) {
+	if got := ItemHashes(&Request{}); got == nil || len(got) != 0 {
+		t.Errorf("hashes of an empty request: %#v, want an empty non-nil slice", got)
+	}
+}

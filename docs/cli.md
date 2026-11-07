@@ -140,9 +140,12 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   fingerprint of what the backend caches by prefix (the first digits of the cache key, a hash of the system prompt and one
   of the tool definitions, the number of input items; no text and not the session id) and how it differs from the last
   request of the same key since the server started: `same system prompt and tools as the last request of this key`,
-  `system prompt changed …`, `tools changed …`, `history shorter (214 -> 40 items)`, or `first request of this key`. Next
-  to `| cache miss` it tells a miss that has a cause (the prefix changed, a compaction, a subagent with a prompt of its own)
-  from one the backend alone explains (same prefix, nothing cached).
+  `system prompt changed …`, `tools changed …`, `history shorter (214 -> 40 items)`, or `first request of this key`. The
+  history is compared item by item (a hash of each, kept per key): `history extends the last request by 2 items` (the
+  prefix is the same, so a miss then is the backend's), `history changed at item 7 of 214 (the last request had 212)`
+  (item 0 is the system prompt; the items before the changed one can still be read from the cache), `history identical
+  to the last request`. Next to `| cache miss` it tells a miss that has a cause (the prefix changed, a compaction, a
+  subagent with a prompt of its own) from one the backend alone explains (same prefix, nothing cached).
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
   (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below

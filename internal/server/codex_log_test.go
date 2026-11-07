@@ -588,3 +588,22 @@ func TestNotRetriedNote(t *testing.T) {
 		t.Errorf("without content = %q", got)
 	}
 }
+
+// The ids of the backend come last on every stream line, the canceled one too.
+func TestCanceledLineEndsWithTheIds(t *testing.T) {
+	var buf bytes.Buffer
+	old := logOut
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tr := &codex.Translator{Failed: "client left"}
+	up := &http.Response{Header: http.Header{"Cf-Ray": {"ray-1"}}}
+	trace := newUpstreamTrace()
+	trace.prompt = "key abcd1234, no system prompt, no tools, 1 input items"
+	logUpstreamEnd(ctx, tr, trace, up, "codex", "a -> b", 10)
+	got := buf.String()
+	if !strings.Contains(got, "stream canceled by client") || !strings.HasSuffix(got, "| prompt key abcd1234, no system prompt, no tools, 1 input items | cf-ray=ray-1\n") {
+		t.Errorf("line %q", got)
+	}
+}

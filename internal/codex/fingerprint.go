@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 )
 
 // Fingerprint describes the part of a request the backend caches by its prefix:
@@ -34,6 +35,23 @@ func NewFingerprint(req *Request) Fingerprint {
 		f.Tools = hash8(req.Tools)
 	}
 	return f
+}
+
+// ItemHashes hashes every input item in order. The log compares them with the
+// last request of the same session to name the first item that changed.
+func ItemHashes(req *Request) []uint64 {
+	out := make([]uint64, len(req.Input))
+	h := fnv.New64a()
+	for i, it := range req.Input {
+		b, err := json.Marshal(it)
+		if err != nil {
+			continue
+		}
+		h.Reset()
+		_, _ = h.Write(b)
+		out[i] = h.Sum64()
+	}
+	return out
 }
 
 func hash8(v any) string {

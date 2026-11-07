@@ -45,6 +45,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   request of this key`): hashes and counts, no text and not the session id, compared with the last request of the same
   cache key. It tells why a prompt of half a million tokens was `cache miss`: the system prompt or the tools changed, the
   history shrank (a compaction, a subagent), or nothing changed and the backend simply had no copy.
+- Log: the prompt note also says where the history diverged from the last request of the key: `history changed at item
+  7 of 214 (the last request had 212)`, or `history extends the last request by 2 items` (the prefix is the same: a
+  miss is then the backend's, not ours). The `stream canceled by client` line ends with the request ids, like the others.
 - Profiles of the real Claude Code on the Claude Platform, with an API key of their own: `ccgp --profile add api
   --type claude_api [--base-url URL]` (provider type `claude_api`). It is a `claude` profile (own Claude Code
   directory, no proxy, runs next to the others without touching them) that gets a key instead of a subscription login:

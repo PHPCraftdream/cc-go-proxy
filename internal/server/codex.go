@@ -203,7 +203,7 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	ids := upstreamIDs(up.Header)
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
-		logStreamCanceled(logOut, trace.start, profile, mapped, joinNonEmpty(ids, trace.summary(tr, end, bodyBytes)))
+		logStreamCanceled(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 	case tr.Failed != "":
 		logStreamFailure(logOut, trace.start, profile, mapped, tr.Failed, tr.Detail,
 			joinNonEmpty(notRetriedNote(tr.Sent()), trace.silenceText(end), ids, trace.summary(tr, end, bodyBytes)))
@@ -242,7 +242,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
-	trace.prompt = promptText(codex.NewFingerprint(req))
+	trace.prompt = promptText(codex.NewFingerprint(req), codex.ItemHashes(req))
 	trace.onRetry = func(n int, err error, since time.Duration, conn, sent string) {
 		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)
 	}
