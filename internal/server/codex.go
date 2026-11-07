@@ -242,6 +242,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
+	trace.prompt = promptText(codex.NewFingerprint(req))
 	trace.onRetry = func(n int, err error, since time.Duration, conn, sent string) {
 		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)
 	}

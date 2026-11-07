@@ -48,6 +48,7 @@ type upstreamTrace struct {
 	wrote   time.Time   // the last attempt's request was written out
 	wire    *codex.Wire // what went on the wire: compressed or not, how big
 	read    time.Time   // when the last byte of the reply came in (stamp)
+	prompt  string      // the request's fingerprint and what changed since the key's last one (promptText)
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -324,6 +325,9 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 			tokens += " | cache miss"
 		}
 		parts = append(parts, tokens)
+	}
+	if u.prompt != "" {
+		parts = append(parts, "prompt "+u.prompt)
 	}
 	return strings.Join(parts, " | ")
 }

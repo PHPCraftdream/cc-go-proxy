@@ -35,6 +35,16 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- Log: a refusal by an Anthropic-style provider (z.ai: the 429s) now says why. The line of the request gives the
+  error's type or code and message (`1302: Rate limit reached for requests`), the limit headers of a 429 or 503
+  (`retry-after`, `x-ratelimit-*`) and the request id; before it was the status alone. Keys and tokens a message echoes are
+  hidden, the text is one line of at most 200 bytes, an edge's HTML page is shown by its title, and the client's reply is
+  not touched.
+- Log: the `slow stream`, `stream failed` and `stream canceled by client` lines of Codex end with a fingerprint of the
+  prompt (`prompt key a1b2c3d4, system 5e4d3c2b, 63 tools 9f8e7d6c, 214 input items; system prompt changed since the last
+  request of this key`): hashes and counts, no text and not the session id, compared with the last request of the same
+  cache key. It tells why a prompt of half a million tokens was `cache miss`: the system prompt or the tools changed, the
+  history shrank (a compaction, a subagent), or nothing changed and the backend simply had no copy.
 - Profiles of the real Claude Code on the Claude Platform, with an API key of their own: `ccgp --profile add api
   --type claude_api [--base-url URL]` (provider type `claude_api`). It is a `claude` profile (own Claude Code
   directory, no proxy, runs next to the others without touching them) that gets a key instead of a subscription login:

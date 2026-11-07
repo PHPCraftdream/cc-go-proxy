@@ -176,6 +176,9 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 	if err != nil {
 		return anthropicError(c, fiber.StatusBadGateway, "api_error", "reading upstream reply: "+err.Error())
 	}
+	if resp.StatusCode >= 400 {
+		c.Locals(localsErr, upstreamErrorText(resp.StatusCode, resp.Header, b))
+	}
 	return c.Send(b)
 }
 

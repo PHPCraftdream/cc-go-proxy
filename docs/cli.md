@@ -114,7 +114,10 @@ ccgp --serve -s                    # foreground, one line per request (stop with
 ### Reading the log
 
 Every request has one line: start time, status, the time until the backend's reply headers, the route and, for
-failures, the error and the connection it was on (`| conn reused (idle …)`). A request to Codex or to an
+failures, the error and the connection it was on (`| conn reused (idle …)`). A refusal by an Anthropic-style provider
+(z.ai) gives the reason the provider stated, its error type or code and message (`429 … glm-5.3-flash: 1302: Rate limit
+reached for requests | retry-after=30 | x-request-id=…`), with the limit headers for a 429 or 503 and the request id; keys
+and tokens a message echoes are hidden (`sk-***`), and Claude Code gets the reply unchanged. A request to Codex or to an
 Anthropic-style provider (z.ai) that had to open a connection of its own ends with `| conn new (tls …, pool …)`;
 over an open connection it has no such mark, so the share of marked lines shows whether connections are kept
 (`upstream stats` below counts them too). A successful `GET …/model` or `/health`
@@ -132,6 +135,14 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   came and shows `Server error mid-response`; ccgp cannot start the request over in either case.
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
+
+  These three lines end with `| prompt key a1b2c3d4, system 5e4d3c2b, 63 tools 9f8e7d6c, 214 input items; …`: a
+  fingerprint of what the backend caches by prefix (the first digits of the cache key, a hash of the system prompt and one
+  of the tool definitions, the number of input items; no text and not the session id) and how it differs from the last
+  request of the same key since the server started: `same system prompt and tools as the last request of this key`,
+  `system prompt changed …`, `tools changed …`, `history shorter (214 -> 40 items)`, or `first request of this key`. Next
+  to `| cache miss` it tells a miss that has a cause (the prefix changed, a compaction, a subagent with a prompt of its own)
+  from one the backend alone explains (same prefix, nothing cached).
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
   (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below
