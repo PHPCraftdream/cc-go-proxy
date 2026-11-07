@@ -607,3 +607,27 @@ func TestCanceledLineEndsWithTheIds(t *testing.T) {
 		t.Errorf("line %q", got)
 	}
 }
+
+// A finished reply tells the watch what it was billed, and the next request of
+// the key reads it, even when the reply was not slow enough to be logged.
+func TestUpstreamEndFeedsTheCacheWatch(t *testing.T) {
+	promptWatch = &cacheWatch{}
+	t.Cleanup(func() { promptWatch = &cacheWatch{} })
+	var buf bytes.Buffer
+	old := logOut
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+	f := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 4}
+	promptText(f, []uint64{1, 2, 3, 4})
+	trace := newUpstreamTrace()
+	trace.fp = f
+	tr := &codex.Translator{Usage: codex.Usage{Input: 640000, Cached: 600000, Output: 5}}
+	logUpstreamEnd(context.Background(), tr, trace, &http.Response{Header: http.Header{}}, "codex", "a -> b", 10)
+	if buf.Len() != 0 {
+		t.Errorf("a fast reply was logged: %q", buf.String())
+	}
+	next := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 6}
+	if got := promptText(next, []uint64{1, 2, 3, 4, 5, 6}); !strings.HasSuffix(got, "history extends the last request by 2 items; the last request had 640000 tokens in") {
+		t.Errorf("line %q", got)
+	}
+}

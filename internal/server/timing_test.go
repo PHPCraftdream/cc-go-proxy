@@ -326,3 +326,35 @@ func TestStampedBodyRecordsTheLastRead(t *testing.T) {
 		t.Error("a new attempt keeps the read time of the last one")
 	}
 }
+
+// A prompt read from the cache for less than 90% is marked with the share; the
+// edges of the rule are exact, and small prompts are never marked.
+func TestCacheMark(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		usage codex.Usage
+		want  string
+	}{
+		{"nothing cached", codex.Usage{Input: 500000}, "cache miss"},
+		{"64 percent", codex.Usage{Input: 732972, Cached: 469888}, "cache partial 64% (469888 of 732972)"},
+		{"just under the share", codex.Usage{Input: 100000, Cached: 89999}, "cache partial 89% (89999 of 100000)"},
+		{"exactly the share", codex.Usage{Input: 100000, Cached: 90000}, ""},
+		{"all cached", codex.Usage{Input: 500000, Cached: 500000}, ""},
+		{"small and partial", codex.Usage{Input: cacheMissMin - 1, Cached: 10}, ""},
+		{"at the minimum and partial", codex.Usage{Input: cacheMissMin, Cached: 10}, "cache partial 0% (10 of 10000)"},
+		{"no usage", codex.Usage{}, ""},
+	} {
+		if got := cacheMark(c.usage); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSummaryMarksAPartialCache(t *testing.T) {
+	start := time.Unix(1000, 0)
+	u := &upstreamTrace{start: start}
+	got := u.summary(&codex.Translator{Usage: codex.Usage{Input: 575000, Cached: 470000, Output: 10}}, start.Add(time.Second), 10)
+	if !strings.Contains(got, "| tokens in 575000 (cached 470000) out 10 (reasoning 0) | cache partial 81% (470000 of 575000)") || strings.Contains(got, "cache miss") {
+		t.Errorf("summary = %q", got)
+	}
+}

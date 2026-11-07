@@ -25,6 +25,9 @@ var (
 // first token then takes much longer. Small prompts are never cached anyway.
 const cacheMissMin = 10000
 
+// A prompt read from the cache for less than this share is marked as partial.
+const cachePartialPct = 90
+
 // upstreamTrace records where the time of one upstream call goes.
 type upstreamTrace struct {
 	mu      sync.Mutex
@@ -49,6 +52,7 @@ type upstreamTrace struct {
 	wire    *codex.Wire // what went on the wire: compressed or not, how big
 	read    time.Time   // when the last byte of the reply came in (stamp)
 	prompt  string      // the request's fingerprint and what changed since the key's last one (promptText)
+	fp      codex.Fingerprint
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -321,8 +325,8 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	parts := []string{conn, strings.Join(waits, ", "), req}
 	if us := tr.Usage; us != (codex.Usage{}) {
 		tokens := fmt.Sprintf("tokens in %d (cached %d) out %d (reasoning %d)", us.Input, us.Cached, us.Output, us.Reasoning)
-		if us.Cached == 0 && us.Input >= cacheMissMin {
-			tokens += " | cache miss"
+		if mark := cacheMark(us); mark != "" {
+			tokens += " | " + mark
 		}
 		parts = append(parts, tokens)
 	}
@@ -330,6 +334,21 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 		parts = append(parts, "prompt "+u.prompt)
 	}
 	return strings.Join(parts, " | ")
+}
+
+// cacheMark says when a big prompt was not read from the cache: nothing of it
+// (cache miss) or less than cachePartialPct percent (cache partial). "" else.
+func cacheMark(us codex.Usage) string {
+	if us.Input < cacheMissMin {
+		return ""
+	}
+	if us.Cached == 0 {
+		return "cache miss"
+	}
+	if us.Cached*100 < us.Input*cachePartialPct {
+		return fmt.Sprintf("cache partial %d%% (%d of %d)", us.Cached*100/us.Input, us.Cached, us.Input)
+	}
+	return ""
 }
 
 func sizeString(n int) string {

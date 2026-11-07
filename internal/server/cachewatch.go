@@ -10,11 +10,12 @@ import (
 // maxWatchedKeys bounds what cacheWatch remembers.
 const maxWatchedKeys = 512
 
-// watched is what cacheWatch keeps of a request: its fingerprint and the hash of
-// every input item.
+// watched is what cacheWatch keeps of a request: its fingerprint, the hash of
+// every input item and, once the reply is over, the input tokens it was billed.
 type watched struct {
 	f     codex.Fingerprint
 	items []uint64
+	input int // 0 until Done
 }
 
 // cacheWatch remembers the last request of every cache key (a Claude Code
@@ -48,7 +49,7 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 			w.order = w.order[1:]
 		}
 	}
-	w.last[f.Key] = watched{f, items}
+	w.last[f.Key] = watched{f: f, items: items}
 	if !seen {
 		return "first request of this key since the server started"
 	}
@@ -72,7 +73,26 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 	if note := historyNote(prev.items, items); note != "" {
 		text += "; " + note
 	}
+	if prev.input > 0 {
+		text += fmt.Sprintf("; the last request had %d tokens in", prev.input)
+	}
 	return text
+}
+
+// Done records the input tokens of the reply to the request seen as f, so the
+// next request of its key can say what the last one was billed: a `cached`
+// below it means the backend dropped part of what it had. A newer request of
+// the key that was seen meanwhile is left alone.
+func (w *cacheWatch) Done(f codex.Fingerprint, input int) {
+	if f.Key == "" || input <= 0 {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if cur, ok := w.last[f.Key]; ok && cur.f == f {
+		cur.input = input
+		w.last[f.Key] = cur
+	}
 }
 
 // historyNote compares the input items with the last request's: where the first

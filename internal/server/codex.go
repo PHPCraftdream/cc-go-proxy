@@ -200,6 +200,7 @@ func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, a
 // the summary tells when the reply ended.
 func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTrace, up *http.Response, profile, mapped string, bodyBytes int) {
 	end := time.Now()
+	promptWatch.Done(trace.fp, tr.Usage.Input)
 	ids := upstreamIDs(up.Header)
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
@@ -242,7 +243,8 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
-	trace.prompt = promptText(codex.NewFingerprint(req), codex.ItemHashes(req))
+	trace.fp = codex.NewFingerprint(req)
+	trace.prompt = promptText(trace.fp, codex.ItemHashes(req))
 	trace.onRetry = func(n int, err error, since time.Duration, conn, sent string) {
 		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)
 	}
