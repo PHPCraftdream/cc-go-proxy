@@ -627,7 +627,7 @@ func TestUpstreamEndFeedsTheCacheWatch(t *testing.T) {
 		t.Errorf("a fast reply was logged: %q", buf.String())
 	}
 	next := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 6}
-	if got := promptText(next, []uint64{1, 2, 3, 4, 5, 6}); !strings.HasSuffix(got, "history extends the last request by 2 items; the last request had 640000 tokens in") {
+	if got := promptText(next, []uint64{1, 2, 3, 4, 5, 6}); !strings.Contains(got, "history extends the last request by 2 items; the last request had 640000 tokens in") {
 		t.Errorf("line %q", got)
 	}
 }

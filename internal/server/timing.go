@@ -30,30 +30,31 @@ const cachePartialPct = 90
 
 // upstreamTrace records where the time of one upstream call goes.
 type upstreamTrace struct {
-	mu             sync.Mutex
-	start          time.Time
-	calls          int // upstream calls: >1 after a retry or a token refresh
-	reused         bool
-	idle           time.Duration // how long a reused connection had been idle
-	dns            time.Duration
-	connect        time.Duration
-	tls            time.Duration
-	headers        time.Time
-	warm           bool          // the connection was opened ahead (connpool)
-	warmAge        time.Duration // how long before
-	retry          string        // why the first attempt was sent again
-	first          string        // the first attempt's connection: new, warm or reused (idle for)
-	retries        int           // attempts sent again
-	pool           time.Duration // age of the pool the attempt went to
-	hasPool        bool
-	attempt        time.Time   // start of the last attempt
-	got            time.Time   // the last attempt got its connection
-	wrote          time.Time   // the last attempt's request was written out
-	wire           *codex.Wire // what went on the wire: compressed or not, how big
-	read           time.Time   // when the last byte of the reply came in (stamp)
-	prompt         string      // the request's fingerprint and what changed since the key's last one (promptText)
-	fp             codex.Fingerprint
-	prevEdge, edge string // data centre of the key's last reply and of this one (Cf-Ray)
+	mu      sync.Mutex
+	start   time.Time
+	calls   int // upstream calls: >1 after a retry or a token refresh
+	reused  bool
+	idle    time.Duration // how long a reused connection had been idle
+	dns     time.Duration
+	connect time.Duration
+	tls     time.Duration
+	headers time.Time
+	warm    bool          // the connection was opened ahead (connpool)
+	warmAge time.Duration // how long before
+	retry   string        // why the first attempt was sent again
+	first   string        // the first attempt's connection: new, warm or reused (idle for)
+	retries int           // attempts sent again
+	pool    time.Duration // age of the pool the attempt went to
+	hasPool bool
+	attempt time.Time   // start of the last attempt
+	got     time.Time   // the last attempt got its connection
+	wrote   time.Time   // the last attempt's request was written out
+	wire    *codex.Wire // what went on the wire: compressed or not, how big
+	read    time.Time   // when the last byte of the reply came in (stamp)
+	prompt  string      // the request's fingerprint and what changed since the key's last one (promptText)
+	fp      codex.Fingerprint
+	prev    prevInfo // the key's last request: when it ran, the data centre of its reply
+	edge    string   // data centre of this reply (Cf-Ray)
 
 	// onRetry hears every retry: its number, the error, the time since the start
 	// of the call and the connection the failed attempt was on.
@@ -333,7 +334,7 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	}
 	if u.prompt != "" {
 		prompt := u.prompt
-		if e := edgeText(u.prevEdge, u.edge); e != "" {
+		if e := edgeText(u.prev.edge, u.edge); e != "" {
 			prompt += "; " + e
 		}
 		parts = append(parts, "prompt "+prompt)

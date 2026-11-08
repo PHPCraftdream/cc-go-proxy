@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 )
@@ -17,6 +18,8 @@ type watched struct {
 	items []uint64
 	input int    // 0 until Done
 	edge  string // data centre of the reply (Cf-Ray), "" until Done
+	start time.Time
+	ended time.Time // zero until Done
 }
 
 // cacheWatch remembers the last request of every cache key (a Claude Code
@@ -50,7 +53,7 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 			w.order = w.order[1:]
 		}
 	}
-	w.last[f.Key] = watched{f: f, items: items}
+	w.last[f.Key] = watched{f: f, items: items, start: time.Now()}
 	if !seen {
 		return "first request of this key since the server started"
 	}
@@ -98,15 +101,38 @@ func (w *cacheWatch) Done(f codex.Fingerprint, input int, edge string) {
 		if edge != "" {
 			cur.edge = edge
 		}
+		cur.ended = time.Now()
 		w.last[f.Key] = cur
 	}
 }
 
-// EdgeOf is the data centre of the last finished reply of key, "" when unknown.
-func (w *cacheWatch) EdgeOf(key string) string {
+// prevInfo is what is known of the last request of a key when a new one comes:
+// when it started and ended and the data centre of its reply. Zero when unknown.
+type prevInfo struct {
+	start, ended time.Time
+	edge         string
+}
+
+// Prev says what is known of the last request of key.
+func (w *cacheWatch) Prev(key string) prevInfo {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.last[key].edge
+	p := w.last[key]
+	return prevInfo{start: p.start, ended: p.ended, edge: p.edge}
+}
+
+// timingText says how long before now the last request of the key started and
+// ended: a cache entry is kept for a few minutes, so a long stream before this
+// request may be why the cache is gone. "" when there was no last request.
+func timingText(p prevInfo, now time.Time) string {
+	if p.start.IsZero() {
+		return ""
+	}
+	since := now.Sub(p.start).Round(time.Second)
+	if p.ended.IsZero() {
+		return fmt.Sprintf("the last request started %s ago and had not ended", since)
+	}
+	return fmt.Sprintf("the last request started %s ago, ended %s ago", since, now.Sub(p.ended).Round(time.Second))
 }
 
 // historyNote compares the input items with the last request's: where the first
@@ -135,8 +161,12 @@ func historyNote(prev, cur []uint64) string {
 // promptText is what a log line says about the prompt of a request.
 func promptText(f codex.Fingerprint, items []uint64) string {
 	text := f.String()
+	prev := promptWatch.Prev(f.Key)
 	if note := promptWatch.See(f, items); note != "" {
 		text += "; " + note
+	}
+	if t := timingText(prev, time.Now()); t != "" {
+		text += "; " + t
 	}
 	return text
 }

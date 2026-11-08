@@ -204,7 +204,7 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	trace.edge = edgeOf(up.Header)
 	trace.mu.Unlock()
 	promptWatch.Done(trace.fp, tr.Usage.Input, trace.edge)
-	promptStats.Add(tr.Usage)
+	promptStats.Add(tr.Usage, gapGroup(trace.prev, trace.start), edgeGroup(trace.prev.edge, trace.edge))
 	ids := upstreamIDs(up.Header)
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
@@ -248,7 +248,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
 	trace.fp = codex.NewFingerprint(req)
-	trace.prevEdge = promptWatch.EdgeOf(trace.fp.Key)
+	trace.prev = promptWatch.Prev(trace.fp.Key)
 	trace.prompt = promptText(trace.fp, codex.ItemHashes(req))
 	trace.onRetry = func(n int, err error, since time.Duration, conn, sent string) {
 		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)

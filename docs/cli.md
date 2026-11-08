@@ -150,10 +150,15 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   has a cause (the prefix changed, a compaction, a subagent with a prompt of its own) from one the backend alone explains
   (same prefix, part or all of it not read from the cache). The note ends with `edge LAX -> PIT` (or `edge same (LAX)`):
   the data centre in the `cf-ray` of the key's last reply and of this one, to see whether a cache that is lost goes with a
-  change of the way in.
+  change of the way in. Before it comes `the last request started 8m19s ago, ended 12s ago` (or `… and had not ended`
+  when another request of the key was still running): the backend keeps a cache entry for a few minutes, so a long stream
+  before this request may be why its cache is gone.
 - `upstream cache [codex]: 41 big prompts, 12 read from the cache in part (under 90%), 1 not at all; 94% of 23.4M input
   tokens came from the cache`: every 10 minutes, next to the stats line, over all Codex replies of 10000 input tokens or
-  more (not only the slow ones); nothing is printed in a quiet period.
+  more (not only the slow ones); nothing is printed in a quiet period. The next line, `upstream cache by [codex]:
+  started <5m before: 30 prompts, 96% cached; started >10m before: 6 prompts, 41% cached; same edge: …; other edge: …`,
+  splits the same prompts by how long before the last request of their key started and by whether its reply came through
+  the same data centre; it shows which of the two goes with a lost cache.
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
   (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below

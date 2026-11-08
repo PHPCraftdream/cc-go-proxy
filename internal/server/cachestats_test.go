@@ -14,7 +14,7 @@ import (
 
 func TestCacheStatsCountsBigPrompts(t *testing.T) {
 	s := &cacheStats{}
-	if got := s.Take(); got != "" {
+	if got, _ := s.Take(); got != "" {
 		t.Errorf("nothing counted, line %q", got)
 	}
 	s.Add(codex.Usage{Input: 100000, Cached: 100000})
@@ -24,11 +24,11 @@ func TestCacheStatsCountsBigPrompts(t *testing.T) {
 	s.Add(codex.Usage{})                             // no usage
 	s.Add(codex.Usage{Input: 100000, Cached: 90000}) // exactly the share: whole
 	want := "4 big prompts, 1 read from the cache in part (under 90%), 1 not at all; 60% of 400k input tokens came from the cache"
-	if got := s.Take(); got != want {
+	if got, _ := s.Take(); got != want {
 		t.Errorf("line %q, want %q", got, want)
 	}
 	// Taking starts the counts again.
-	if got := s.Take(); got != "" {
+	if got, _ := s.Take(); got != "" {
 		t.Errorf("counts survived Take: %q", got)
 	}
 }
@@ -46,7 +46,7 @@ func TestCacheStatsIsSafeForConcurrentUse(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if got := s.Take(); !strings.HasPrefix(got, "3200 big prompts, 3200 read from the cache in part") {
+	if got, _ := s.Take(); !strings.HasPrefix(got, "3200 big prompts, 3200 read from the cache in part") {
 		t.Errorf("line %q", got)
 	}
 }
@@ -116,28 +116,28 @@ func TestCacheWatchKeepsTheEdge(t *testing.T) {
 	w := &cacheWatch{}
 	f := fp("k", "s", "t", 3)
 	w.See(f, nil)
-	if got := w.EdgeOf("k"); got != "" {
+	if got := w.Prev("k").edge; got != "" {
 		t.Errorf("edge before the reply: %q", got)
 	}
 	w.Done(f, 0, "LAX") // an edge alone is kept, without tokens
-	if got := w.EdgeOf("k"); got != "LAX" {
+	if got := w.Prev("k").edge; got != "LAX" {
 		t.Errorf("edge = %q", got)
 	}
 	w.Done(f, 5000, "") // tokens do not wipe the edge
-	if got := w.EdgeOf("k"); got != "LAX" {
+	if got := w.Prev("k").edge; got != "LAX" {
 		t.Errorf("edge after tokens = %q", got)
 	}
 	// The next request starts without an edge of its own; a stranger's key has none.
 	w.See(fp("k", "s", "t", 4), nil)
-	if got := w.EdgeOf("k"); got != "" {
+	if got := w.Prev("k").edge; got != "" {
 		t.Errorf("a new request inherited the edge: %q", got)
 	}
-	if got := w.EdgeOf("other"); got != "" {
+	if got := w.Prev("other").edge; got != "" {
 		t.Errorf("unknown key: %q", got)
 	}
 	// An older request's edge does not land on a newer one.
 	w.Done(f, 0, "PIT")
-	if got := w.EdgeOf("k"); got != "" {
+	if got := w.Prev("k").edge; got != "" {
 		t.Errorf("an older reply set the edge: %q", got)
 	}
 }
@@ -149,7 +149,7 @@ func TestSummaryShowsTheEdge(t *testing.T) {
 		{"LAX", "LAX", "; edge same (LAX)"},
 		{"", "LAX", ""},
 	} {
-		u := &upstreamTrace{start: start, prompt: "key abcd1234, no system prompt, no tools, 9 input items", prevEdge: c.prev, edge: c.cur}
+		u := &upstreamTrace{start: start, prompt: "key abcd1234, no system prompt, no tools, 9 input items", prev: prevInfo{edge: c.prev}, edge: c.cur}
 		got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
 		if c.want == "" {
 			if strings.Contains(got, "edge") {
@@ -177,7 +177,7 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	f1 := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 4}
 	t1 := newUpstreamTrace()
 	t1.fp = f1
-	t1.prevEdge = promptWatch.EdgeOf(f1.Key)
+	t1.prev = promptWatch.Prev(f1.Key)
 	t1.prompt = promptText(f1, []uint64{1, 2, 3, 4})
 	logUpstreamEnd(context.Background(), &codex.Translator{Usage: codex.Usage{Input: 640000, Cached: 600000}}, t1,
 		&http.Response{Header: http.Header{"Cf-Ray": {"r1-LAX"}}}, "codex", "a -> b", 10)
@@ -188,7 +188,7 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	f2 := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 6}
 	t2 := newUpstreamTrace()
 	t2.fp = f2
-	t2.prevEdge = promptWatch.EdgeOf(f2.Key)
+	t2.prev = promptWatch.Prev(f2.Key)
 	t2.prompt = promptText(f2, []uint64{1, 2, 3, 4, 5, 6})
 	tr := &codex.Translator{Failed: "boom", Usage: codex.Usage{Input: 650000, Cached: 400000}}
 	logUpstreamEnd(context.Background(), tr, t2, &http.Response{Header: http.Header{"Cf-Ray": {"r2-PIT"}}}, "codex", "a -> b", 10)
@@ -197,7 +197,150 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 		t.Errorf("line %q", got)
 	}
 	// Both replies went into the counters.
-	if line := promptStats.Take(); !strings.HasPrefix(line, "2 big prompts, 1 read from the cache in part") {
+	line, by := promptStats.Take()
+	if !strings.HasPrefix(line, "2 big prompts, 1 read from the cache in part") {
 		t.Errorf("counters: %q", line)
+	}
+	// The second one is in the groups of its gap and its edge; the first had no past.
+	if by != "started <5m before: 1 prompts, 61% cached; other edge: 1 prompts, 61% cached" {
+		t.Errorf("groups: %q", by)
+	}
+	if !strings.Contains(got, "; the last request started ") || !strings.Contains(got, " ago, ended ") {
+		t.Errorf("no timing of the last request: %q", got)
+	}
+}
+
+func TestTimingText(t *testing.T) {
+	now := time.Unix(10000, 0)
+	for _, c := range []struct {
+		name string
+		p    prevInfo
+		want string
+	}{
+		{"none", prevInfo{}, ""},
+		{"ended", prevInfo{start: now.Add(-499 * time.Second), ended: now.Add(-12 * time.Second)}, "the last request started 8m19s ago, ended 12s ago"},
+		{"still running", prevInfo{start: now.Add(-90 * time.Second)}, "the last request started 1m30s ago and had not ended"},
+		{"rounded", prevInfo{start: now.Add(-1400 * time.Millisecond), ended: now.Add(-400 * time.Millisecond)}, "the last request started 1s ago, ended 0s ago"},
+	} {
+		if got := timingText(c.p, now); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestCacheWatchRemembersWhenTheLastRequestRan(t *testing.T) {
+	w := &cacheWatch{}
+	if p := w.Prev("k"); !p.start.IsZero() || !p.ended.IsZero() || p.edge != "" {
+		t.Errorf("an unknown key has a past: %+v", p)
+	}
+	before := time.Now()
+	f := fp("k", "s", "t", 3)
+	w.See(f, nil)
+	p := w.Prev("k")
+	if p.start.Before(before) || p.start.After(time.Now()) || !p.ended.IsZero() {
+		t.Errorf("after See: %+v", p)
+	}
+	w.Done(f, 0, "") // nothing to say: the reply is not marked as ended either
+	if p = w.Prev("k"); !p.ended.IsZero() {
+		t.Errorf("a Done without data ended the request: %+v", p)
+	}
+	w.Done(f, 5000, "LAX")
+	if p = w.Prev("k"); p.ended.Before(p.start) || p.edge != "LAX" {
+		t.Errorf("after Done: %+v", p)
+	}
+	// A new request starts afresh.
+	w.See(fp("k", "s", "t", 4), nil)
+	if p = w.Prev("k"); !p.ended.IsZero() || p.edge != "" {
+		t.Errorf("a new request inherited the end: %+v", p)
+	}
+}
+
+// The prompt note of the next request says when the last one ran.
+func TestPromptTextSaysWhenTheLastRequestRan(t *testing.T) {
+	promptWatch = &cacheWatch{}
+	t.Cleanup(func() { promptWatch = &cacheWatch{} })
+	f := fp("abcd1234", "11111111", "22222222", 2)
+	if first := promptText(f, nil); strings.Contains(first, "the last request") && !strings.Contains(first, "first request of this key") {
+		t.Errorf("a first request has a past: %q", first)
+	}
+	if running := promptText(f, nil); !strings.Contains(running, "; the last request started ") || !strings.HasSuffix(running, " ago and had not ended") {
+		t.Errorf("running: %q", running)
+	}
+	promptWatch.Done(f, 1000, "")
+	if ended := promptText(f, nil); !strings.Contains(ended, "; the last request started ") || !strings.Contains(ended, " ago, ended ") || strings.HasSuffix(ended, "had not ended") {
+		t.Errorf("ended: %q", ended)
+	}
+}
+
+func TestGapGroup(t *testing.T) {
+	start := time.Unix(100000, 0)
+	for _, c := range []struct {
+		name string
+		prev prevInfo
+		want string
+	}{
+		{"no past", prevInfo{}, ""},
+		{"just now", prevInfo{start: start}, groupGapShort},
+		{"4m59s", prevInfo{start: start.Add(-299 * time.Second)}, groupGapShort},
+		{"5m", prevInfo{start: start.Add(-5 * time.Minute)}, groupGapMiddle},
+		{"9m59s", prevInfo{start: start.Add(-599 * time.Second)}, groupGapMiddle},
+		{"10m", prevInfo{start: start.Add(-10 * time.Minute)}, groupGapLong},
+		{"13m40s", prevInfo{start: start.Add(-820 * time.Second)}, groupGapLong},
+	} {
+		if got := gapGroup(c.prev, start); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestEdgeGroup(t *testing.T) {
+	for _, c := range []struct{ prev, cur, want string }{
+		{"LAX", "LAX", groupEdgeSame},
+		{"LAX", "PIT", groupEdgeOther},
+		{"", "PIT", ""},
+		{"LAX", "", ""},
+	} {
+		if got := edgeGroup(c.prev, c.cur); got != c.want {
+			t.Errorf("edgeGroup(%q, %q) = %q, want %q", c.prev, c.cur, got, c.want)
+		}
+	}
+}
+
+func TestCacheStatsGroups(t *testing.T) {
+	s := &cacheStats{}
+	s.Add(codex.Usage{Input: 100000, Cached: 100000}, groupGapShort, groupEdgeSame)
+	s.Add(codex.Usage{Input: 100000, Cached: 50000}, groupGapShort, "")
+	s.Add(codex.Usage{Input: 200000, Cached: 20000}, groupGapLong, groupEdgeOther)
+	s.Add(codex.Usage{Input: 100}, groupGapLong, groupEdgeOther) // too small: nowhere
+	total, by := s.Take()
+	if !strings.HasPrefix(total, "3 big prompts, 2 read from the cache in part (under 90%), 0 not at all; 42% of 400k") {
+		t.Errorf("total %q", total)
+	}
+	// Fixed order: gaps, then edges; a group nobody was in is left out.
+	want := "started <5m before: 2 prompts, 75% cached; started >10m before: 1 prompts, 10% cached; same edge: 1 prompts, 100% cached; other edge: 1 prompts, 10% cached"
+	if by != want {
+		t.Errorf("groups %q, want %q", by, want)
+	}
+	if total, by = s.Take(); total != "" || by != "" {
+		t.Errorf("counts survived Take: %q %q", total, by)
+	}
+	// Prompts without any group still give a total and no group text.
+	s.Add(codex.Usage{Input: 100000, Cached: 100000})
+	if total, by = s.Take(); total == "" || by != "" {
+		t.Errorf("no groups: %q %q", total, by)
+	}
+}
+
+func TestWriteCacheStatsPrintsTheGroups(t *testing.T) {
+	old := promptStats
+	promptStats = &cacheStats{}
+	t.Cleanup(func() { promptStats = old })
+	promptStats.Add(codex.Usage{Input: 640000, Cached: 600000}, groupGapShort)
+	var b bytes.Buffer
+	writeCacheStats(&b, time.Date(2026, 11, 8, 9, 10, 11, 0, time.Local))
+	lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "[09:10:11] upstream cache [codex]: 1 big prompts") ||
+		lines[1] != "[09:10:11] upstream cache by [codex]: started <5m before: 1 prompts, 93% cached" {
+		t.Errorf("lines %q", lines)
 	}
 }

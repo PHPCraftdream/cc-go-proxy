@@ -111,7 +111,7 @@ func TestPromptTextJoinsTheFingerprintAndTheNote(t *testing.T) {
 	if want := "key abcd1234, system 11111111, 3 tools 22222222, 7 input items; first request of this key since the server started"; first != want {
 		t.Errorf("first = %q, want %q", first, want)
 	}
-	if second := promptText(f, nil); !strings.HasSuffix(second, "; same system prompt and tools as the last request of this key") {
+	if second := promptText(f, nil); !strings.Contains(second, "; same system prompt and tools as the last request of this key") {
 		t.Errorf("second = %q", second)
 	}
 	// Without a key there is no note and no trailing separator.
@@ -187,7 +187,7 @@ func TestPromptTextSaysWhichItemChanged(t *testing.T) {
 	f := fp("abcd1234", "11111111", "22222222", 2)
 	promptText(f, []uint64{4711, 8123})
 	got := promptText(f, []uint64{4711, 9391})
-	if want := "; same system prompt and tools as the last request of this key; history changed at item 1 of 2 (the last request had 2)"; !strings.HasSuffix(got, want) {
+	if want := "; same system prompt and tools as the last request of this key; history changed at item 1 of 2 (the last request had 2)"; !strings.Contains(got, want) {
 		t.Errorf("line %q lacks %q", got, want)
 	}
 	if strings.Contains(got, "9391") || strings.Contains(got, "8123") || strings.Contains(got, "4711") {
