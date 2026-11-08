@@ -15,7 +15,8 @@ const maxWatchedKeys = 512
 type watched struct {
 	f     codex.Fingerprint
 	items []uint64
-	input int // 0 until Done
+	input int    // 0 until Done
+	edge  string // data centre of the reply (Cf-Ray), "" until Done
 }
 
 // cacheWatch remembers the last request of every cache key (a Claude Code
@@ -79,20 +80,33 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 	return text
 }
 
-// Done records the input tokens of the reply to the request seen as f, so the
-// next request of its key can say what the last one was billed: a `cached`
-// below it means the backend dropped part of what it had. A newer request of
-// the key that was seen meanwhile is left alone.
-func (w *cacheWatch) Done(f codex.Fingerprint, input int) {
-	if f.Key == "" || input <= 0 {
+// Done records the input tokens and the data centre (edge) of the reply to the
+// request seen as f, so the next request of its key can say what the last one
+// was billed (a `cached` below it means the backend dropped part of what it
+// had) and where it came from. A newer request of the key that was seen
+// meanwhile is left alone.
+func (w *cacheWatch) Done(f codex.Fingerprint, input int, edge string) {
+	if f.Key == "" || (input <= 0 && edge == "") {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if cur, ok := w.last[f.Key]; ok && cur.f == f {
-		cur.input = input
+		if input > 0 {
+			cur.input = input
+		}
+		if edge != "" {
+			cur.edge = edge
+		}
 		w.last[f.Key] = cur
 	}
+}
+
+// EdgeOf is the data centre of the last finished reply of key, "" when unknown.
+func (w *cacheWatch) EdgeOf(key string) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.last[key].edge
 }
 
 // historyNote compares the input items with the last request's: where the first

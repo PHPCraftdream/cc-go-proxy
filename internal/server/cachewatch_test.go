@@ -206,7 +206,7 @@ func TestCacheWatchSaysWhatTheLastRequestHad(t *testing.T) {
 	if got := w.See(f2, []uint64{1, 2, 3, 4, 5}); strings.Contains(got, "tokens in") {
 		t.Errorf("tokens before the reply ended: %q", got)
 	}
-	w.Done(f2, 711757)
+	w.Done(f2, 711757, "")
 	got := w.See(fp("k", "s", "t", 6), []uint64{1, 2, 3, 4, 5, 6})
 	if !strings.HasSuffix(got, "; history extends the last request by 1 items; the last request had 711757 tokens in") {
 		t.Errorf("note = %q", got)
@@ -224,13 +224,13 @@ func TestCacheWatchDoneIgnoresStrangers(t *testing.T) {
 	old, newer := fp("k", "s", "t", 3), fp("k", "s", "t", 4)
 	w.See(old, nil)
 	w.See(newer, nil)
-	w.Done(old, 1000) // the key now belongs to newer
+	w.Done(old, 1000, "") // the key now belongs to newer
 	if got := w.See(fp("k", "s", "t", 5), nil); strings.Contains(got, "tokens in") {
 		t.Errorf("an older request's reply landed on the newer one: %q", got)
 	}
-	w.Done(fp("", "s", "t", 1), 5)       // no key
-	w.Done(fp("k", "s", "t", 5), 0)      // no tokens
-	w.Done(fp("nope", "s", "t", 1), 100) // unknown key
+	w.Done(fp("", "s", "t", 1), 5, "")       // no key
+	w.Done(fp("k", "s", "t", 5), 0, "")      // no tokens
+	w.Done(fp("nope", "s", "t", 1), 100, "") // unknown key
 	if len(w.last) != 1 {
 		t.Errorf("Done added keys: %v", w.last)
 	}

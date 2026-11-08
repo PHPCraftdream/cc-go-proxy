@@ -83,6 +83,7 @@ func logUpstreamStats(w io.Writer) {
 	ts := upstreamTransports()
 	for now := range time.Tick(statsEvery) {
 		writeUpstreamStats(w, now, ts)
+		writeCacheStats(w, now)
 	}
 }
 

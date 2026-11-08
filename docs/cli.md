@@ -148,7 +148,12 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   in`: a `cached` below it means the backend dropped part of what it had cached. Next to `| cache miss` (a prompt of 10000
   tokens or more with nothing cached) or `| cache partial 64% (469888 of 732972)` (under 90% cached) it tells a miss that
   has a cause (the prefix changed, a compaction, a subagent with a prompt of its own) from one the backend alone explains
-  (same prefix, part or all of it not read from the cache).
+  (same prefix, part or all of it not read from the cache). The note ends with `edge LAX -> PIT` (or `edge same (LAX)`):
+  the data centre in the `cf-ray` of the key's last reply and of this one, to see whether a cache that is lost goes with a
+  change of the way in.
+- `upstream cache [codex]: 41 big prompts, 12 read from the cache in part (under 90%), 1 not at all; 94% of 23.4M input
+  tokens came from the cache`: every 10 minutes, next to the stats line, over all Codex replies of 10000 input tokens or
+  more (not only the slow ones); nothing is printed in a quiet period.
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
   (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below

@@ -51,6 +51,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Log: a big prompt that was read from the cache only in part is marked too: `| cache partial 64% (469888 of 732972)`
   (under 90% cached; `| cache miss` stays for nothing cached). The prompt note adds `the last request had N tokens in`
   once that request's reply had ended, so a `cached` below it shows the backend dropped part of its cache.
+- Log: the prompt note ends with the data centre of the key's last reply and of this one (`edge LAX -> PIT`, from
+  `cf-ray`), and every 10 minutes an `upstream cache [codex]` line counts all big prompts (not only the slow ones): how
+  many were read from the cache in part or not at all and what share of the input tokens came from the cache.
 - Profiles of the real Claude Code on the Claude Platform, with an API key of their own: `ccgp --profile add api
   --type claude_api [--base-url URL]` (provider type `claude_api`). It is a `claude` profile (own Claude Code
   directory, no proxy, runs next to the others without touching them) that gets a key instead of a subscription login:
