@@ -148,8 +148,9 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   history is compared item by item (a hash of each, kept per key): `history extends the last request by 2 items` (the
   prefix is the same), `history changed at item 7 of 214 (the last request had 212)` (item 0 is the system prompt; the
   items before the changed one can still be read from the cache), `history identical to the last request`. For Codex, prompt
-  notes say `new turn`, `turn state sent`, and `turn state returned` or `no turn state returned`; the opaque token is never
-  shown. Identical history alone does not prove the backend caused a miss; model or request controls may differ, and even
+  notes say `new turn`, `turn state sent`, and `turn state returned` (the backend gives the token with the first reply of
+  a turn) or `no turn state returned` (only when no state was in hand and none came back; a step of a tool loop that sent
+  one and got none back is normal and says nothing); the opaque token is never shown. Identical history alone does not prove the backend caused a miss; model or request controls may differ, and even
   with matching settings the backend may not have read its cache. When the reply of the last request had ended, the note adds `the last
   request had 711757 tokens in`: a `cached` below it means the backend dropped part of what it had cached. Concurrent
   calls report `2 other requests of this key running`; if history diverges while the last request is still running, the
@@ -168,6 +169,16 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   splits the same prompts by how long before the last request of their key started and by whether its reply came through
   the same data centre; it shows which of the two goes with a lost cache. It also splits prompts by whether turn state
   was sent (`turn state sent` / `turn state not sent`).
+- `upstream link [codex]: 41 replies; 9 new connections, TLS median 0.9s, max 2.7s; upload of 38 big bodies 612 KiB/s
+  overall, slowest 90 KiB/s; 5 broken calls (3 sent again by ccgp, 2 reached the client): 3 connect timeout, 1 connection
+  lost, 1 silence (health-ping close)`: every 10 minutes, next to the stats line, how the link to the backend behaved in
+  the window (nothing is printed in a quiet one). Bodies of 256 KiB or more count for the upload speed. Causes: `connect
+  timeout` (TLS handshake or no connection), `connection lost`, `silence (health-ping close)` (about 45 s without a
+  byte), `no reply in time`, `reset`, `other`; a call the client left is not counted. It tells a bad stretch of the
+  network (slow handshakes and uploads, breaks everywhere) from a slow model (none of them).
+- A slow, failed or cancelled stream's line has `time connect 300ms, upload 21.7s, headers wait 8s, first token 2s,
+  stream 8s (mostly upload on the link, 54%)`: where its time went. `connect` and `upload` (and the time before the
+  last try) are the link's, the rest the backend's.
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
   (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below

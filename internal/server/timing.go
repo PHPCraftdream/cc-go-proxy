@@ -254,10 +254,41 @@ func (u *upstreamTrace) silenceText(end time.Time) string {
 	}
 	d := end.Sub(u.read)
 	text := "silent for " + d.Round(100*time.Millisecond).String()
-	if limit := connpool.HealthLimit(); d >= limit-2*time.Second && d <= limit+2*time.Second {
+	if limit := connpool.HealthLimit(); atHealthLimit(d, limit) {
 		text += " (the time of a health-ping close, limit " + limit.String() + ")"
 	}
 	return text
+}
+
+// atHealthLimit says d is within two seconds of the health-ping limit.
+func atHealthLimit(d, limit time.Duration) bool {
+	return d >= limit-2*time.Second && d <= limit+2*time.Second
+}
+
+// pingClosed says the reply had been silent for about one health-ping limit when
+// it failed at end.
+func (u *upstreamTrace) pingClosed(end time.Time) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return !u.read.IsZero() && atHealthLimit(end.Sub(u.read), connpool.HealthLimit())
+}
+
+// linkSample is what the link stats take from a finished reply: the TLS time of
+// a connection opened for it (0 = reused or warm), the bytes sent and how long
+// the body took to write.
+func (u *upstreamTrace) linkSample() (tls time.Duration, sent int, wrote time.Duration) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.calls > 0 && !u.reused && !u.warm {
+		tls = u.tls
+	}
+	if u.wire != nil {
+		sent = u.wire.Sent
+	}
+	if !u.got.IsZero() && !u.wrote.IsZero() && u.wrote.After(u.got) {
+		wrote = u.wrote.Sub(u.got)
+	}
+	return tls, sent, wrote
 }
 
 // slow reports whether a reply that ended at end is worth a log line.
@@ -327,7 +358,11 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	if len(notes) > 0 {
 		req += " (" + strings.Join(notes, ", ") + ")"
 	}
-	parts := []string{conn, strings.Join(waits, ", "), req}
+	parts := []string{conn, strings.Join(waits, ", ")}
+	if split := phaseText(u.phasesLocked(tr.FirstDelta, end)); split != "" {
+		parts = append(parts, split)
+	}
+	parts = append(parts, req)
 	if us := tr.Usage; us != (codex.Usage{}) {
 		tokens := fmt.Sprintf("tokens in %d (cached %d) out %d (reasoning %d)", us.Input, us.Cached, us.Output, us.Reasoning)
 		if mark := cacheMark(us); mark != "" {
@@ -348,6 +383,105 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	return strings.Join(parts, " | ")
 }
 
+// phase is one stretch of a call's time; side says whether it is spent on the
+// link (connect, upload) or at the backend.
+type phase struct {
+	name, side string
+	d          time.Duration
+}
+
+// phaseMin is the shortest stretch listed in the time split.
+const phaseMin = 50 * time.Millisecond
+
+// phasesLocked splits the call, from its start to end, into the stretches the
+// trace has stamps for: the time before the last try (earlier tries, token
+// refresh), connect, upload, wait for the headers, first token, stream. A
+// stretch without both stamps is left out; the caller holds u.mu.
+func (u *upstreamTrace) phasesLocked(firstToken, end time.Time) []phase {
+	ps := u.stretchesLocked(firstToken, end)
+	for _, p := range ps {
+		if p.d > end.Sub(u.start) {
+			return nil // stamps of different clocks: nothing sensible to say
+		}
+	}
+	return ps
+}
+
+func (u *upstreamTrace) stretchesLocked(firstToken, end time.Time) []phase {
+	var ps []phase
+	add := func(name, side string, from, to time.Time) {
+		if from.IsZero() || to.IsZero() || to.Before(from) {
+			return
+		}
+		ps = append(ps, phase{name, side, to.Sub(from)})
+	}
+	add("before the last try", "link", u.start, u.attempt)
+	add("connect", "link", u.attempt, u.got)
+	add("upload", "link", u.got, u.wrote)
+	headers := u.headers
+	if headers.Before(u.attempt) {
+		headers = time.Time{} // the reply of an earlier try
+	}
+	if headers.IsZero() {
+		add("no reply", "backend", u.wrote, end)
+		return ps
+	}
+	waitFrom := u.wrote
+	for _, t := range []time.Time{u.got, u.attempt, u.start} {
+		if waitFrom.IsZero() {
+			waitFrom = t
+		}
+	}
+	add("headers wait", "backend", waitFrom, headers)
+	last := headers
+	if !firstToken.IsZero() && !firstToken.Before(headers) {
+		add("first token", "backend", headers, firstToken)
+		last = firstToken
+	}
+	add("stream", "backend", last, end)
+	return ps
+}
+
+// phaseText lists the stretches of at least phaseMin and names the longest with
+// its share, so a slow model is told from a slow link: "time connect 12ms,
+// upload 8.2s, stream 2m10s (mostly stream at the backend, 79%)". "" when
+// nothing is known.
+func phaseText(ps []phase) string {
+	var total, longest time.Duration
+	best := -1
+	for i, p := range ps {
+		total += p.d
+		if best < 0 || p.d > longest {
+			best, longest = i, p.d
+		}
+	}
+	if best < 0 || total <= 0 {
+		return ""
+	}
+	var parts []string
+	for _, p := range ps {
+		if p.d >= phaseMin {
+			parts = append(parts, p.name+" "+roundDur(p.d))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	side := "at the backend"
+	if ps[best].side == "link" {
+		side = "on the link"
+	}
+	return fmt.Sprintf("time %s (mostly %s %s, %d%%)", strings.Join(parts, ", "), ps[best].name, side, int(longest*100/total))
+}
+
+// roundDur rounds to 100 ms from one second on, else to a millisecond.
+func roundDur(d time.Duration) string {
+	if d >= time.Second {
+		return d.Round(100 * time.Millisecond).String()
+	}
+	return d.Round(time.Millisecond).String()
+}
+
 func turnRoutingNote(routing *codex.Routing, newTurn bool) string {
 	if routing == nil {
 		return ""
@@ -359,9 +493,13 @@ func turnRoutingNote(routing *codex.Routing, newTurn bool) string {
 	if routing.Sent() {
 		notes = append(notes, "turn state sent")
 	}
-	if routing.Returned() {
+	// The backend gives a token with the first reply of a turn; a continuation
+	// that sent one and got none back is normal, so only "nothing in hand and
+	// nothing came back" is worth a note.
+	switch {
+	case routing.Returned():
 		notes = append(notes, "turn state returned")
-	} else {
+	case !routing.Sent():
 		notes = append(notes, "no turn state returned")
 	}
 	return strings.Join(notes, "; ")

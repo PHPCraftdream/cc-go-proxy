@@ -52,7 +52,8 @@ func TestTraceSummary(t *testing.T) {
 	tr := &codex.Translator{FirstDelta: start.Add(40 * time.Second)}
 	end := start.Add(3 * time.Minute)
 	got := u.summary(tr, end, 3<<20)
-	want := "conn reused (idle 3s), 2 upstream calls | headers 25s, first token 40s, total 3m0s, ended " + end.Format("15:04:05") + " | request 3.0 MiB"
+	want := "conn reused (idle 3s), 2 upstream calls | headers 25s, first token 40s, total 3m0s, ended " + end.Format("15:04:05") +
+		" | time headers wait 25s, first token 15s, stream 2m20s (mostly stream at the backend, 77%) | request 3.0 MiB"
 	if got != want {
 		t.Errorf("summary = %q\nwant      %q", got, want)
 	}

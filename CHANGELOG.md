@@ -44,6 +44,16 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- Log: `upstream link [codex]` every 10 minutes: how the link to the backend behaved in the window - replies, new
+  connections with the median and the longest TLS handshake, the upload speed of big request bodies (overall and the
+  slowest) and the broken calls by cause (connect timeout, connection lost, health-ping close, no reply in time, reset),
+  split into the ones ccgp sent again itself and the ones the client saw. A bad stretch of the provider's network now
+  shows in one line instead of in a hand count of `stream failed` lines.
+- Log: a slow, failed or cancelled stream now carries the split of its time (`time connect 300ms, upload 21.7s,
+  headers wait 8s, first token 2s, stream 8s (mostly upload on the link, 54%)`), so a slow model is told from a slow link.
+- Log: a request that sent a turn state and got none back (a step of a tool loop: the backend gives the token with the
+  first reply of a turn) no longer says `no turn state returned`; the note stays for a request that had no state and got
+  none.
 - Log: a refusal by an Anthropic-style provider (z.ai: the 429s) now says why. The line of the request gives the
   error's type or code and message (`1302: Rate limit reached for requests`), the limit headers of a 429 or 503
   (`retry-after`, `x-ratelimit-*`) and the request id; before it was the status alone. Keys and tokens a message echoes are

@@ -148,6 +148,15 @@ func logReconnect(w io.Writer, profile, model string, n int, since time.Duration
 		time.Now().Format("15:04:05"), n, since.Round(time.Millisecond), profile, model, oneLine(reason, maxLogErr), conn, sent)
 }
 
+// reconnectHook counts a call connpool sent again as a break of the link and
+// logs it.
+func (u *upstreamTrace) reconnectHook(profile, model string) func(n int, err error, since time.Duration, conn, sent string) {
+	return func(n int, err error, since time.Duration, conn, sent string) {
+		noteBreak(err.Error(), u.pingHint(err, time.Now()) != "", true)
+		logReconnect(logOut, profile, model, n, since, err.Error(), conn, sent)
+	}
+}
+
 // logStreamCanceled prints the line for a stream the client left.
 func logStreamCanceled(w io.Writer, started time.Time, profile, model, extra string) {
 	_, _ = fmt.Fprintf(w, "[%s] stream canceled by client after %s [%s] %s: %s\n", started.Format("15:04:05"),
@@ -232,6 +241,10 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	promptWatch.Done(trace.fp.Key, trace.promptGeneration, tr.Usage.Input, trace.edge)
 	promptStats.Add(tr.Usage, gapGroup(trace.prev, trace.start), edgeGroup(trace.prev.edge, trace.edge), turnStateGroup(trace.routing != nil && trace.routing.Sent()))
 	ids := upstreamIDs(up.Header)
+	linkHealth.Reply(trace.linkSample())
+	if tr.Failed != "" && ctx.Err() == nil {
+		noteBreak(tr.Failed, trace.pingClosed(end), false)
+	}
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
 		logStreamCanceled(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
@@ -342,9 +355,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		originalCancel()
 	}
 	trace.prompt = promptText(trace.fp, registration, time.Now())
-	trace.onRetry = func(n int, err error, since time.Duration, conn, sent string) {
-		logReconnect(logOut, cfg.Profile, probe.Model+" -> "+model, n, since, err.Error(), conn, sent)
-	}
+	trace.onRetry = trace.reconnectHook(cfg.Profile, probe.Model+" -> "+model)
 	trace.wire = &codex.Wire{}
 	obs := trace.observer()
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithRouting(codex.WithWire(ctx, trace.wire), routing), trace.clientTrace()), obs)
@@ -409,6 +420,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		// The log gets the hint and how far the request got; the client the message.
 		now := time.Now()
 		msg := err.Error()
+		noteBreak(msg, trace.pingHint(err, now) != "", false)
 		if hint := trace.pingHint(err, now); hint != "" {
 			msg += " " + hint
 		}
