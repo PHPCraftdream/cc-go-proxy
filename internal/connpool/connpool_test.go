@@ -138,6 +138,70 @@ func TestLanesRenewInTurn(t *testing.T) {
 	}
 }
 
+// A lane nobody picked for long is renewed lazily: the request that finds it due
+// stays on the old pool while the next one warms up. Past staleFactor*maxAge the
+// old connection is about to be closed by the far end, so the request must not
+// go there: the lane gets a fresh pool at once.
+func TestStaleLaneTakesNoRequestOnTheOldPool(t *testing.T) {
+	// idleLane: one lane with a used pool, whose warm-up never opens, left alone for age.
+	idleLane := func(age time.Duration) (*Transport, *lane, *pool, *clock) {
+		tr := New(time.Minute, 1, 3, plain)
+		c := withClock(tr)
+		tr.target = &url.URL{Scheme: "https", Host: "warm.invalid:443"}
+		tr.spawn = func(func()) {}
+		first := tr.acquire(nil)
+		tr.release(first)
+		c.t = c.t.Add(age)
+		return tr, tr.lanes[0], first, c
+	}
+
+	for _, age := range []time.Duration{time.Minute, 2 * time.Minute} { // due, and exactly at the bound
+		tr, l, first, _ := idleLane(age)
+		p := tr.acquire(nil)
+		tr.release(p)
+		if p != first || l.warming == nil {
+			t.Fatalf("age %v: a due lane must serve on its old pool and warm the next (same %v, warming %v)", age, p == first, l.warming != nil)
+		}
+	}
+
+	tr, l, first, c := idleLane(2*time.Minute + time.Second)
+	p := tr.acquire(nil)
+	if p == first || l.cur != p {
+		t.Fatal("a stale lane served a request on its old pool")
+	}
+	if l.warming != nil {
+		t.Fatal("the stale lane kept a warm-up, which could switch it again")
+	}
+	if !l.born.Equal(c.t) {
+		t.Fatalf("the fresh pool is born at %v, want now", l.born)
+	}
+	if len(tr.draining) != 0 {
+		t.Fatalf("an idle stale pool is kept draining: %v", tr.draining)
+	}
+	tr.release(p)
+}
+
+// A stale pool with a request still running drains, and the request is not cut.
+func TestStaleLaneKeepsItsRunningRequest(t *testing.T) {
+	tr := New(time.Minute, 1, 3, plain)
+	c := withClock(tr)
+
+	long := tr.acquire(nil) // a long request, never released yet
+	c.t = c.t.Add(3 * time.Minute)
+	p := tr.acquire(nil)
+	if p == long {
+		t.Fatal("a stale lane served a request on its old pool")
+	}
+	if len(tr.draining) != 1 || tr.draining[0] != long {
+		t.Fatalf("the stale pool with a running request must drain: %v", tr.draining)
+	}
+	tr.release(long)
+	if len(tr.draining) != 0 {
+		t.Fatalf("drained pool kept after its last request: %v", tr.draining)
+	}
+	tr.release(p)
+}
+
 func TestFailedPoolIsReplaced(t *testing.T) {
 	tr := New(time.Hour, 1, 1, plain)
 	p := tr.acquire(nil)

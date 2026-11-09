@@ -285,7 +285,7 @@ func TestStalledBackendFailsAtHeaderTimeout(t *testing.T) {
 	defer func() { HTTPClient = old }()
 
 	start := time.Now()
-	resp, err := post(context.Background(), backend.URL, []byte("{}"), "", &oauth.Tokens{AccessToken: "t"})
+	resp, err := post(context.Background(), backend.URL, []byte("{}"), "", nil, &oauth.Tokens{AccessToken: "t"})
 	if err == nil {
 		resp.Body.Close()
 		t.Fatal("stalled backend: no error")
@@ -302,6 +302,50 @@ func TestDefaultClientHasHeaderTimeout(t *testing.T) {
 	tr, ok := HTTPClient.Transport.(*connpool.Router)
 	if !ok || tr.Pool().ResponseHeaderTimeout != ResponseHeaderTimeout {
 		t.Errorf("transport = %#v", HTTPClient.Transport)
+	}
+}
+
+func TestSessionHeaders(t *testing.T) {
+	h := sessionHeaders(&Request{Model: "gpt-x", PromptCacheKey: "abc123"})
+	if h.Get("session-id") != "abc123" || h.Get("x-codex-routing-hint") != "model=gpt-x" {
+		t.Errorf("headers = %v", h)
+	}
+	if h := sessionHeaders(&Request{}); len(h) != 0 {
+		t.Errorf("headers of an empty request = %v, want none", h)
+	}
+}
+
+func TestCallSendsTheSessionHeaders(t *testing.T) {
+	var calls atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if r.Header.Get("session-id") != "key1" || r.Header.Get("x-codex-routing-hint") != "model=m" {
+			t.Errorf("call %d: session headers = %v", n, r.Header)
+		}
+		if n == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte("data: {}\n\n"))
+	}))
+	defer backend.Close()
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"new","refresh_token":"rt2"}`))
+	}))
+	defer issuer.Close()
+
+	store := oauth.Store{Path: filepath.Join(t.TempDir(), "o.json")}
+	if err := store.Save(&oauth.Tokens{AccessToken: "old", RefreshToken: "rt1", LastRefresh: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	s := &oauth.Session{Store: store, Client: &oauth.Client{Issuer: issuer.URL}}
+	resp, err := Call(context.Background(), backend.URL, s, &Request{Model: "m", PromptCacheKey: "key1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d, want 2: the retry after 401 must carry the headers too", calls.Load())
 	}
 }
 

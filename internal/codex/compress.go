@@ -59,19 +59,19 @@ func wireFrom(ctx context.Context) *Wire {
 // send posts body, compressed when it is big enough. A 400 or 415 for a
 // compressed body is asked again plain; only when that is accepted is the
 // compression given up for good (a genuinely bad request fails both ways).
-func send(ctx context.Context, url string, body []byte, tok *oauth.Tokens) (*http.Response, error) {
+func send(ctx context.Context, url string, body []byte, hdr http.Header, tok *oauth.Tokens) (*http.Response, error) {
 	w := wireFrom(ctx)
 	if w != nil {
 		*w = Wire{Raw: len(body), Sent: len(body)}
 	}
 	if len(body) < compressThreshold || noCompress.Load() {
-		return post(ctx, url, body, "", tok)
+		return post(ctx, url, body, "", hdr, tok)
 	}
 	packed := encoder.EncodeAll(body, nil)
 	if w != nil {
 		w.Sent, w.Encoding = len(packed), "zstd"
 	}
-	resp, err := post(ctx, url, packed, "zstd", tok)
+	resp, err := post(ctx, url, packed, "zstd", hdr, tok)
 	if err != nil || (resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusUnsupportedMediaType) {
 		return resp, err
 	}
@@ -81,7 +81,7 @@ func send(ctx context.Context, url string, body []byte, tok *oauth.Tokens) (*htt
 	if w != nil {
 		w.Sent, w.Encoding = len(body), ""
 	}
-	resp, err = post(ctx, url, body, "", tok)
+	resp, err = post(ctx, url, body, "", hdr, tok)
 	if err == nil && resp.StatusCode/100 == 2 {
 		if !noCompress.Swap(true) && Notice != nil {
 			Notice(fmt.Sprintf("codex: the backend refused a compressed body (HTTP %d) and took it plain: no compression from now on", refused))

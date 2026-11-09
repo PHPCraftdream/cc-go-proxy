@@ -57,6 +57,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Log: the prompt note says how long ago the key's last request started and ended (`the last request started 8m19s ago,
   ended 12s ago`), and an `upstream cache by [codex]` line splits the cache share by that gap (under 5 minutes, 5-10,
   over 10) and by whether the data centre changed, to find out what goes with a lost cache.
+- Codex requests carry `session-id` (the prompt cache key, stable for a Claude Code session) and `x-codex-routing-hint:
+  model=<model>`, as the official Codex client does; before, nothing tied a request to its conversation, which may be
+  why the backend lost part of its prompt cache for half of the requests. An experiment: the `upstream cache [codex]`
+  lines before and after show whether the share of input tokens read from the cache rises.
 - Profiles of the real Claude Code on the Claude Platform, with an API key of their own: `ccgp --profile add api
   --type claude_api [--base-url URL]` (provider type `claude_api`). It is a `claude` profile (own Claude Code
   directory, no proxy, runs next to the others without touching them) that gets a key instead of a subscription login:
@@ -157,6 +161,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   reset by the backend or the network.
 
 ### Fixed
+
+- A request could die mid-reply on a connection that was about to be closed by the far end (`unexpected EOF`, three
+  at once after a quiet half hour, all on connections of 29m54s-29m59s). A lane is renewed only when a request picks
+  it, and the request that found it due still used the old pool while the next one warmed up; a lane nobody picked
+  for long therefore handed out a connection near the 30 minutes after which chatgpt.com closes it, and a reply that
+  had begun could not be retried. A pool older than twice the renewal time (20 minutes) now takes no request: the lane
+  gets a fresh pool at once (one handshake) and the old one drains.
 
 - The server could die with `panic: id (N) <= evictCount (M)` from Go's HTTP/2 header encoder, and every request
   after it failed until the next start. The headers `anthropic-version`, `anthropic-beta` and `Accept` that go to an

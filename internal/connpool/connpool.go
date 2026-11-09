@@ -41,6 +41,12 @@ const (
 	DefaultTotal  = 10
 )
 
+// A lane is renewed only when a request picks it, so one that nobody picked for
+// long still holds a pool whose connections the far end is about to close (a
+// request on such a connection died mid-reply, nothing could retry it). A pool
+// older than staleFactor*maxAge takes no request: the lane gets a fresh one at once.
+const staleFactor = 2
+
 // forgetAfter drops a draining pool from the count even if a response body
 // was never closed, so a leak cannot block renewals for good.
 const forgetAfter = 3 * DefaultMaxAge
@@ -279,6 +285,13 @@ func (t *Transport) acquire(failed *pool) *pool {
 		switch {
 		case l.cur == nil:
 			l.cur = t.newPoolLocked()
+		case now.Sub(l.born) > staleFactor*t.maxAge:
+			if l.warming != nil {
+				idle = append(idle, l.warming)
+				l.warming = nil // its warm-up must not switch the lane again
+			}
+			idle = t.retireLocked(l.cur, now, idle)
+			l.cur, l.born = t.newPoolLocked(), now
 		case now.Sub(l.born) >= t.maxAge:
 			idle, warm = t.renewLocked(l, now, idle)
 		}

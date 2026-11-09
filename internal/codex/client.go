@@ -51,7 +51,8 @@ func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (
 		return nil, err
 	}
 	url := strings.TrimRight(baseURL, "/") + "/responses"
-	resp, err := send(ctx, url, body, tok)
+	hdr := sessionHeaders(req)
+	resp, err := send(ctx, url, body, hdr, tok)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
@@ -60,11 +61,11 @@ func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (
 	if tok, err = s.ForceRefresh(ctx, tok.AccessToken); err != nil {
 		return nil, err
 	}
-	return send(ctx, url, body, tok)
+	return send(ctx, url, body, hdr, tok)
 }
 
 // post sends body once; encoding is its Content-Encoding ("" for none).
-func post(ctx context.Context, url string, body []byte, encoding string, tok *oauth.Tokens) (*http.Response, error) {
+func post(ctx context.Context, url string, body []byte, encoding string, hdr http.Header, tok *oauth.Tokens) (*http.Response, error) {
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -80,7 +81,25 @@ func post(ctx context.Context, url string, body []byte, encoding string, tok *oa
 	}
 	r.Header.Set("originator", originator)
 	r.Header.Set("User-Agent", originator+" (ccgp)")
+	for k, v := range hdr {
+		r.Header[k] = v
+	}
 	return HTTPClient.Do(r)
+}
+
+// sessionHeaders are what the official Codex client sends to tie a request to
+// its conversation: the session id (here the prompt cache key, which is stable
+// per Claude Code session) and a routing hint naming the model. The backend may
+// route and cache by them; without them every request looked like a new client.
+func sessionHeaders(req *Request) http.Header {
+	h := http.Header{}
+	if req.PromptCacheKey != "" {
+		h["session-id"] = []string{req.PromptCacheKey}
+	}
+	if req.Model != "" {
+		h["x-codex-routing-hint"] = []string{"model=" + req.Model}
+	}
+	return h
 }
 
 // ErrorType maps an upstream HTTP status to an Anthropic error type.
