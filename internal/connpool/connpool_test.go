@@ -1374,3 +1374,10 @@ func TestPoolKeepsIdleConnections(t *testing.T) {
 		t.Fatalf("server accepted %d connections, want 1: the idle one was closed", n)
 	}
 }
+
+// transport returns the Transport of a way out, creating it (for checks that inspect a route).
+func (r *Router) transport(c proxydial.Choice) *Transport {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.transportLocked(c)
+}
