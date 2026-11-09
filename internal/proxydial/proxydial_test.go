@@ -1,8 +1,10 @@
 package proxydial
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +15,192 @@ import (
 	"testing"
 	"time"
 )
+
+func setHandshakeTimeout(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	previous := handshakeTimeout
+	handshakeTimeout = timeout
+	t.Cleanup(func() { handshakeTimeout = previous })
+}
+
+func silentProxy(t *testing.T) (string, <-chan struct{}) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	released := make(chan struct{})
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			close(released)
+			return
+		}
+		go func() {
+			defer func() { _ = c.Close() }()
+			_, _ = io.Copy(io.Discard, c)
+			close(released)
+		}()
+		timer := time.NewTimer(6 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-released:
+		case <-timer.C:
+			_ = c.Close()
+		}
+	}()
+	return ln.Addr().String(), released
+}
+
+func dialSilentProxy(t *testing.T, scheme string, ctx context.Context) (net.Conn, error, time.Duration, <-chan struct{}) {
+	t.Helper()
+	addr, released := silentProxy(t)
+	u, err := Parse(scheme + "://" + addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	c, err := Dialer(u, nil)(ctx, "tcp", "example.com:443")
+	return c, err, time.Since(started), released
+}
+
+func assertTimeoutAndReleased(t *testing.T, c net.Conn, err error, elapsed, limit time.Duration, released <-chan struct{}) {
+	t.Helper()
+	if c != nil {
+		_ = c.Close()
+		t.Fatal("dial returned a connection")
+	}
+	if elapsed > limit {
+		t.Fatalf("dial took %s, want <= %s; no bounded timeout", elapsed, limit)
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("dial error = %v, want timeout", err)
+	}
+	select {
+	case <-released:
+	case <-time.After(time.Second):
+		t.Fatal("proxy socket was not released")
+	}
+}
+
+func TestHandshakeTimeoutSilentProxy(t *testing.T) {
+	setHandshakeTimeout(t, 500*time.Millisecond)
+	for _, scheme := range []string{"socks5", "http"} {
+		t.Run(scheme+"-without-context-deadline", func(t *testing.T) {
+			c, err, elapsed, released := dialSilentProxy(t, scheme, context.Background())
+			assertTimeoutAndReleased(t, c, err, elapsed, 3*time.Second, released)
+		})
+		t.Run(scheme+"-later-context-deadline", func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			c, err, elapsed, released := dialSilentProxy(t, scheme, ctx)
+			assertTimeoutAndReleased(t, c, err, elapsed, 3*time.Second, released)
+		})
+	}
+}
+
+func TestHandshakeTimeoutHonorsEarlierContextDeadline(t *testing.T) {
+	setHandshakeTimeout(t, 3*time.Second)
+	for _, scheme := range []string{"socks5", "http"} {
+		t.Run(scheme, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+			defer cancel()
+			c, err, elapsed, released := dialSilentProxy(t, scheme, ctx)
+			if c != nil {
+				_ = c.Close()
+				t.Fatal("dial returned a connection")
+			}
+			if elapsed > 1500*time.Millisecond {
+				t.Fatalf("dial took %s, want earlier context deadline honored", elapsed)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("dial error = %v, want context deadline exceeded", err)
+			}
+			select {
+			case <-released:
+			case <-time.After(time.Second):
+				t.Fatal("proxy socket was not released")
+			}
+		})
+	}
+}
+
+func TestHandshakeTimeoutHonorsCancellation(t *testing.T) {
+	setHandshakeTimeout(t, 3*time.Second)
+	for _, scheme := range []string{"socks5", "http"} {
+		t.Run(scheme, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cancelTimer := time.AfterFunc(150*time.Millisecond, cancel)
+			defer cancelTimer.Stop()
+			c, err, elapsed, released := dialSilentProxy(t, scheme, ctx)
+			if c != nil {
+				_ = c.Close()
+				t.Fatal("dial returned a connection")
+			}
+			if elapsed > 1500*time.Millisecond {
+				t.Fatalf("dial took %s, want cancellation honored", elapsed)
+			}
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("dial error = %v, want context canceled", err)
+			}
+			select {
+			case <-released:
+			case <-time.After(time.Second):
+				t.Fatal("proxy socket was not released")
+			}
+		})
+	}
+}
+
+func TestProxyTunnelClearsHandshakeAndContextDeadlines(t *testing.T) {
+	setHandshakeTimeout(t, 500*time.Millisecond)
+	srv := target(t)
+	for _, scheme := range []string{"socks5", "http"} {
+		t.Run(scheme, func(t *testing.T) {
+			proxy := ""
+			if scheme == "socks5" {
+				addr, _ := socksServer(t, "", "", 0)
+				proxy = "socks5://" + addr
+			} else {
+				proxy = connectProxy(t, "").URL
+			}
+			u, err := Parse(proxy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targetURL, err := url.Parse(srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			defer cancel()
+			c, err := Dialer(u, nil)(ctx, "tcp", targetURL.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = c.Close() }()
+			<-ctx.Done()
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("context error = %v", ctx.Err())
+			}
+			if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: "+targetURL.Host+"\r\nConnection: close\r\n\r\n"); err != nil {
+				t.Fatalf("write through established tunnel after deadlines: %v", err)
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodGet})
+			if err != nil {
+				t.Fatalf("read through established tunnel after deadlines: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || !strings.HasPrefix(string(body), "hello through") {
+				t.Fatalf("response body = %q, %v", body, err)
+			}
+		})
+	}
+}
 
 func target(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
