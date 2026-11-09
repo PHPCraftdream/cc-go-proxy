@@ -57,6 +57,10 @@ func (c *Config) MaxBodyBytes() int {
 // IsEnvMode reports env-only mode (no config.ktav).
 func (c *Config) IsEnvMode() bool { return c.ConfigFile == "" }
 
+// CodexWebsocket reports that Codex requests go over the websocket transport
+// (CODEX_TRANSPORT=websocket); the default is HTTP.
+func (c *Config) CodexWebsocket() bool { return c.CodexTransport == "websocket" }
+
 // CacheKey uniquely identifies a (provider, model) combination for capability caching
 // Using a struct as map key provides type safety and zero collision risk
 type CacheKey struct {
@@ -86,6 +90,7 @@ type Config struct {
 	// Optional
 	OpenAIBaseURL   string
 	AnthropicAPIKey string
+	CodexTransport  string
 
 	// Model routing (pattern-based if not set)
 	OpusModel   string
@@ -155,6 +160,7 @@ func Load() (*Config, error) {
 		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:   getEnvOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+		CodexTransport:  normalizeCodexTransport(os.Getenv("CODEX_TRANSPORT")),
 
 		// Pattern-based routing (optional overrides)
 		OpusModel:   os.Getenv("ANTHROPIC_DEFAULT_OPUS_MODEL"),
@@ -236,6 +242,15 @@ func getEnvOrDefault(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func normalizeCodexTransport(value string) string {
+	switch strings.ToLower(value) {
+	case "websocket", "ws":
+		return "websocket"
+	default:
+		return "http"
+	}
 }
 
 // DetectProvider identifies the provider type based on base URL
