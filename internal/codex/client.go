@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"regexp"
@@ -113,23 +114,52 @@ func headerValueFold(h http.Header, name string) (string, bool) {
 	return "", false
 }
 
-// Call POSTs req to baseURL/responses with OAuth headers. On 401 it forces a
-// token refresh and retries once. Caller closes the body.
-func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (*http.Response, error) {
-	if baseURL == "" {
-		baseURL = DefaultBaseURL
-	}
+// Prepared is an immutable snapshot of a Codex request for reuse across retries.
+type Prepared struct {
+	body     []byte
+	headers  http.Header
+	packed   []byte
+	packOnce sync.Once
+}
+
+func (p *Prepared) compressed() []byte {
+	p.packOnce.Do(func() { p.packed = encoder.EncodeAll(p.body, nil) })
+	return p.packed
+}
+
+// PrepareRequest serializes req and snapshots its session headers for retries.
+func PrepareRequest(req *Request) (*Prepared, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
+	}
+	return &Prepared{body: body, headers: sessionHeaders(req)}, nil
+}
+
+// Call POSTs req to baseURL/responses with OAuth headers. On 401 it forces a
+// token refresh and retries once. Caller closes the body.
+func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (*http.Response, error) {
+	prepared, err := PrepareRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	return CallPrepared(ctx, baseURL, s, prepared)
+}
+
+// CallPrepared sends a prepared request, reusing its snapshot for OAuth retry.
+func CallPrepared(ctx context.Context, baseURL string, s *oauth.Session, p *Prepared) (*http.Response, error) {
+	if p == nil {
+		return nil, errors.New("codex: nil prepared request")
+	}
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
 	}
 	tok, err := s.Token(ctx)
 	if err != nil {
 		return nil, err
 	}
 	url := strings.TrimRight(baseURL, "/") + "/responses"
-	hdr := sessionHeaders(req)
-	resp, err := send(ctx, url, body, hdr, tok)
+	resp, err := sendPrepared(ctx, url, p, tok)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
@@ -138,7 +168,7 @@ func Call(ctx context.Context, baseURL string, s *oauth.Session, req *Request) (
 	if tok, err = s.ForceRefresh(ctx, tok.AccessToken); err != nil {
 		return nil, err
 	}
-	return send(ctx, url, body, hdr, tok)
+	return sendPrepared(ctx, url, p, tok)
 }
 
 // post sends body once; encoding is its Content-Encoding ("" for none).
@@ -171,6 +201,11 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 		}
 	}
 	resp, err := HTTPClient.Do(r)
+	if resp != nil && resp.Request != nil {
+		resp.Request = resp.Request.Clone(ctx)
+		resp.Request.Body = http.NoBody
+		resp.Request.GetBody = nil
+	}
 	if routing != nil && resp != nil {
 		routing.capture(resp.Header)
 	}

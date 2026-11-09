@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sync/atomic"
+	"net/url"
+	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 
@@ -21,12 +23,73 @@ import (
 // one gains nothing.
 var compressThreshold = 32 << 10
 
-// noCompress is set once the backend refused a compressed body that it then
-// accepted as plain: the rest of the run sends plain bodies.
-var noCompress atomic.Bool
+// Keep the endpoint refusal cache bounded.
+const maxRefusedEndpoints = 128
+
+var compressionRefusals = struct {
+	sync.Mutex
+	endpoints map[string]uint64
+	next      uint64
+}{endpoints: make(map[string]uint64)}
+
+func normalizedEndpoint(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	scheme, host := strings.ToLower(u.Scheme), strings.ToLower(u.Host)
+	path := strings.TrimRight(strings.ToLower(u.Path), "/")
+	if path == "/responses" {
+		path = ""
+	} else {
+		path = strings.TrimSuffix(path, "/responses")
+	}
+	path = strings.TrimRight(path, "/")
+	return scheme + "://" + host + path
+}
+
+func compressionRefused(raw string) bool {
+	endpoint := normalizedEndpoint(raw)
+	if endpoint == "" {
+		return false
+	}
+	compressionRefusals.Lock()
+	defer compressionRefusals.Unlock()
+	_, ok := compressionRefusals.endpoints[endpoint]
+	return ok
+}
+
+func refuseCompression(raw string) (string, bool) {
+	endpoint := normalizedEndpoint(raw)
+	if endpoint == "" {
+		return "", false
+	}
+	compressionRefusals.Lock()
+	defer compressionRefusals.Unlock()
+	if _, ok := compressionRefusals.endpoints[endpoint]; ok {
+		return endpoint, false
+	}
+	if len(compressionRefusals.endpoints) >= maxRefusedEndpoints {
+		var oldest string
+		var oldestSequence uint64
+		for key, sequence := range compressionRefusals.endpoints {
+			if oldest == "" || sequence < oldestSequence {
+				oldest, oldestSequence = key, sequence
+			}
+		}
+		delete(compressionRefusals.endpoints, oldest)
+	}
+	compressionRefusals.next++
+	compressionRefusals.endpoints[endpoint] = compressionRefusals.next
+	return endpoint, true
+}
 
 // encoder is shared: EncodeAll is safe for concurrent use.
-var encoder = func() *zstd.Encoder {
+type bodyEncoder interface {
+	EncodeAll([]byte, []byte) []byte
+}
+
+var encoder bodyEncoder = func() *zstd.Encoder {
 	e, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
 		panic(err) // only for bad options
@@ -60,14 +123,19 @@ func wireFrom(ctx context.Context) *Wire {
 // compressed body is asked again plain; only when that is accepted is the
 // compression given up for good (a genuinely bad request fails both ways).
 func send(ctx context.Context, url string, body []byte, hdr http.Header, tok *oauth.Tokens) (*http.Response, error) {
+	return sendPrepared(ctx, url, &Prepared{body: body, headers: hdr}, tok)
+}
+
+func sendPrepared(ctx context.Context, url string, p *Prepared, tok *oauth.Tokens) (*http.Response, error) {
+	body, hdr := p.body, p.headers
 	w := wireFrom(ctx)
 	if w != nil {
 		*w = Wire{Raw: len(body), Sent: len(body)}
 	}
-	if len(body) < compressThreshold || noCompress.Load() {
+	if len(body) < compressThreshold || compressionRefused(url) {
 		return post(ctx, url, body, "", hdr, tok)
 	}
-	packed := encoder.EncodeAll(body, nil)
+	packed := p.compressed()
 	if w != nil {
 		w.Sent, w.Encoding = len(packed), "zstd"
 	}
@@ -83,8 +151,8 @@ func send(ctx context.Context, url string, body []byte, hdr http.Header, tok *oa
 	}
 	resp, err = post(ctx, url, body, "", hdr, tok)
 	if err == nil && resp.StatusCode/100 == 2 {
-		if !noCompress.Swap(true) && Notice != nil {
-			Notice(fmt.Sprintf("codex: the backend refused a compressed body (HTTP %d) and took it plain: no compression from now on", refused))
+		if endpoint, first := refuseCompression(url); first && Notice != nil {
+			Notice(fmt.Sprintf("codex: the backend at %s refused a compressed body (HTTP %d) and took it plain: no compression for this endpoint", endpoint, refused))
 		}
 	}
 	return resp, err

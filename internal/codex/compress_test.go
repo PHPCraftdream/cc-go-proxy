@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,11 +34,19 @@ func bigRequest() *Request {
 	return &Request{Model: "m", Input: []any{map[string]any{"type": "message", "role": "user", "content": text}}}
 }
 
-// resetCompression makes a test independent of the process-wide switch.
+// resetCompression makes a test independent of the refusal cache.
 func resetCompression(t *testing.T) {
 	t.Helper()
-	noCompress.Store(false)
-	t.Cleanup(func() { noCompress.Store(false) })
+	compressionRefusals.Lock()
+	compressionRefusals.endpoints = make(map[string]uint64)
+	compressionRefusals.next = 0
+	compressionRefusals.Unlock()
+	t.Cleanup(func() {
+		compressionRefusals.Lock()
+		compressionRefusals.endpoints = make(map[string]uint64)
+		compressionRefusals.next = 0
+		compressionRefusals.Unlock()
+	})
 }
 
 // seen holds what the backend handler saw; the test reads it from another goroutine.
@@ -162,8 +171,8 @@ func TestCallFallsBackToPlainWhenCompressionIsRefused(t *testing.T) {
 	if wire.Encoding != "" || wire.Sent != wire.Raw {
 		t.Errorf("wire after the fallback = %+v", wire)
 	}
-	if !noCompress.Load() {
-		t.Error("the compression is still on after the backend refused it")
+	if !compressionRefused(backend.URL + "/responses") {
+		t.Error("compression is still enabled for the endpoint after it refused compression")
 	}
 
 	resp, err = Call(context.Background(), backend.URL, s, bigRequest())
@@ -241,8 +250,158 @@ func TestCallKeepsCompressionWhenThePlainBodyFailsToo(t *testing.T) {
 	if resp.StatusCode != 400 || calls.Load() != 2 {
 		t.Fatalf("status %d after %d calls, want 400 after 2", resp.StatusCode, calls.Load())
 	}
-	if noCompress.Load() {
+	if compressionRefused(backend.URL + "/responses") {
 		t.Error("a genuinely bad request switched the compression off")
+	}
+}
+
+func TestCallCompressionRefusalIsPerNormalizedEndpoint(t *testing.T) {
+	resetCompression(t)
+	type counts struct {
+		compressed atomic.Int32
+		plain      atomic.Int32
+	}
+	var a, b counts
+	newBackend := func(c *counts) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			if r.Header.Get("Content-Encoding") != "" {
+				c.compressed.Add(1)
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				return
+			}
+			c.plain.Add(1)
+			_, _ = w.Write([]byte("data: {}\n\n"))
+		}))
+	}
+	backendA, backendB := newBackend(&a), newBackend(&b)
+	defer backendA.Close()
+	defer backendB.Close()
+
+	var noticeMu sync.Mutex
+	var notices []string
+	oldNotice := Notice
+	Notice = func(m string) {
+		noticeMu.Lock()
+		notices = append(notices, m)
+		noticeMu.Unlock()
+	}
+	t.Cleanup(func() { Notice = oldNotice })
+
+	s := testSession(t)
+	urls := []string{
+		strings.Replace(backendA.URL, "://", "://user:secret@", 1) + "/API/",
+		backendA.URL + "/api",
+		backendB.URL,
+		backendB.URL,
+	}
+	for _, endpoint := range urls {
+		resp, err := Call(context.Background(), endpoint, s, bigRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Call(%q) status = %d, want 200", endpoint, resp.StatusCode)
+		}
+	}
+	if a.compressed.Load() != 1 || a.plain.Load() != 2 {
+		t.Errorf("endpoint A: compressed tries %d, plain tries %d, want 1 and 2", a.compressed.Load(), a.plain.Load())
+	}
+	if b.compressed.Load() != 1 || b.plain.Load() != 2 {
+		t.Errorf("endpoint B: compressed tries %d, plain tries %d, want 1 and 2", b.compressed.Load(), b.plain.Load())
+	}
+	noticeMu.Lock()
+	defer noticeMu.Unlock()
+	if len(notices) != 2 {
+		t.Fatalf("notices = %q, want one per endpoint", notices)
+	}
+	for _, notice := range notices {
+		if strings.Contains(notice, "secret") || strings.Contains(notice, "user") {
+			t.Errorf("notice leaked URL credentials: %q", notice)
+		}
+	}
+	if !strings.Contains(notices[0], "http://") || !strings.Contains(notices[0], "/api ") ||
+		!strings.Contains(notices[1], backendB.Listener.Addr().String()) {
+		t.Errorf("notices do not identify their endpoints: %q", notices)
+	}
+	if got := normalizedEndpoint("HTTPS://EXAMPLE.COM/API///responses"); got != "https://example.com/api" {
+		t.Errorf("normalized endpoint = %q, want https://example.com/api", got)
+	}
+}
+
+func TestCompressionRefusalStateIsBounded(t *testing.T) {
+	resetCompression(t)
+	for i := 0; i < maxRefusedEndpoints+10; i++ {
+		refuseCompression("https://example.com/" + strconv.Itoa(i) + "/responses")
+	}
+	compressionRefusals.Lock()
+	got := len(compressionRefusals.endpoints)
+	compressionRefusals.Unlock()
+	if got > maxRefusedEndpoints {
+		t.Fatalf("refusal state has %d entries, cap is %d", got, maxRefusedEndpoints)
+	}
+	if compressionRefused("https://example.com/0/responses") {
+		t.Error("oldest endpoint should have been evicted")
+	}
+	if !compressionRefused("https://example.com/" + strconv.Itoa(maxRefusedEndpoints+9) + "/responses") {
+		t.Error("most recent endpoint should remain cached")
+	}
+}
+
+func TestConcurrentCompressionRefusalsAreSafe(t *testing.T) {
+	resetCompression(t)
+	var compressed, plain atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.Header.Get("Content-Encoding") != "" {
+			compressed.Add(1)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		plain.Add(1)
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer backend.Close()
+
+	var noticeMu sync.Mutex
+	notices := 0
+	oldNotice := Notice
+	Notice = func(string) {
+		noticeMu.Lock()
+		notices++
+		noticeMu.Unlock()
+	}
+	t.Cleanup(func() { Notice = oldNotice })
+
+	const workers = 32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			resp, err := send(context.Background(), backend.URL+"/responses", []byte(strings.Repeat("x", compressThreshold+1)), nil, &oauth.Tokens{AccessToken: "tok"})
+			if err != nil {
+				t.Errorf("send: %v", err)
+				return
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("send status = %d, want 200", resp.StatusCode)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if compressed.Load() == 0 || plain.Load() == 0 {
+		t.Errorf("compressed tries %d, plain tries %d, want both", compressed.Load(), plain.Load())
+	}
+	noticeMu.Lock()
+	defer noticeMu.Unlock()
+	if notices != 1 {
+		t.Errorf("notices = %d, want one", notices)
 	}
 }
 

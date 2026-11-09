@@ -82,6 +82,32 @@ func edgeError(status int) bool {
 	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }
 
+// codexRetry owns the immutable upstream request used by the initial call and
+// every retry. Its call function receives the prepared value explicitly so it
+// cannot retain the converted conversation through a closure.
+type codexRetry struct {
+	prepared *codex.Prepared
+	call     func(*codex.Prepared) (*http.Response, error)
+}
+
+func (r *codexRetry) callPrepared() (*http.Response, error) {
+	if r.prepared == nil {
+		return nil, errors.New("codex: prepared request unavailable")
+	}
+	return r.call(r.prepared)
+}
+
+// emit releases the prepared body as soon as the client is sent any content.
+// A retry after this point would duplicate content and Translator forbids one.
+func (r *codexRetry) emit(next codex.Emit) codex.Emit {
+	return func(event string, data any) {
+		if event == "content_block_start" {
+			r.prepared = nil
+		}
+		next(event, data)
+	}
+}
+
 // callAfter waits, then calls; a non-2xx reply is an error.
 func callAfter(ctx context.Context, wait time.Duration, call func() (*http.Response, error)) (*http.Response, error) {
 	select {
@@ -322,7 +348,19 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	trace.wire = &codex.Wire{}
 	obs := trace.observer()
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithRouting(codex.WithWire(ctx, trace.wire), routing), trace.clientTrace()), obs)
-	resp, err := codex.Call(ctx, baseURL, s, req)
+	prepared, err := codex.PrepareRequest(req)
+	req = nil // the retry closure must not retain the converted conversation
+	retry := &codexRetry{
+		prepared: prepared,
+		call: func(p *codex.Prepared) (*http.Response, error) {
+			return codex.CallPrepared(ctx, baseURL, s, p)
+		},
+	}
+	prepared = nil // the holder is the sole owner, and is cleared on first content
+	var resp *http.Response
+	if err == nil {
+		resp, err = retry.callPrepared()
+	}
 	// A short rate limit is waited out here, once; a long one is Claude Code's to handle.
 	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
 		if wait, ok := retryAfter(resp.Header, time.Now()); ok && wait <= rateRetryMax {
@@ -330,7 +368,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			_ = resp.Body.Close()
 			if sleepCtx(ctx, wait) {
-				resp, err = codex.Call(ctx, baseURL, s, req)
+				resp, err = retry.callPrepared()
 			} else {
 				err = ctx.Err()
 			}
@@ -361,7 +399,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			err = ctx.Err()
 			break
 		}
-		resp, err = codex.Call(ctx, baseURL, s, req)
+		resp, err = retry.callPrepared()
 	}
 	if err != nil {
 		cancel()
@@ -415,7 +453,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	// (see runUpstream) as well as in a stream.
 	resp.Body = trace.stamp(resp.Body)
 	again := func() (*http.Response, error) {
-		next, err := codex.Call(ctx, baseURL, s, req)
+		next, err := retry.callPrepared()
 		if err == nil {
 			next.Body = trace.stamp(next.Body)
 		}
@@ -426,7 +464,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if !wantStream {
 		defer cancel()
 		col := &codex.Collector{}
-		tr := &codex.Translator{Model: probe.Model, Emit: col.Emit}
+		tr := &codex.Translator{Model: probe.Model, Emit: retry.emit(col.Emit)}
 		upstream := runUpstream(ctx, tr, resp, again, profile, mapped)
 		defer func() { _ = upstream.Body.Close() }()
 		logUpstreamEnd(ctx, tr, trace, upstream, profile, mapped, bodyBytes)
@@ -447,7 +485,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer release()
 		defer cancel()
-		tr := &codex.Translator{Model: probe.Model, Emit: func(ev string, data any) {
+		tr := &codex.Translator{Model: probe.Model, Emit: retry.emit(func(ev string, data any) {
 			if err := writeSSEEvent(w, ev, data); err != nil {
 				cancel() // client gone: abort upstream
 				return
@@ -455,7 +493,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 			if err := w.Flush(); err != nil {
 				cancel() // client gone: abort upstream
 			}
-		}}
+		})}
 		upstream := runUpstream(ctx, tr, resp, again, profile, mapped)
 		defer func() { _ = upstream.Body.Close() }()
 		logUpstreamEnd(ctx, tr, trace, upstream, profile, mapped, bodyBytes)
