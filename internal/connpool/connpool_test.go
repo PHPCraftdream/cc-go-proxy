@@ -13,6 +13,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -551,6 +552,41 @@ func TestConnectFailureGoesToALiveLane(t *testing.T) {
 	}
 }
 
+func TestConnectRetrySkipsStaleReadyLanes(t *testing.T) {
+	srv := okServer(t)
+	var dials atomic.Int32
+	tr := New(time.Minute, 2, 2, failingDials(&dials, 3, plain))
+	c := withClock(tr)
+	client := &http.Client{Transport: tr}
+
+	get(t, client, srv.URL) // lane 1: first ready pool
+	get(t, client, srv.URL) // lane 0: second ready pool
+	old := [2]*pool{tr.lanes[0].cur, tr.lanes[1].cur}
+	for i, p := range old {
+		if !p.ready || p.inflight != 0 {
+			t.Fatalf("lane %d is not idle and ready", i)
+		}
+	}
+
+	c.t = c.t.Add(2*time.Minute + time.Second)
+	for i, l := range tr.lanes {
+		if c.now().Sub(l.born) <= staleFactor*tr.maxAge {
+			t.Fatalf("lane %d is not stale", i)
+		}
+	}
+
+	get(t, client, srv.URL) // fresh dial fails; retry must not use either old pool
+	if n := dials.Load(); n != 4 {
+		t.Fatalf("dials = %d, want 4 (two old pools, failed fresh dial, retried fresh dial)", n)
+	}
+	if st := tr.Stats(); st.ConnectRetries != 1 {
+		t.Fatalf("stats = %+v, want one connect retry", st)
+	}
+	if tr.lanes[0].cur != old[0] || tr.lanes[1].cur == old[1] {
+		t.Fatal("retry did not leave the unused stale lane alone and replace the failed lane")
+	}
+}
+
 func TestConnectFailureWithoutALiveLaneTriesAFreshPool(t *testing.T) {
 	srv := okServer(t)
 	var dials atomic.Int32
@@ -703,6 +739,189 @@ func connectProxy(t *testing.T) (*url.URL, *atomic.Int32) {
 // withChoice returns a request context that goes out the way c says.
 func withChoice(c proxydial.Choice) context.Context {
 	return proxydial.WithChoice(context.Background(), c)
+}
+
+func TestRouterPrunesIdleRouteAndRecreatesFreshTransport(t *testing.T) {
+	var closed atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	r := NewRouter(time.Hour, 1, 2, plain)
+	c := &clock{t: time.Unix(1000, 0)}
+	r.now = c.now
+	client := &http.Client{Transport: r}
+	choice := proxydial.Choice{Direct: true}
+	key := choice.Key()
+	getCtx(t, client, srv.URL, withChoice(choice))
+	old := r.ts[key]
+	p := old.lanes[0].cur
+	warm, peer := net.Pipe()
+	p.warm = &warmSlot{}
+	p.warm.put("warm", warm)
+	t.Cleanup(func() { _ = peer.Close() })
+
+	c.t = c.t.Add(routeIdleTimeout + time.Second)
+	get(t, client, srv.URL) // prune the idle direct route while creating the env route
+	if _, ok := r.ts[key]; ok {
+		t.Fatal("inactive direct route was retained")
+	}
+	if p.warm.conn != nil {
+		t.Fatal("pruned route retained its warm connection")
+	}
+	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := peer.Read(make([]byte, 1)); err == nil || (isTimeout(err)) {
+		t.Fatalf("pruned route did not close its warm connection: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for closed.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if closed.Load() == 0 {
+		t.Fatal("pruned route's idle socket was not closed")
+	}
+
+	getCtx(t, client, srv.URL, withChoice(choice))
+	if fresh := r.ts[key]; fresh == old || fresh == nil {
+		t.Fatal("same choice did not get a fresh Transport")
+	}
+}
+
+func TestRouterKeepsBusyRouteUntilResponseCloses(t *testing.T) {
+	started, finish := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			_, _ = io.WriteString(w, "start")
+			w.(http.Flusher).Flush()
+			close(started)
+			<-finish
+		}
+		_, _ = io.WriteString(w, "end")
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		select {
+		case <-finish:
+		default:
+			close(finish)
+		}
+	})
+	r := NewRouter(time.Hour, 1, 2, plain)
+	c := &clock{t: time.Unix(1000, 0)}
+	r.now = c.now
+	client := &http.Client{Transport: r}
+	initial, err := http.NewRequestWithContext(withChoice(proxydial.Choice{Direct: true}), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	key := (proxydial.Choice{Direct: true}).Key()
+	busy := r.ts[key]
+
+	c.t = c.t.Add(routeIdleTimeout + time.Second)
+	get(t, client, srv.URL)
+	if r.ts[key] != busy {
+		t.Fatal("pruned route with a response body still in use")
+	}
+	close(finish)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if got := r.lastUse[key]; !got.Equal(c.t) {
+		t.Fatalf("route last use = %v, want response-close time %v", got, c.t)
+	}
+
+	c.t = c.t.Add(routeIdleTimeout - time.Second)
+	get(t, client, srv.URL)
+	if r.ts[key] != busy {
+		t.Fatal("route expired before a full idle interval after response close")
+	}
+	c.t = c.t.Add(2 * time.Second)
+	get(t, client, srv.URL)
+	if _, ok := r.ts[key]; ok {
+		t.Fatal("route remained after a full idle interval")
+	}
+}
+
+func TestRouterAdmitsRouteBeforeTransportRoundTrip(t *testing.T) {
+	blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	t.Cleanup(blocked.Close)
+	trigger := okServer(t)
+	started, resume := make(chan struct{}), make(chan struct{})
+	var once, releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(resume) }) }
+	t.Cleanup(unblock)
+	blockedAddr := blocked.Listener.Addr().String()
+	newT := func() *http.Transport {
+		return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if addr == blockedAddr {
+				once.Do(func() { close(started) })
+				<-resume
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}}
+	}
+	r := NewRouter(time.Hour, 1, 2, newT)
+	c := &clock{t: time.Unix(1000, 0)}
+	r.now = c.now
+	client := &http.Client{Transport: r}
+	choice := proxydial.Choice{Direct: true}
+	request, err := http.NewRequestWithContext(withChoice(choice), http.MethodGet, blocked.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		resp *http.Response
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := client.Do(request)
+		done <- result{resp: resp, err: err}
+	}()
+	<-started // Route ref is held while the Transport is still connecting.
+	key := choice.Key()
+	admitted := r.ts[key]
+	c.t = c.t.Add(routeIdleTimeout + time.Second)
+	get(t, client, trigger.URL) // an unrelated request triggers the inactivity sweep
+	if r.ts[key] != admitted {
+		t.Fatal("route was pruned between router admission and Transport.RoundTrip")
+	}
+	unblock()
+	got := <-done
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	_ = got.resp.Body.Close()
+}
+
+func TestRouterPreservesCurrentConfiguredDefaultRoute(t *testing.T) {
+	proxydial.SetDefault(&url.URL{Scheme: "http", Host: "default.invalid:8080"})
+	t.Cleanup(func() { proxydial.SetDefault(nil) })
+	r := NewRouter(time.Hour, 1, 2, plain)
+	c := &clock{t: time.Unix(1000, 0)}
+	r.now = c.now
+	defaultChoice := proxydial.Choice{URL: proxydial.Default()}
+	defaultRoute := r.transport(defaultChoice)
+	getCtx(t, &http.Client{Transport: r}, okServer(t).URL, withChoice(proxydial.Choice{Direct: true}))
+	c.t = c.t.Add(routeIdleTimeout + time.Second)
+	getCtx(t, &http.Client{Transport: r}, okServer(t).URL, withChoice(proxydial.Choice{Direct: true}))
+	if r.ts[defaultChoice.Key()] != defaultRoute {
+		t.Fatal("current configured default route was pruned")
+	}
 }
 
 func TestRouterKeepsOneTransportPerWayOut(t *testing.T) {

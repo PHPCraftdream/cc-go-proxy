@@ -252,6 +252,10 @@ func (t *Transport) renewLocked(l *lane, now time.Time, idle []*pool) ([]*pool, 
 	return idle, nil
 }
 
+func (t *Transport) stale(l *lane, now time.Time) bool {
+	return now.Sub(l.born) > staleFactor*t.maxAge
+}
+
 // acquire takes a request slot. failed is the pool a request just broke on: its
 // lane gets a fresh pool even without room. Otherwise the request goes to the
 // lane with the fewest in flight (ties round-robin), renewed first when due.
@@ -285,7 +289,7 @@ func (t *Transport) acquire(failed *pool) *pool {
 		switch {
 		case l.cur == nil:
 			l.cur = t.newPoolLocked()
-		case now.Sub(l.born) > staleFactor*t.maxAge:
+		case t.stale(l, now):
 			if l.warming != nil {
 				idle = append(idle, l.warming)
 				l.warming = nil // its warm-up must not switch the lane again
@@ -310,9 +314,10 @@ func (t *Transport) acquire(failed *pool) *pool {
 // least busy lane whose pool has a working one, else on a fresh pool.
 func (t *Transport) acquireLive(failed *pool) *pool {
 	t.mu.Lock()
+	now := t.now()
 	var best *lane
 	for _, l := range t.lanes {
-		if l.cur != nil && l.cur != failed && l.cur.ready && (best == nil || l.load() < best.load()) {
+		if l.cur != nil && l.cur != failed && l.cur.ready && !t.stale(l, now) && (best == nil || l.load() < best.load()) {
 			best = l
 		}
 	}
@@ -488,6 +493,31 @@ func sleep(ctx context.Context, d time.Duration) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// retire permanently removes this Transport's lanes. In-flight pools drain
+// normally, while idle pools and unattached warm slots are closed. A warm-up
+// still running will observe its detached lane and close its late connection.
+func (t *Transport) retire() {
+	t.mu.Lock()
+	now := t.now()
+	var closePools []*pool
+	for _, l := range t.lanes {
+		if l.warming != nil {
+			l.warming.retired = now
+			closePools = append(closePools, l.warming)
+			l.warming = nil
+		}
+		if l.cur != nil {
+			l.cur.retired = now
+			closePools = append(closePools, l.cur)
+		}
+	}
+	closePools = append(closePools, t.draining...)
+	t.lanes = nil
+	t.draining = nil
+	t.mu.Unlock()
+	closeIdle(closePools)
 }
 
 // CloseIdleConnections closes the idle connections of all pools.
