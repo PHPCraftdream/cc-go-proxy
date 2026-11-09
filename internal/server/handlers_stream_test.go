@@ -3,8 +3,11 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -85,9 +88,10 @@ func TestStreamOpenAIToClaudeReasoningShapes(t *testing.T) {
 				input.WriteString("\n\n")
 			}
 			reader := &reasoningGateReader{
-				data:    []byte(input.String()),
-				blocked: make(chan struct{}),
-				release: make(chan struct{}),
+				data:     []byte(input.String()),
+				terminal: []byte("data: [DONE]\n\n"),
+				blocked:  make(chan struct{}),
+				release:  make(chan struct{}),
 			}
 			output := &lockedStreamOutput{}
 			done := make(chan struct{})
@@ -149,6 +153,8 @@ func (w *lockedStreamOutput) String() string {
 
 type reasoningGateReader struct {
 	data        []byte
+	terminal    []byte
+	terminalOff int
 	offset      int
 	sent        bool
 	blocked     chan struct{}
@@ -167,6 +173,11 @@ func (r *reasoningGateReader) Read(p []byte) (int, error) {
 		close(r.blocked)
 	}
 	<-r.release
+	if r.terminalOff < len(r.terminal) {
+		n := copy(p, r.terminal[r.terminalOff:])
+		r.terminalOff += n
+		return n, nil
+	}
 	return 0, io.EOF
 }
 
@@ -203,6 +214,113 @@ func reasoningBlockEvents(body string) []streamEvent {
 		}
 	}
 	return events
+}
+
+func TestStreamOpenAIToClaudeRequiresTerminalMarker(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		reader io.Reader
+	}{
+		{name: "premature EOF", reader: strings.NewReader(`data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n\n")},
+		{name: "read error", reader: &streamReadErrorReader{data: []byte(`data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n\n")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := streamOpenAIToClaude(bufio.NewWriter(&output), tt.reader, "test-model", &config.Config{}, time.Now())
+			if err != nil {
+				t.Fatalf("streamOpenAIToClaude() error = %v, want the stream error to be emitted as SSE", err)
+			}
+			events := parseStreamEvents(output.String())
+			if len(events) == 0 || events[len(events)-1].name != "error" {
+				t.Fatalf("final event = %#v, want error", events)
+			}
+			for _, event := range events {
+				if event.name == "message_delta" || event.name == "message_stop" {
+					t.Fatalf("success event %q emitted before stream error", event.name)
+				}
+			}
+		})
+	}
+}
+
+type streamReadErrorReader struct {
+	data []byte
+	done bool
+}
+
+func (r *streamReadErrorReader) Read(p []byte) (int, error) {
+	if !r.done {
+		r.done = true
+		return copy(p, r.data), nil
+	}
+	return 0, errors.New("upstream read failed")
+}
+
+func TestStreamOpenAIToClaudeFinishReasonTerminatesWithoutDone(t *testing.T) {
+	input := `data: {"choices":[{"finish_reason":"stop"}]}` + "\n\n"
+	var output bytes.Buffer
+	if err := streamOpenAIToClaude(bufio.NewWriter(&output), strings.NewReader(input), "test-model", &config.Config{}, time.Now()); err != nil {
+		t.Fatalf("streamOpenAIToClaude() error = %v", err)
+	}
+	events := parseStreamEvents(output.String())
+	if len(events) < 2 || events[len(events)-2].name != "message_delta" || events[len(events)-1].name != "message_stop" {
+		t.Fatalf("final events = %#v, want message_delta then message_stop", events)
+	}
+}
+
+type failedStreamWriter struct {
+	writes int
+}
+
+func (w *failedStreamWriter) Write([]byte) (int, error) {
+	w.writes++
+	return 0, errors.New("client write failed")
+}
+
+type countedStreamReader struct {
+	reads int
+}
+
+func (r *countedStreamReader) Read([]byte) (int, error) {
+	r.reads++
+	return 0, io.EOF
+}
+
+func TestStreamOpenAIToClaudeStopsReadingAfterWriterFailure(t *testing.T) {
+	reader := &countedStreamReader{}
+	writer := &failedStreamWriter{}
+	err := streamOpenAIToClaude(bufio.NewWriter(writer), reader, "test-model", &config.Config{}, time.Now())
+	if err == nil {
+		t.Fatal("streamOpenAIToClaude() error = nil, want writer error")
+	}
+	if reader.reads != 0 {
+		t.Errorf("upstream reads = %d, want 0 after initial flush failure", reader.reads)
+	}
+}
+
+type closeTrackingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *closeTrackingBody) Close() error {
+	b.closed = true
+	return nil
+}
+
+func TestStreamOpenAIResponseClosesBodyAndCancelsContext(t *testing.T) {
+	body := &closeTrackingBody{Reader: strings.NewReader("data: [DONE]\n\n")}
+	resp := &http.Response{Body: body}
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := streamOpenAIResponse(bufio.NewWriter(io.Discard), resp, "test-model", &config.Config{}, time.Now(), cancel); err != nil {
+		t.Fatalf("streamOpenAIResponse() error = %v", err)
+	}
+	if !body.closed {
+		t.Error("response body was not closed at stream ownership boundary")
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Errorf("context error = %v, want context.Canceled", ctx.Err())
+	}
 }
 
 func TestStreamOpenAIToClaudeToolArgumentFragments(t *testing.T) {

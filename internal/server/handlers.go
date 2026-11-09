@@ -114,13 +114,7 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 	// Non-streaming response
 	openaiResp, err := callOpenAI(openaiReq, cfg)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"type": "error",
-			"error": fiber.Map{
-				"type":    "api_error",
-				"message": fmt.Sprintf("OpenAI API error: %v", err),
-			},
-		})
+		return respondOpenAIError(c, cfg, err)
 	}
 
 	// Debug: Log OpenAI response
@@ -186,8 +180,13 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 // It forwards the OpenAI request, receives streaming chunks, and converts them to
 // Claude's SSE event format in real-time using streamOpenAIToClaude.
 func handleStreamingMessages(c *fiber.Ctx, openaiReq *models.OpenAIRequest, cfg *config.Config) error {
-	// Track timing for simple log
 	startTime := time.Now()
+	streamCtx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
+	resp, err := callOpenAIStream(openaiReq, cfg, streamCtx)
+	if err != nil {
+		cancel()
+		return respondOpenAIError(c, cfg, err)
+	}
 
 	// Set SSE headers
 	c.Set("Content-Type", "text/event-stream")
@@ -200,32 +199,17 @@ func handleStreamingMessages(c *fiber.Ctx, openaiReq *models.OpenAIRequest, cfg 
 		defer release()
 		if cfg.Debug {
 			fmt.Printf("[DEBUG] StreamWriter: Starting\n")
-		}
-
-		if cfg.Debug {
-			fmt.Printf("[DEBUG] StreamWriter: Making streaming request to %s\n", cfg.OpenAIBaseURL+"/chat/completions")
-		}
-
-		// Make streaming request with automatic retry logic
-		resp, err := callOpenAIStream(openaiReq, cfg)
-		if err != nil {
-			if cfg.Debug {
-				fmt.Printf("[DEBUG] StreamWriter: Request failed: %v\n", err)
-			}
-			writeSSEError(w, fmt.Sprintf("streaming request failed: %v", err))
-			return
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if cfg.Debug {
 			fmt.Printf("[DEBUG] StreamWriter: Got response, starting streamOpenAIToClaude conversion\n")
 		}
 
-		// Stream conversion
-		streamOpenAIToClaude(w, resp.Body, openaiReq.Model, cfg, startTime)
-
+		// The handler owns cancellation and response-body cleanup for the stream.
+		err := streamOpenAIResponse(w, resp, openaiReq.Model, cfg, startTime, cancel)
 		if cfg.Debug {
-			fmt.Printf("[DEBUG] StreamWriter: Completed\n")
+			if err != nil {
+				fmt.Printf("[DEBUG] StreamWriter: Stream failed: %v\n", err)
+			} else {
+				fmt.Printf("[DEBUG] StreamWriter: Completed\n")
+			}
 		}
 	})
 
@@ -238,6 +222,18 @@ type ToolCallState struct {
 	Name        string // Function name
 	ClaudeIndex int    // The content block index for Claude
 	Started     bool   // Flag if content_block_start was sent
+}
+
+// streamOpenAIResponse owns the upstream body and cancels its request when the
+// stream is closed.
+func streamOpenAIResponse(w *bufio.Writer, resp *http.Response, providerModel string, cfg *config.Config, startTime time.Time, cancel context.CancelFunc) (err error) {
+	defer cancel()
+	defer func() {
+		if closeErr := resp.Body.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+	return streamOpenAIToClaude(w, resp.Body, providerModel, cfg, startTime)
 }
 
 // streamOpenAIToClaude converts OpenAI streaming responses to Claude's SSE event format.
@@ -254,7 +250,7 @@ type ToolCallState struct {
 //
 // The function maintains state to track content block indices and tool call starts,
 // and ensures proper event ordering for Claude Code compatibility.
-func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel string, cfg *config.Config, startTime time.Time) {
+func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel string, cfg *config.Config, startTime time.Time) error {
 	if cfg.Debug {
 		fmt.Printf("[DEBUG] streamOpenAIToClaude: Starting conversion\n")
 	}
@@ -283,36 +279,42 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 	thinkingBlockStarted := false
 	thinkingBlockHasContent := false
 	textBlockStarted := false // Track if we've sent text block_start
-	startThinkingBlock := func(thinking string) {
+	startThinkingBlock := func(thinking string) error {
 		if thinking == "" {
-			return
+			return nil
 		}
 		if !thinkingBlockStarted {
-			writeSSEEvent(w, "content_block_start", map[string]interface{}{
+			if err := writeSSEEvent(w, "content_block_start", map[string]interface{}{
 				"type":  "content_block_start",
 				"index": thinkingBlockIndex,
 				"content_block": map[string]interface{}{
 					"type":     "thinking",
 					"thinking": "",
 				},
-			})
+			}); err != nil {
+				return err
+			}
 			thinkingBlockStarted = true
-			_ = w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
 		}
-		writeSSEEvent(w, "content_block_delta", map[string]interface{}{
+		if err := writeSSEEvent(w, "content_block_delta", map[string]interface{}{
 			"type":  "content_block_delta",
 			"index": thinkingBlockIndex,
 			"delta": map[string]interface{}{
 				"type":     "thinking_delta",
 				"thinking": thinking,
 			},
-		})
+		}); err != nil {
+			return err
+		}
 		thinkingBlockHasContent = true
-		_ = w.Flush()
+		return w.Flush()
 	}
 
 	// Send initial SSE events
-	writeSSEEvent(w, "message_start", map[string]interface{}{
+	if err := writeSSEEvent(w, "message_start", map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
 			"id":            messageID,
@@ -333,35 +335,43 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 				},
 			},
 		},
-	})
+	}); err != nil {
+		return err
+	}
 
-	writeSSEEvent(w, "ping", map[string]interface{}{
+	if err := writeSSEEvent(w, "ping", map[string]interface{}{
 		"type": "ping",
-	})
+	}); err != nil {
+		return err
+	}
 
-	_ = w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
 
 	// Process streaming chunks
+	terminal := false
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := scanner.Bytes()
 
 		// Skip empty lines and comments
-		if line == "" || strings.HasPrefix(line, ":") {
+		if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) {
 			continue
 		}
 
 		// Parse data lines and stop only on the exact [DONE] payload.
-		if !strings.HasPrefix(line, "data:") {
+		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
 
-		dataJSON := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if dataJSON == "[DONE]" {
+		dataJSON := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if bytes.Equal(dataJSON, []byte("[DONE]")) {
+			terminal = true
 			break
 		}
 
 		var chunk map[string]interface{}
-		if err := json.Unmarshal([]byte(dataJSON), &chunk); err != nil {
+		if err := json.Unmarshal(dataJSON, &chunk); err != nil {
 			continue
 		}
 
@@ -412,8 +422,22 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 		choice, ok := choices[0].(map[string]interface{})
 		if !ok {
-			writeSSEError(w, fmt.Sprintf("invalid stream choice: expected object, got %T", choices[0]))
-			return
+			return writeSSEError(w, fmt.Sprintf("invalid stream choice: expected object, got %T", choices[0]))
+		}
+
+		finishReason, hasFinishReason := choice["finish_reason"].(string)
+		if hasFinishReason && finishReason != "" {
+			terminal = true
+			switch finishReason {
+			case "length":
+				finalStopReason = "max_tokens"
+			case "tool_calls", "function_call":
+				finalStopReason = "tool_use"
+			case "stop":
+				finalStopReason = "end_turn"
+			default:
+				finalStopReason = "end_turn"
+			}
 		}
 
 		delta, ok := choice["delta"].(map[string]interface{})
@@ -428,7 +452,9 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 		// First, check for OpenAI's reasoning_content format (o1/o3 models)
 		if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
-			startThinkingBlock(reasoningContent)
+			if err := startThinkingBlock(reasoningContent); err != nil {
+				return err
+			}
 		}
 
 		// Then, check for OpenRouter's reasoning_details format
@@ -456,7 +482,9 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 						}
 
 						if thinkingText != "" {
-							startThinkingBlock(thinkingText)
+							if err := startThinkingBlock(thinkingText); err != nil {
+								return err
+							}
 						}
 					}
 				}
@@ -465,34 +493,44 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 		// Handle reasoning field directly (simpler format from some models)
 		if reasoning, ok := delta["reasoning"].(string); ok && reasoning != "" {
-			startThinkingBlock(reasoning)
+			if err := startThinkingBlock(reasoning); err != nil {
+				return err
+			}
 		}
 
 		// Handle text delta
 		if content, ok := delta["content"].(string); ok && content != "" {
 			// Send content_block_start for text block on first text delta
 			if !textBlockStarted {
-				writeSSEEvent(w, "content_block_start", map[string]interface{}{
+				if err := writeSSEEvent(w, "content_block_start", map[string]interface{}{
 					"type":  "content_block_start",
 					"index": textBlockIndex,
 					"content_block": map[string]interface{}{
 						"type": "text",
 						"text": "",
 					},
-				})
+				}); err != nil {
+					return err
+				}
 				textBlockStarted = true
-				_ = w.Flush()
+				if err := w.Flush(); err != nil {
+					return err
+				}
 			}
 
-			writeSSEEvent(w, "content_block_delta", map[string]interface{}{
+			if err := writeSSEEvent(w, "content_block_delta", map[string]interface{}{
 				"type":  "content_block_delta",
 				"index": textBlockIndex,
 				"delta": map[string]interface{}{
 					"type": "text_delta",
 					"text": content,
 				},
-			})
-			_ = w.Flush()
+			}); err != nil {
+				return err
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
 		}
 
 		// Handle tool call deltas
@@ -547,7 +585,7 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 							toolCall.ClaudeIndex = claudeIndex
 							toolCall.Started = true
 
-							writeSSEEvent(w, "content_block_start", map[string]interface{}{
+							if err := writeSSEEvent(w, "content_block_start", map[string]interface{}{
 								"type":  "content_block_start",
 								"index": claudeIndex,
 								"content_block": map[string]interface{}{
@@ -556,74 +594,87 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 									"name":  toolCall.Name,
 									"input": map[string]interface{}{},
 								},
-							})
-							_ = w.Flush()
+							}); err != nil {
+								return err
+							}
+							if err := w.Flush(); err != nil {
+								return err
+							}
 						}
 
 						// Handle function arguments
 						if args, ok := functionData["arguments"].(string); ok && toolCall.Started && args != "" {
-							writeSSEEvent(w, "content_block_delta", map[string]interface{}{
+							if err := writeSSEEvent(w, "content_block_delta", map[string]interface{}{
 								"type":  "content_block_delta",
 								"index": toolCall.ClaudeIndex,
 								"delta": map[string]interface{}{
 									"type":         "input_json_delta",
 									"partial_json": args,
 								},
-							})
-							_ = w.Flush()
+							}); err != nil {
+								return err
+							}
+							if err := w.Flush(); err != nil {
+								return err
+							}
 						}
 					}
 				}
 			}
 		}
 
-		// Handle finish reason
-		// NOTE: Don't break here - with stream_options.include_usage, OpenAI sends usage in a chunk AFTER finish_reason
-		if finishReason, ok := choice["finish_reason"].(string); ok && finishReason != "" {
-			switch finishReason {
-			case "length":
-				finalStopReason = "max_tokens"
-			case "tool_calls", "function_call":
-				finalStopReason = "tool_use"
-			case "stop":
-				finalStopReason = "end_turn"
-			default:
-				finalStopReason = "end_turn"
-			}
-			// Continue processing to capture usage chunk (don't break)
-		}
+		// Continue processing to capture usage chunk (don't break)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return writeSSEError(w, fmt.Sprintf("stream read error: %v", err))
+	}
+	if !terminal {
+		return writeSSEError(w, "stream ended before a terminal marker")
 	}
 
 	// Send final SSE events
 
 	// Send content_block_stop for text block if it was started
 	if textBlockStarted {
-		writeSSEEvent(w, "content_block_stop", map[string]interface{}{
+		if err := writeSSEEvent(w, "content_block_stop", map[string]interface{}{
 			"type":  "content_block_stop",
 			"index": textBlockIndex,
-		})
-		_ = w.Flush()
+		}); err != nil {
+			return err
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
 	}
 
 	// Send content_block_stop for each tool call
 	for _, toolData := range currentToolCalls {
 		// Check both Started AND claude_index is not None
 		if toolData.Started && toolData.ClaudeIndex != 0 {
-			writeSSEEvent(w, "content_block_stop", map[string]interface{}{
+			if err := writeSSEEvent(w, "content_block_stop", map[string]interface{}{
 				"type":  "content_block_stop",
 				"index": toolData.ClaudeIndex,
-			})
-			_ = w.Flush()
+			}); err != nil {
+				return err
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Send content_block_stop for thinking block if it had content
 	if thinkingBlockStarted && thinkingBlockHasContent {
-		writeSSEEvent(w, "content_block_stop", map[string]interface{}{
+		if err := writeSSEEvent(w, "content_block_stop", map[string]interface{}{
 			"type":  "content_block_stop",
 			"index": thinkingBlockIndex,
-		})
-		_ = w.Flush()
+		}); err != nil {
+			return err
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
 	}
 
 	// Debug: Check if usage data was received
@@ -641,21 +692,29 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 		usageDataJSON, _ := json.Marshal(usageData)
 		fmt.Printf("[DEBUG] Sending message_delta with usageData: %s\n", string(usageDataJSON))
 	}
-	writeSSEEvent(w, "message_delta", map[string]interface{}{
+	if err := writeSSEEvent(w, "message_delta", map[string]interface{}{
 		"type": "message_delta",
 		"delta": map[string]interface{}{
 			"stop_reason":   finalStopReason,
 			"stop_sequence": nil,
 		},
 		"usage": usageData,
-	})
-	_ = w.Flush()
+	}); err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
 
 	// Send message_stop
-	writeSSEEvent(w, "message_stop", map[string]interface{}{
+	if err := writeSSEEvent(w, "message_stop", map[string]interface{}{
 		"type": "message_stop",
-	})
-	_ = w.Flush()
+	}); err != nil {
+		return err
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
 
 	// Simple log: one-line summary
 	if cfg.SimpleLog {
@@ -697,29 +756,34 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 			tokensPerSec)
 	}
 
-	// Check for scanner errors
-	if err := scanner.Err(); err != nil {
-		writeSSEError(w, fmt.Sprintf("stream read error: %v", err))
+	return nil
+}
+
+// writeSSEEvent writes a Server-Sent Event.
+func writeSSEEvent(w *bufio.Writer, event string, data interface{}) error {
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return err
 	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "data: %s\n\n", string(dataJSON))
+	return err
 }
 
-// writeSSEEvent writes a Server-Sent Event
-func writeSSEEvent(w *bufio.Writer, event string, data interface{}) {
-	dataJSON, _ := json.Marshal(data)
-	_, _ = fmt.Fprintf(w, "event: %s\n", event)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", string(dataJSON))
-}
-
-// writeSSEError writes an error event
-func writeSSEError(w *bufio.Writer, message string) {
-	writeSSEEvent(w, "error", map[string]interface{}{
+// writeSSEError writes an error event and flushes it.
+func writeSSEError(w *bufio.Writer, message string) error {
+	if err := writeSSEEvent(w, "error", map[string]interface{}{
 		"type": "error",
 		"error": map[string]interface{}{
 			"type":    "api_error",
 			"message": message,
 		},
-	})
-	_ = w.Flush()
+	}); err != nil {
+		return err
+	}
+	return w.Flush()
 }
 
 // callOpenAI makes an HTTP request to the OpenAI API with automatic retry logic
@@ -760,9 +824,9 @@ func callOpenAI(req *models.OpenAIRequest, cfg *config.Config) (*models.OpenAIRe
 
 // callOpenAIStream makes a streaming HTTP request with retry logic for parameter errors.
 // Uses per-model capability caching.
-func callOpenAIStream(req *models.OpenAIRequest, cfg *config.Config) (*http.Response, error) {
+func callOpenAIStream(req *models.OpenAIRequest, cfg *config.Config, ctx context.Context) (*http.Response, error) {
 	// Try with configured parameters
-	resp, err := callOpenAIStreamInternal(req, cfg)
+	resp, err := callOpenAIStreamInternal(req, cfg, ctx)
 	if err != nil {
 		// Check if this is a max_tokens parameter error
 		if isMaxTokensParameterError(err.Error()) {
@@ -783,7 +847,7 @@ func callOpenAIStream(req *models.OpenAIRequest, cfg *config.Config) (*http.Resp
 				UsesMaxCompletionTokens: false,
 			})
 
-			return callOpenAIStreamInternal(&retryReq, cfg)
+			return callOpenAIStreamInternal(&retryReq, cfg, ctx)
 		}
 		return nil, err
 	}
@@ -806,7 +870,7 @@ func callOpenAIStream(req *models.OpenAIRequest, cfg *config.Config) (*http.Resp
 }
 
 // callOpenAIStreamInternal makes a streaming HTTP request without retry logic
-func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config) (*http.Response, error) {
+func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config, ctx context.Context) (*http.Response, error) {
 	// Marshal request to JSON
 	reqBody, err := json.Marshal(req)
 	if err != nil {
@@ -817,7 +881,7 @@ func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config) (*h
 	apiURL := cfg.OpenAIBaseURL + "/chat/completions"
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(upstreamCtx(context.Background(), cfg), "POST", apiURL, bytes.NewBuffer(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -835,14 +899,10 @@ func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config) (*h
 		addOpenRouterHeaders(httpReq, cfg)
 	}
 
-	// Create HTTP client with longer timeout for streaming
-	client := &http.Client{
-		Transport: openAITransport,
-		Timeout:   300 * time.Second,
-	}
+	client := &http.Client{Transport: openAITransport}
 
-	// Make request
-	resp, err := client.Do(httpReq)
+	// Make request with a deadline that remains active while the body is read.
+	resp, err := doOpenAIRequest(ctx, client, httpReq, 300*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -851,7 +911,7 @@ func callOpenAIStreamInternal(req *models.OpenAIRequest, cfg *config.Config) (*h
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, newOpenAIUpstreamError(resp.StatusCode, resp.Header, body)
 	}
 
 	return resp, nil
@@ -932,14 +992,10 @@ func callOpenAIInternal(req *models.OpenAIRequest, cfg *config.Config) (*models.
 		addOpenRouterHeaders(httpReq, cfg)
 	}
 
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Transport: openAITransport,
-		Timeout:   90 * time.Second,
-	}
+	client := &http.Client{Transport: openAITransport}
 
-	// Make request
-	resp, err := client.Do(httpReq)
+	// Make request with a deadline that remains active while the body is read.
+	resp, err := doOpenAIRequest(upstreamCtx(context.Background(), cfg), client, httpReq, 90*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -953,7 +1009,7 @@ func callOpenAIInternal(req *models.OpenAIRequest, cfg *config.Config) (*models.
 
 	// Check for errors
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenAI API returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, newOpenAIUpstreamError(resp.StatusCode, resp.Header, respBody)
 	}
 
 	// Parse response
@@ -963,6 +1019,27 @@ func callOpenAIInternal(req *models.OpenAIRequest, cfg *config.Config) (*models.
 	}
 
 	return &openaiResp, nil
+}
+
+func doOpenAIRequest(ctx context.Context, client *http.Client, req *http.Request, timeout time.Duration) (*http.Response, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	resp, err := client.Do(req.WithContext(requestCtx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = &cancelReadCloser{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+type cancelReadCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelReadCloser) Close() error {
+	b.cancel()
+	return b.ReadCloser.Close()
 }
 
 // handleCountTokens answers with a length-based estimate: neither the Codex
