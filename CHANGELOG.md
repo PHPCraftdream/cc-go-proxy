@@ -10,6 +10,15 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- Faster and lighter Codex requests: the 4-5 MiB request body is decoded once instead of three times (5 MiB, 1500 items:
+  267 ms -> 124 ms, 55 -> 38 MB allocated; the converted request is byte for byte the same, guarded by a golden corpus),
+  it is serialized and compressed once for all retries (5-6 MB instead of 16-28 MB per call with two retries) and is
+  released as soon as the first content block goes out, the prompt-diagnostics hashing does nothing for a request
+  without a cache key, and a non-streaming answer is collected in linear time (256 KiB used to copy about 550 MB).
+- `PASSTHROUGH_MODE` was read and never used; the setting is gone (the variable is ignored). Tests that ran a copy of
+  the code (the capability cache), compared keys themselves instead of calling the handler, or were skipped as "not
+  implemented" now test the real code.
+
 - Codex model mapping follows the GPT-6.1 line-up: Sonnet goes to the newest `terra` (was the newest `luna`), Haiku
   to the newest `luna` (was the `luna` of the release before). Fable stays on `astra`, Opus on `sol`. Run
   `ccgp --models apply` to rewrite a profile's mapping.
@@ -61,6 +70,18 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   model=<model>`, as the official Codex client does; before, nothing tied a request to its conversation, which may be
   why the backend lost part of its prompt cache for half of the requests. An experiment: the `upstream cache [codex]`
   lines before and after show whether the share of input tokens read from the cache rises.
+- Codex: the backend's sticky-routing token `x-codex-turn-state` is kept from the reply of a turn and sent back, unchanged,
+  on the later requests of the same turn (the steps of a tool loop and ccgp's own retries), never between turns, as the
+  official Codex client does; `thread-id` and `x-client-request-id` (a stable id per conversation bucket: cache key, system
+  prompt and tools) go with `session-id`. Without it the steps of a tool loop could be routed to different backend
+  replicas with a cold prompt cache. The log says `turn state sent` / `new turn` / `no turn state returned` (never the
+  token) and the `upstream cache by [codex]` line is split by turn state sent or not, so the effect on the cache share is
+  visible.
+- Log: the prompt note says when the backend model, the reasoning effort or the tool choice changed (a new model has a
+  cold cache), how many other requests of the same cache key are running and whether this one branches from a running
+  predecessor (subagents share one key). Each request is registered once with a generation, so concurrent requests of one
+  key no longer take over each other's tokens, edge and end time, and the note, the gap and the edge refer to one
+  predecessor; the full cache key is the identity (the log still shows 8 digits).
 - Profiles of the real Claude Code on the Claude Platform, with an API key of their own: `ccgp --profile add api
   --type claude_api [--base-url URL]` (provider type `claude_api`). It is a `claude` profile (own Claude Code
   directory, no proxy, runs next to the others without touching them) that gets a key instead of a subscription login:
@@ -162,6 +183,38 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- A profile directory that is a symlink or a Windows junction to the real Claude Code directory passed the "is this the
+  user's own directory" check (it compared path spellings), and launching the profile then deleted the user's real
+  `.credentials.json`. The directories are now compared by identity (`os.SameFile`, also after resolving symlinks)
+  before anything is created, deleted or mirrored, in both `claude` and proxy profiles.
+- A deleted URL token kept working in the running server: the token index trusted its cache before the file, so
+  `ccgp --profile rm` did not revoke it and the old token could select a re-created profile. The token file is checked
+  first; a removed token stops matching at once and an unreadable changed file fails closed.
+- The OAuth refresh of the server and of `ccgp --models` could exchange the same refresh token and the loser reported a
+  false "log in again"; the profile token file could lose a token when two launches wrote it at once. Credential files
+  now have an interprocess lock (`flock` / `LockFileEx` on a `.lock` sidecar); a rotated refresh token is still saved
+  before it is used.
+- OpenAI-compatible providers: an upstream answer `{"choices":[null]}` crashed the whole server (an unchecked type
+  assertion in the stream goroutine); the text `[DONE]` inside a model's answer ended it early; reasoning came as
+  `thinking_delta` with the key `text` instead of `thinking`; tool-call arguments were buffered and re-parsed for every
+  fragment (quadratic, nothing reached the client until the JSON was complete); a stream that ended without a finish
+  reason was reported as a success; after Claude Code disconnected the proxy kept reading (and paying for) the answer;
+  and an upstream 429 with `Retry-After` reached Claude Code as 200 plus a generic error or as 500. Fixed: an error
+  event for a malformed or truncated stream, exact `[DONE]` matching, one thinking format, per-fragment tool input, the
+  upstream request is cancelled when the client leaves, and the upstream status, message and `Retry-After` /
+  `x-ratelimit-*` headers are kept in both modes (keys and call tokens are masked in the message).
+- A retry after a connect failure could land on a connection of 29 minutes (the pool-age guard added above covered only
+  the normal path); both paths now share one rule. The router also kept a transport (pools, HTTP/2 connections, pings)
+  for every proxy it had ever seen: a route unused for 30 minutes is now retired.
+- A proxy that accepted the TCP connection and never answered the SOCKS5/CONNECT handshake blocked the request, its
+  goroutine and its socket for good; the handshake is bounded by 15 seconds now.
+- `ccgp --models apply` reported a profile as not found when it was written as `name:  work` or `provider : p1`, and
+  `--connections proxy … profile` missed an existing `proxy:` line after a blank line; both editors use the same
+  recognition as the other config editors now.
+- One backend that refused a compressed body (and took it plain) switched the compression off for every other backend,
+  including chatgpt.com (about 5 times more bytes on the uplink); the refusal is kept per endpoint now.
+- A string-form system prompt kept a changing `x-anthropic-billing-header` line at the start of the first developer
+  message, which breaks the whole prompt prefix (the array form already dropped it); the line is removed in both forms.
 - A request could die mid-reply on a connection that was about to be closed by the far end (`unexpected EOF`, three
   at once after a quiet half hour, all on connections of 29m54s-29m59s). A lane is renewed only when a request picks
   it, and the request that found it due still used the old pool while the next one warmed up; a lane nobody picked
