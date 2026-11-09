@@ -3,6 +3,7 @@
 package creds
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
@@ -46,6 +48,32 @@ func (s Store) apiKeyPath(provider string) string {
 
 // ProfileTokens returns profile name -> URL token.
 func (s Store) ProfileTokens() (map[string]string, error) {
+	path := s.tokensPath()
+	if _, err := os.Stat(path); err == nil {
+		return s.profileTokensUnlocked()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+
+	legacyPath := ktavfile.LegacyPath(path)
+	if _, err := os.Stat(legacyPath); errors.Is(err, fs.ErrNotExist) {
+		return s.profileTokensUnlocked()
+	} else if err != nil {
+		return nil, err
+	}
+
+	// Reading a legacy JSON file migrates it, so serialize that slow-path write.
+	unlock, err := LockFile(context.Background(), path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.profileTokensUnlocked()
+}
+
+// profileTokensUnlocked is only used while the current token file is known to
+// exist or while holding its sidecar lock (legacy migration may write).
+func (s Store) profileTokensUnlocked() (map[string]string, error) {
 	var f tokensFile
 	if err := ktavfile.Read(s.tokensPath(), &f, legacyTokens); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -94,7 +122,13 @@ func (s Store) writeProfileTokens(m map[string]string) error {
 
 // EnsureProfileToken returns the profile's token, generating it on first use.
 func (s Store) EnsureProfileToken(profile string) (string, error) {
-	m, err := s.ProfileTokens()
+	unlock, err := LockFile(context.Background(), s.tokensPath())
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
+	m, err := s.profileTokensUnlocked()
 	if err != nil {
 		return "", err
 	}
@@ -116,7 +150,13 @@ func (s Store) EnsureProfileToken(profile string) (string, error) {
 // DeleteProfileToken drops a profile's URL token. A missing entry or file is
 // not an error: removal is idempotent.
 func (s Store) DeleteProfileToken(profile string) error {
-	m, err := s.ProfileTokens()
+	unlock, err := LockFile(context.Background(), s.tokensPath())
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	m, err := s.profileTokensUnlocked()
 	if err != nil {
 		return err
 	}
@@ -173,25 +213,36 @@ func (s Store) SaveAPIKey(provider, key string) error {
 	return ktavfile.Write(s.apiKeyPath(provider), apiKeyFile{APIKey: key})
 }
 
-// TokenIndex resolves URL tokens to profile names; reloads on miss.
+// TokenIndex resolves URL tokens to profile names, refreshing its cached hashes when token files change.
 type TokenIndex struct {
 	Store Store
 
-	mu     sync.Mutex
-	hashes map[string][32]byte // profile -> sha256(token)
-	static bool                // fixed token, never reload
+	mu         sync.Mutex
+	hashes     map[string][32]byte // profile -> sha256(token)
+	stamp      tokenFilesStamp
+	loaded     bool
+	readTokens func() (map[string]string, error) // nil uses Store.ProfileTokens
+	static     bool                              // fixed token, never reload
 }
 
-// Lookup returns the profile whose token equals tok. Compares all entries in
-// constant time per entry; reloads the store once on miss.
+// Lookup returns the profile whose token equals tok. It checks the token file's
+// metadata before using cached hashes, and reloads only when the file changes.
 func (x *TokenIndex) Lookup(tok string) (string, bool) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	h := sha256.Sum256([]byte(tok))
-	if p, ok := x.match(h); ok {
-		return p, true
+	if x.static {
+		return x.match(h)
 	}
-	if x.reload() {
+	stamp, err := x.tokenFilesStamp()
+	if err != nil {
+		x.clear()
+		return "", false
+	}
+	if x.loaded && x.stamp.equal(stamp) {
+		return x.match(h)
+	}
+	if x.reload(stamp) {
 		return x.match(h)
 	}
 	return "", false
@@ -207,21 +258,101 @@ func (x *TokenIndex) match(h [32]byte) (string, bool) {
 	return found, found != ""
 }
 
-// reload re-reads the token file. Misses are rare (new profile or bad
-// token on loopback), so no change detection.
-func (x *TokenIndex) reload() bool {
-	if x.static {
+// reload reads a stable file snapshot. If the file changes while it is being
+// read, retry from the new metadata; never associate stale contents with a
+// newer stamp. A stable read error is cached as an empty index until metadata
+// changes, while a stat error always clears the index and fails closed.
+func (x *TokenIndex) reload(before tokenFilesStamp) bool {
+	for attempt := 0; attempt < 3; attempt++ {
+		m, readErr := x.loadProfileTokens()
+		after, statErr := x.tokenFilesStamp()
+		if statErr != nil {
+			x.clear()
+			return false
+		}
+		if !before.equal(after) {
+			before = after
+			continue
+		}
+		if readErr != nil {
+			x.hashes = make(map[string][32]byte)
+			x.stamp = after
+			x.loaded = true
+			return false
+		}
+		hashes := make(map[string][32]byte, len(m))
+		for p, t := range m {
+			hashes[p] = sha256.Sum256([]byte(t))
+		}
+		x.hashes = hashes
+		x.stamp = after
+		x.loaded = true
+		return true
+	}
+	x.clear()
+	return false
+}
+
+func (x *TokenIndex) loadProfileTokens() (map[string]string, error) {
+	if x.readTokens != nil {
+		return x.readTokens()
+	}
+	return x.Store.ProfileTokens()
+}
+
+func (x *TokenIndex) clear() {
+	x.hashes = nil
+	x.stamp = tokenFilesStamp{}
+	x.loaded = false
+}
+
+type tokenFilesStamp struct {
+	current tokenFileStamp
+	legacy  tokenFileStamp
+}
+
+func (s tokenFilesStamp) equal(other tokenFilesStamp) bool {
+	return s.current.equal(other.current) && s.legacy.equal(other.legacy)
+}
+
+type tokenFileStamp struct {
+	exists  bool
+	size    int64
+	modTime time.Time
+	info    os.FileInfo
+}
+
+func (s tokenFileStamp) equal(other tokenFileStamp) bool {
+	if s.exists != other.exists {
 		return false
 	}
-	m, err := x.Store.ProfileTokens()
+	if !s.exists {
+		return true
+	}
+	return s.size == other.size && s.modTime.Equal(other.modTime) && os.SameFile(s.info, other.info)
+}
+
+func (x *TokenIndex) tokenFilesStamp() (tokenFilesStamp, error) {
+	current, err := statTokenFile(x.Store.tokensPath())
 	if err != nil {
-		return false
+		return tokenFilesStamp{}, err
 	}
-	x.hashes = make(map[string][32]byte, len(m))
-	for p, t := range m {
-		x.hashes[p] = sha256.Sum256([]byte(t))
+	legacy, err := statTokenFile(ktavfile.LegacyPath(x.Store.tokensPath()))
+	if err != nil {
+		return tokenFilesStamp{}, err
 	}
-	return true
+	return tokenFilesStamp{current: current, legacy: legacy}, nil
+}
+
+func statTokenFile(path string) (tokenFileStamp, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return tokenFileStamp{}, nil
+	}
+	if err != nil {
+		return tokenFileStamp{}, err
+	}
+	return tokenFileStamp{exists: true, size: info.Size(), modTime: info.ModTime(), info: info}, nil
 }
 
 // StaticIndex maps a single fixed token to a profile (env-only mode).

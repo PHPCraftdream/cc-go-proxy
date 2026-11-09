@@ -64,6 +64,220 @@ func TestTokenIndexReloadsOnMiss(t *testing.T) {
 	}
 }
 
+func TestTokenIndexRecreateAfterRemoval(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	oldToken, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := &TokenIndex{Store: s}
+	if _, ok := idx.Lookup(oldToken); !ok {
+		t.Fatal("initial token was not indexed")
+	}
+	if err := os.Remove(s.tokensPath()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := idx.Lookup(oldToken); ok {
+		t.Fatal("token authorized after token file removal")
+	}
+	newToken, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newToken == oldToken {
+		t.Fatal("recreated token unexpectedly reused old token")
+	}
+	if p, ok := idx.Lookup(newToken); !ok || p != "work" {
+		t.Fatalf("recreated token Lookup = %q, %v", p, ok)
+	}
+	if _, ok := idx.Lookup(oldToken); ok {
+		t.Fatal("old token authorized after file recreation")
+	}
+}
+
+func TestTokenIndexFailsClosedOnChangedCorruptFile(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	tok, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := &TokenIndex{Store: s}
+	if _, ok := idx.Lookup(tok); !ok {
+		t.Fatal("initial token was not indexed")
+	}
+	if err := os.WriteFile(s.tokensPath(), []byte("tokens: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := idx.Lookup(tok); ok {
+		t.Fatal("cached token authorized after token file became corrupt")
+	}
+}
+
+func TestTokenIndexFailsClosedOnStatError(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	tok, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := &TokenIndex{Store: s}
+	if _, ok := idx.Lookup(tok); !ok {
+		t.Fatal("initial token was not indexed")
+	}
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idx.Store.Dir = file
+	if _, ok := idx.Lookup(tok); ok {
+		t.Fatal("cached token authorized after token file stat failed")
+	}
+}
+
+func TestTokenIndexFailsClosedOnUnreadableFile(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	tok, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := &TokenIndex{Store: s}
+	if _, ok := idx.Lookup(tok); !ok {
+		t.Fatal("initial token was not indexed")
+	}
+	path := s.tokensPath()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := idx.Lookup(tok); ok {
+		t.Fatal("cached token authorized after token file became unreadable")
+	}
+}
+
+func TestTokenIndexUnchangedFileDoesNotReread(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	tok, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := &TokenIndex{Store: s}
+	if _, ok := idx.Lookup(tok); !ok {
+		t.Fatal("initial token was not indexed")
+	}
+	path := s.tokensPath()
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := "0" + tok[1:]
+	if tok[0] == '0' {
+		changed = "1" + tok[1:]
+	}
+	text, err := ktavfile.Encode(tokensFile{Tokens: []profileToken{{Profile: "work", Token: changed}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) || !os.SameFile(before, after) {
+		t.Fatal("could not preserve token file metadata while changing contents")
+	}
+	for range 3 {
+		if p, ok := idx.Lookup(tok); !ok || p != "work" {
+			t.Fatalf("cached token Lookup = %q, %v", p, ok)
+		}
+		if _, ok := idx.Lookup(changed); ok {
+			t.Fatal("changed token matched despite unchanged file metadata")
+		}
+		if _, ok := idx.Lookup("miss"); ok {
+			t.Fatal("miss unexpectedly matched")
+		}
+	}
+}
+
+func TestTokenIndexReloadRetriesWhenFileChangesDuringRead(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	intermediate := map[string]string{"middle": "middle-token"}
+	latest := map[string]string{"latest": "latest-token"}
+	if err := s.writeProfileTokens(map[string]string{"initial": "initial-token"}); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	idx := &TokenIndex{
+		Store: s,
+		readTokens: func() (map[string]string, error) {
+			reads++
+			m, err := s.ProfileTokens()
+			if reads == 2 {
+				if writeErr := s.writeProfileTokens(latest); writeErr != nil {
+					t.Fatal(writeErr)
+				}
+			}
+			return m, err
+		},
+	}
+	if _, ok := idx.Lookup("initial-token"); !ok {
+		t.Fatal("initial token was not indexed")
+	}
+	if err := s.writeProfileTokens(intermediate); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := idx.Lookup("latest-token"); !ok || p != "latest" {
+		t.Fatalf("Lookup(latest token) = %q, %v", p, ok)
+	}
+	if _, ok := idx.Lookup("middle-token"); ok {
+		t.Fatal("stale file contents were associated with newer metadata")
+	}
+	if reads != 3 {
+		t.Fatalf("token file read %d times, want 3 across retry", reads)
+	}
+}
+
+func TestTokenIndexMigratesLegacyJSON(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	idx := &TokenIndex{Store: s}
+	if _, ok := idx.Lookup("legacy-token"); ok {
+		t.Fatal("empty store matched")
+	}
+	legacyPath := filepath.Join(s.Dir, "profile-tokens.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"work":"legacy-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := idx.Lookup("legacy-token"); !ok || p != "work" {
+		t.Fatalf("Lookup(legacy token) = %q, %v", p, ok)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy JSON file survived migration: %v", err)
+	}
+}
+
+func TestTokenIndexRejectsDeletedCachedToken(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	tok, err := s.EnsureProfileToken("work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := &TokenIndex{Store: s}
+	if p, ok := idx.Lookup(tok); !ok || p != "work" {
+		t.Fatalf("initial Lookup = %q, %v", p, ok)
+	}
+	if err := s.DeleteProfileToken("work"); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := idx.Lookup(tok); ok {
+		t.Fatalf("deleted token still authorized as %q", p)
+	}
+}
+
 func TestStaticIndex(t *testing.T) {
 	idx := StaticIndex("default", "secret-token")
 	if p, ok := idx.Lookup("secret-token"); !ok || p != "default" {
