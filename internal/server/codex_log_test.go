@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -608,6 +609,83 @@ func TestCanceledLineEndsWithTheIds(t *testing.T) {
 	}
 }
 
+// A registration is active only for the lifetime of its request, including
+// paths that fail before a response can be translated.
+func TestCodexPromptRegistrationFinishesOnEveryExit(t *testing.T) {
+	oldWatch := promptWatch
+	t.Cleanup(func() { promptWatch = oldWatch })
+	keyedBody := func(stream bool) string {
+		return `{"model":"claude-opus-5-5","max_tokens":10,"stream":` + map[bool]string{true: "true", false: "false"}[stream] + `,"metadata":{"user_id":"shared-subagent-session"},"messages":[{"role":"user","content":"hi"}]}`
+	}
+	assertFinished := func(t *testing.T) {
+		t.Helper()
+		promptWatch.mu.Lock()
+		defer promptWatch.mu.Unlock()
+		if len(promptWatch.active) != 0 {
+			t.Errorf("active prompt keys remain: %#v", promptWatch.active)
+		}
+		if len(promptWatch.last) != 1 {
+			t.Errorf("watched entries = %d, want one", len(promptWatch.last))
+		}
+		for key, current := range promptWatch.last {
+			if current.ended.IsZero() {
+				t.Errorf("current watched request %q has no end time", key)
+			}
+		}
+	}
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { okStream(w) })
+
+	t.Run("transport error", func(t *testing.T) {
+		promptWatch = &cacheWatch{}
+		codexTestBody = keyedBody(true)
+		t.Cleanup(func() { codexTestBody = "" })
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("injected transport failure")
+		})}
+		status, _, _, _ := codexCallWith(t, backend, client, nil)
+		if status != fiber.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", status)
+		}
+		assertFinished(t)
+	})
+
+	t.Run("non-2xx response", func(t *testing.T) {
+		promptWatch = &cacheWatch{}
+		codexTestBody = keyedBody(true)
+		t.Cleanup(func() { codexTestBody = "" })
+		status, _, _, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad request"}}`))
+		}), time.Minute)
+		if status != fiber.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+		assertFinished(t)
+	})
+
+	t.Run("successful non-stream", func(t *testing.T) {
+		promptWatch = &cacheWatch{}
+		codexTestBody = keyedBody(false)
+		t.Cleanup(func() { codexTestBody = "" })
+		status, _, _, _ := codexCall(t, backend, time.Minute)
+		if status != fiber.StatusOK {
+			t.Fatalf("status = %d, want 200", status)
+		}
+		assertFinished(t)
+	})
+
+	t.Run("successful stream", func(t *testing.T) {
+		promptWatch = &cacheWatch{}
+		codexTestBody = keyedBody(true)
+		t.Cleanup(func() { codexTestBody = "" })
+		status, _, _, _ := codexCall(t, backend, time.Minute)
+		if status != fiber.StatusOK {
+			t.Fatalf("status = %d, want 200", status)
+		}
+		assertFinished(t)
+	})
+}
+
 // A finished reply tells the watch what it was billed, and the next request of
 // the key reads it, even when the reply was not slow enough to be logged.
 func TestUpstreamEndFeedsTheCacheWatch(t *testing.T) {
@@ -618,16 +696,20 @@ func TestUpstreamEndFeedsTheCacheWatch(t *testing.T) {
 	logOut = &buf
 	t.Cleanup(func() { logOut = old })
 	f := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 4}
-	promptText(f, []uint64{1, 2, 3, 4})
+	registration := promptWatch.See(f, []uint64{1, 2, 3, 4})
 	trace := newUpstreamTrace()
 	trace.fp = f
+	trace.prev = registration.prev
+	trace.promptGeneration = registration.generation
+	trace.prompt = promptText(f, registration, time.Now())
 	tr := &codex.Translator{Usage: codex.Usage{Input: 640000, Cached: 600000, Output: 5}}
 	logUpstreamEnd(context.Background(), tr, trace, &http.Response{Header: http.Header{}}, "codex", "a -> b", 10)
 	if buf.Len() != 0 {
 		t.Errorf("a fast reply was logged: %q", buf.String())
 	}
 	next := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 6}
-	if got := promptText(next, []uint64{1, 2, 3, 4, 5, 6}); !strings.Contains(got, "history extends the last request by 2 items; the last request had 640000 tokens in") {
+	registration = promptWatch.See(next, []uint64{1, 2, 3, 4, 5, 6})
+	if got := promptText(next, registration, time.Now()); !strings.Contains(got, "history extends the last request by 2 items; the last request had 640000 tokens in") {
 		t.Errorf("line %q", got)
 	}
 }
