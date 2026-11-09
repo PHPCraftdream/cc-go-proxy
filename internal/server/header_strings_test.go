@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 // roundTripFunc is an http.RoundTripper made of a function.
@@ -72,11 +73,13 @@ func TestForwardedHeaderStringsDoNotAliasTheRequestBuffer(t *testing.T) {
 }
 
 func TestOwnStringIsACopy(t *testing.T) {
-	b := []byte("abc")
-	s := ownString(string(b))
-	b[0] = 'x'
-	if s != "abc" {
-		t.Errorf("ownString = %q", s)
+	input := string([]byte("abc"))
+	output := ownString(input)
+	if output != input {
+		t.Fatalf("ownString = %q, want %q", output, input)
+	}
+	if unsafe.StringData(input) == unsafe.StringData(output) {
+		t.Error("ownString returned the input string storage")
 	}
 }
 

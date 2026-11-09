@@ -9,9 +9,7 @@ import (
 )
 
 // TestProviderSpecificRequestConversion tests that requests are converted correctly per provider
-// TODO: Implement provider-specific features (reasoning, tool_choice) in v1.1.0
 func TestProviderSpecificRequestConversion(t *testing.T) {
-	t.Skip("Provider-specific features (reasoning, tool_choice) not yet implemented - planned for v1.1.0")
 
 	t.Run("OpenRouter with reasoning model", func(t *testing.T) {
 		cfg := &config.Config{
@@ -19,9 +17,11 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 		}
 		cfg.OpenAIBaseURL = "https://openrouter.ai/api/v1"
 
+		stream := true
 		claudeReq := models.ClaudeRequest{
 			Model:     "claude-sonnet-4-5-20250805",
 			MaxTokens: 1000,
+			Stream:    &stream,
 			Messages: []models.ClaudeMessage{
 				{Role: "user", Content: "Hello"},
 			},
@@ -37,7 +37,13 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 			t.Errorf("Model = %q, want %q", openaiReq.Model, "anthropic/claude-sonnet-4-5")
 		}
 
-		// Verify OpenRouter reasoning format
+		// Verify OpenRouter streaming usage fields and reasoning format
+		if openaiReq.StreamOptions["include_usage"] != true {
+			t.Error("OpenRouter stream_options.include_usage should be true")
+		}
+		if openaiReq.Usage["include"] != true {
+			t.Error("OpenRouter usage.include should be true")
+		}
 		if openaiReq.Reasoning == nil {
 			t.Error("OpenRouter request should have Reasoning object")
 		} else if enabled, ok := openaiReq.Reasoning["enabled"].(bool); !ok || !enabled {
@@ -56,9 +62,11 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 		}
 		cfg.OpenAIBaseURL = "https://api.openai.com/v1"
 
+		stream := true
 		claudeReq := models.ClaudeRequest{
 			Model:     "claude-sonnet-4-5-20250805",
 			MaxTokens: 1000,
+			Stream:    &stream,
 			Messages: []models.ClaudeMessage{
 				{Role: "user", Content: "Hello"},
 			},
@@ -74,8 +82,11 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 			t.Errorf("Model = %q, want %q", openaiReq.Model, "gpt-5")
 		}
 
-		// Verify OpenAI Direct reasoning format
-		if openaiReq.ReasoningEffort == "" {
+		// Verify OpenAI Direct streaming usage and reasoning format
+		if openaiReq.StreamOptions["include_usage"] != true {
+			t.Error("OpenAI Direct stream_options.include_usage should be true")
+		}
+		if openaiReq.ReasoningEffort != "medium" {
 			t.Error("OpenAI Direct request should have ReasoningEffort")
 		}
 
@@ -91,9 +102,11 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 		}
 		cfg.OpenAIBaseURL = "http://localhost:11434/v1"
 
+		stream := true
 		claudeReq := models.ClaudeRequest{
 			Model:     "claude-sonnet-4-5-20250805",
 			MaxTokens: 1000,
+			Stream:    &stream,
 			Messages: []models.ClaudeMessage{
 				{Role: "user", Content: "Hello"},
 			},
@@ -118,7 +131,7 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 			t.Errorf("Model = %q, want %q", openaiReq.Model, "qwen2.5:14b")
 		}
 
-		// Verify tool_choice is set to force tool usage
+		// Verify Ollama's streaming tool choice is set to force tool usage
 		if openaiReq.ToolChoice != "required" {
 			t.Errorf("ToolChoice = %v, want %q", openaiReq.ToolChoice, "required")
 		}
@@ -138,9 +151,11 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 		}
 		cfg.OpenAIBaseURL = "http://localhost:11434/v1"
 
+		stream := true
 		claudeReq := models.ClaudeRequest{
 			Model:     "claude-sonnet-4-5-20250805",
 			MaxTokens: 1000,
+			Stream:    &stream,
 			Messages: []models.ClaudeMessage{
 				{Role: "user", Content: "Hello"},
 			},
@@ -152,11 +167,73 @@ func TestProviderSpecificRequestConversion(t *testing.T) {
 			t.Fatalf("ConvertRequest() error = %v", err)
 		}
 
-		// Should NOT have tool_choice when no tools
+		// Should NOT have tool_choice when no tools, even when streaming
 		if openaiReq.ToolChoice != nil {
 			t.Errorf("ToolChoice should be nil when no tools present, got %v", openaiReq.ToolChoice)
 		}
 	})
+}
+
+func TestProviderSpecificRequestConversionWithoutStreaming(t *testing.T) {
+	falseStream := false
+	tests := []struct {
+		name    string
+		baseURL string
+		stream  *bool
+	}{
+		{name: "OpenRouter nil stream", baseURL: "https://openrouter.ai/api/v1"},
+		{name: "OpenRouter false stream", baseURL: "https://openrouter.ai/api/v1", stream: &falseStream},
+		{name: "OpenAI nil stream", baseURL: "https://api.openai.com/v1"},
+		{name: "OpenAI false stream", baseURL: "https://api.openai.com/v1", stream: &falseStream},
+		{name: "Ollama nil stream", baseURL: "http://localhost:11434/v1"},
+		{name: "Ollama false stream", baseURL: "http://localhost:11434/v1", stream: &falseStream},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{SonnetModel: "test-model"}
+			cfg.OpenAIBaseURL = tt.baseURL
+			claudeReq := models.ClaudeRequest{
+				Model:     "claude-sonnet-4-5-20250805",
+				MaxTokens: 1000,
+				Stream:    tt.stream,
+				Messages: []models.ClaudeMessage{
+					{Role: "user", Content: "Hello"},
+				},
+				Tools: []models.Tool{
+					{
+						Name:        "test_tool",
+						Description: "A test tool",
+						InputSchema: map[string]interface{}{"type": "object"},
+					},
+				},
+			}
+
+			openaiReq, err := ConvertRequest(claudeReq, cfg)
+			if err != nil {
+				t.Fatalf("ConvertRequest() error = %v", err)
+			}
+
+			if openaiReq.Stream != tt.stream {
+				t.Errorf("Stream = %v, want %v", openaiReq.Stream, tt.stream)
+			}
+			if openaiReq.StreamOptions != nil {
+				t.Errorf("StreamOptions = %v, want nil without streaming", openaiReq.StreamOptions)
+			}
+			if openaiReq.Usage != nil {
+				t.Errorf("Usage = %v, want nil without streaming", openaiReq.Usage)
+			}
+			if openaiReq.Reasoning != nil {
+				t.Errorf("Reasoning = %v, want nil without streaming", openaiReq.Reasoning)
+			}
+			if openaiReq.ReasoningEffort != "" {
+				t.Errorf("ReasoningEffort = %q, want empty without streaming", openaiReq.ReasoningEffort)
+			}
+			if openaiReq.ToolChoice != nil {
+				t.Errorf("ToolChoice = %v, want nil without streaming", openaiReq.ToolChoice)
+			}
+		})
+	}
 }
 
 // TestModelMappingVerification tests that we're using the correct model for each provider

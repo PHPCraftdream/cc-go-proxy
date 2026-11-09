@@ -126,9 +126,6 @@ type Config struct {
 	// Simple logging - one-line summary per request
 	SimpleLog bool
 
-	// Passthrough mode - directly proxy to Anthropic without conversion
-	PassthroughMode bool
-
 	// OpenRouter-specific (optional, improves rate limits)
 	OpenRouterAppName string
 	OpenRouterAppURL  string
@@ -170,9 +167,6 @@ func Load() (*Config, error) {
 		Token: os.Getenv("PROXY_TOKEN"),
 
 		MaxBodyMB: DefaultMaxBodyMB,
-
-		// Passthrough mode
-		PassthroughMode: getEnvAsBoolOrDefault("PASSTHROUGH_MODE", false),
 
 		// OpenRouter-specific (optional)
 		OpenRouterAppName: os.Getenv("OPENROUTER_APP_NAME"),
@@ -240,13 +234,6 @@ func LoadWithDebug(debug bool) (*Config, error) {
 func getEnvOrDefault(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
-	}
-	return defaultValue
-}
-
-func getEnvAsBoolOrDefault(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		return value == "true" || value == "1" || value == "yes"
 	}
 	return defaultValue
 }

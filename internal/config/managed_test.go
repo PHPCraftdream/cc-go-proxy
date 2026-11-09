@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -191,6 +192,80 @@ func TestEnsureManagedMigratesOldProfile(t *testing.T) {
 	// Idempotent once the block exists.
 	if added, err := EnsureManaged(p, "codex"); err != nil || added {
 		t.Errorf("second EnsureManaged = %v, %v", added, err)
+	}
+}
+
+func TestAddManagedOddSpacingLoaderValidated(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile string
+	}{
+		{
+			name:    "name value spacing",
+			profile: "        name:  work\n        provider: p1\n",
+		},
+		{
+			name:    "provider key spacing",
+			profile: "        name: work\n        provider : p1\n",
+		},
+		{
+			name:    "mapping key spacing",
+			profile: "        name: work\n        provider: p1\n        default_model : old-model\n        context_window : 123456\n",
+		},
+		{
+			name: "models list spacing",
+			profile: "        name: work\n        provider: p1\n" +
+				"        default_model : old-model\n        context_window : 123456\n" +
+				"        models : [\n            {\n                match: *old*\n" +
+				"                model: old-rule-model\n            }\n        ]\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			text := "providers: [\n    {\n        name: p1\n        type: codex_api\n        ## provider comment\n    }\n" +
+				"    {\n        name: p2\n        type: codex\n        ## other provider comment\n    }\n]\n" +
+				"profiles: [\n    {\n        ## profile comment\n" + tt.profile + "    }\n" +
+				"    {\n        name: other\n        provider: p2\n        default_model: preserve\n    }\n]\n"
+			if _, err := loadFile(writeKtav(t, text)); err != nil {
+				t.Fatalf("input fixture does not load: %v\n%s", err, text)
+			}
+			out, err := AddManaged(text, "work")
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err = ReplaceManaged(out, "work", sampleManaged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fc, err := loadFile(writeKtav(t, out))
+			if err != nil {
+				t.Fatalf("result does not load: %v\n%s", err, out)
+			}
+			work := profilePtr(fc, "work")
+			if work == nil || !HasManaged(out, "work") {
+				t.Fatalf("managed block not added to work:\n%s", out)
+			}
+			if work.DefaultModel != "" || work.ContextWindow != 0 || !reflect.DeepEqual(work.Models, sampleManaged.Rules) {
+				t.Errorf("work profile mapping = %+v, want managed rules %+v", work, sampleManaged.Rules)
+			}
+			for _, obsolete := range []string{"default_model : old-model", "context_window : 123456", "models : [", "old-rule-model"} {
+				if strings.Contains(out, obsolete) {
+					t.Errorf("obsolete mapping %q survived:\n%s", obsolete, out)
+				}
+			}
+			other := profilePtr(fc, "other")
+			if other == nil || other.Provider != "p2" || other.DefaultModel != "preserve" {
+				t.Errorf("unaffected other profile = %+v", other)
+			}
+			if len(fc.Providers) != 2 || fc.Providers[0].Name != "p1" || fc.Providers[1].Name != "p2" || fc.Providers[1].Type != "codex" {
+				t.Errorf("providers were not preserved: %+v", fc.Providers)
+			}
+			for _, comment := range []string{"## provider comment", "## other provider comment", "## profile comment"} {
+				if !strings.Contains(out, comment) {
+					t.Errorf("lost comment %q:\n%s", comment, out)
+				}
+			}
+		})
 	}
 }
 

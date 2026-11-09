@@ -113,20 +113,20 @@ func AddManaged(text, profile string) (string, error) {
 	lines := strings.Split(text, nl)
 	indentOf := func(s string) string { return s[:len(s)-len(strings.TrimLeft(s, " \t"))] }
 
+	open, closeAt, _, err := findProfileObject(lines, profile)
+	if err != nil {
+		return "", err
+	}
 	nameAt := -1
-	for i, l := range lines {
-		if strings.TrimSpace(l) == "name: "+profile {
-			// A provider may share the name: require a "provider:" line in the object.
-			if o, c, ok := objectAround(lines, i); ok && objectHasKey(lines[o+1:c], "provider:") {
-				nameAt = i
-				break
-			}
+	for i := open + 1; i < closeAt; i++ {
+		if k, v, ok := keyValue(lines[i]); ok && k == "name" && v == profile {
+			nameAt = i
+			break
 		}
 	}
 	if nameAt < 0 {
 		return "", fmt.Errorf("profile %q not found in the config", profile)
 	}
-	open, closeAt, _ := objectAround(lines, nameAt)
 	keyIndent := indentOf(lines[nameAt])
 
 	drop := map[int]bool{}
@@ -135,13 +135,13 @@ func AddManaged(text, profile string) (string, error) {
 		if indentOf(lines[i]) != keyIndent {
 			continue
 		}
-		t := strings.TrimSpace(lines[i])
+		k, _, hasKey := keyValue(lines[i])
 		end := i
 		switch {
-		case strings.HasPrefix(t, "default_model:"), strings.HasPrefix(t, "context_window:"):
-		case t == "models: [":
+		case hasKey && (k == "default_model" || k == "context_window"):
+		case isListHeader(lines[i], "models"):
 			for end = i + 1; end < closeAt; end++ {
-				if indentOf(lines[end]) == keyIndent && strings.TrimSpace(lines[end]) == "]" {
+				if indentOf(lines[end]) == keyIndent && isCloseBracket(lines[end]) {
 					break
 				}
 			}
@@ -194,15 +194,6 @@ func objectAround(lines []string, i int) (open, closeAt int, ok bool) {
 		}
 	}
 	return 0, 0, false
-}
-
-func objectHasKey(lines []string, key string) bool {
-	for _, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), key) {
-			return true
-		}
-	}
-	return false
 }
 
 // EnsureManaged adds a managed block to profile in the file at path when it
