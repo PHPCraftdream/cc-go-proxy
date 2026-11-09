@@ -14,31 +14,46 @@ const maxWatchedKeys = 512
 // watched is what cacheWatch keeps of a request: its fingerprint, the hash of
 // every input item and, once the reply is over, the input tokens it was billed.
 type watched struct {
-	f     codex.Fingerprint
-	items []uint64
-	input int    // 0 until Done
-	edge  string // data centre of the reply (Cf-Ray), "" until Done
-	start time.Time
-	ended time.Time // zero until Done
+	f          codex.Fingerprint
+	items      []uint64
+	input      int    // 0 until Done
+	edge       string // data centre of the reply (Cf-Ray), "" until Done
+	start      time.Time
+	ended      time.Time // zero until Done
+	generation uint64
 }
 
 // cacheWatch remembers the last request of every cache key (a Claude Code
 // session), so a line of the log can say whether the prompt changed since: a
 // cache miss then has a cause to read off, not to guess.
 type cacheWatch struct {
-	mu    sync.Mutex
-	last  map[string]watched
-	order []string // keys, oldest first
+	mu         sync.Mutex
+	last       map[string]watched
+	active     map[string]map[uint64]struct{}
+	order      []string // keys, oldest first
+	generation uint64
 }
 
 var promptWatch = &cacheWatch{}
 
-// See records f (items: the hashes of its input items, nil when unknown) and
-// says how it differs from the last request of its key: "" for a request
-// without a key.
-func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
+type prevInfo struct {
+	start, ended time.Time
+	edge         string
+}
+
+type cacheRegistration struct {
+	text       string
+	prev       prevInfo
+	generation uint64
+	running    int
+	branch     bool
+}
+
+// See atomically registers f and returns the comparison with its predecessor,
+// the predecessor's timing and edge, and an identity for this request.
+func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) cacheRegistration {
 	if f.Key == "" {
-		return ""
+		return cacheRegistration{}
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -46,6 +61,22 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 		w.last = map[string]watched{}
 	}
 	prev, seen := w.last[f.Key]
+	active := w.active[f.Key]
+	reg := cacheRegistration{
+		prev:       prevInfo{start: prev.start, ended: prev.ended, edge: prev.edge},
+		running:    len(active),
+		generation: 0,
+	}
+	if seen {
+		if _, running := active[prev.generation]; running && prev.items != nil && items != nil {
+			for i := 0; i < min(len(prev.items), len(items)); i++ {
+				if prev.items[i] != items[i] {
+					reg.branch = true
+					break
+				}
+			}
+		}
+	}
 	if !seen {
 		w.order = append(w.order, f.Key)
 		if len(w.order) > maxWatchedKeys {
@@ -53,9 +84,24 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 			w.order = w.order[1:]
 		}
 	}
-	w.last[f.Key] = watched{f: f, items: items, start: time.Now()}
+	w.generation++
+	if w.generation == 0 {
+		w.generation++
+	}
+	current := watched{f: f, items: items, start: time.Now(), generation: w.generation}
+	w.last[f.Key] = current
+	if w.active == nil {
+		w.active = map[string]map[uint64]struct{}{}
+	}
+	if w.active[f.Key] == nil {
+		w.active[f.Key] = map[uint64]struct{}{}
+	}
+	w.active[f.Key][current.generation] = struct{}{}
+
+	reg.generation = current.generation
 	if !seen {
-		return "first request of this key since the server started"
+		reg.text = "first request of this key since the server started"
+		return reg
 	}
 	var changed []string
 	if prev.f.System != f.System {
@@ -64,37 +110,47 @@ func (w *cacheWatch) See(f codex.Fingerprint, items []uint64) string {
 	if prev.f.Tools != f.Tools {
 		changed = append(changed, "tools")
 	}
-	text := "same system prompt and tools as the last request of this key"
+	reg.text = "same system prompt and tools as the last request of this key"
 	switch len(changed) {
 	case 1:
-		text = changed[0] + " changed since the last request of this key"
+		reg.text = changed[0] + " changed since the last request of this key"
 	case 2:
-		text = "system prompt and tools changed since the last request of this key"
+		reg.text = "system prompt and tools changed since the last request of this key"
+	}
+	if prev.f.Model != f.Model {
+		reg.text += fmt.Sprintf("; model changed %s -> %s", prev.f.Model, f.Model)
+	}
+	if prev.f.Reasoning != f.Reasoning {
+		reg.text += "; reasoning changed"
+	}
+	if prev.f.ToolChoice != f.ToolChoice {
+		reg.text += "; tool choice changed"
 	}
 	if f.Items < prev.f.Items {
-		text += fmt.Sprintf("; history shorter (%d -> %d items)", prev.f.Items, f.Items)
+		reg.text += fmt.Sprintf("; history shorter (%d -> %d items)", prev.f.Items, f.Items)
 	}
 	if note := historyNote(prev.items, items); note != "" {
-		text += "; " + note
+		reg.text += "; " + note
 	}
 	if prev.input > 0 {
-		text += fmt.Sprintf("; the last request had %d tokens in", prev.input)
+		reg.text += fmt.Sprintf("; the last request had %d tokens in", prev.input)
 	}
-	return text
+	return reg
 }
 
 // Done records the input tokens and the data centre (edge) of the reply to the
-// request seen as f, so the next request of its key can say what the last one
-// was billed (a `cached` below it means the backend dropped part of what it
-// had) and where it came from. A newer request of the key that was seen
-// meanwhile is left alone.
-func (w *cacheWatch) Done(f codex.Fingerprint, input int, edge string) {
-	if f.Key == "" || (input <= 0 && edge == "") {
+// registered request. A later request of the key is left alone.
+func (w *cacheWatch) Done(key string, generation uint64, input int, edge string) {
+	if key == "" || generation == 0 {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if cur, ok := w.last[f.Key]; ok && cur.f == f {
+	w.removeActiveLocked(key, generation)
+	if input <= 0 && edge == "" {
+		return
+	}
+	if cur, ok := w.last[key]; ok && cur.generation == generation {
 		if input > 0 {
 			cur.input = input
 		}
@@ -102,23 +158,30 @@ func (w *cacheWatch) Done(f codex.Fingerprint, input int, edge string) {
 			cur.edge = edge
 		}
 		cur.ended = time.Now()
-		w.last[f.Key] = cur
+		w.last[key] = cur
 	}
 }
 
-// prevInfo is what is known of the last request of a key when a new one comes:
-// when it started and ended and the data centre of its reply. Zero when unknown.
-type prevInfo struct {
-	start, ended time.Time
-	edge         string
-}
-
-// Prev says what is known of the last request of key.
-func (w *cacheWatch) Prev(key string) prevInfo {
+// Finish ends a request without recording diagnostic details.
+func (w *cacheWatch) Finish(key string, generation uint64) {
+	if key == "" || generation == 0 {
+		return
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	p := w.last[key]
-	return prevInfo{start: p.start, ended: p.ended, edge: p.edge}
+	w.removeActiveLocked(key, generation)
+	if cur, ok := w.last[key]; ok && cur.generation == generation && cur.ended.IsZero() {
+		cur.ended = time.Now()
+		w.last[key] = cur
+	}
+}
+
+func (w *cacheWatch) removeActiveLocked(key string, generation uint64) {
+	active := w.active[key]
+	delete(active, generation)
+	if len(active) == 0 {
+		delete(w.active, key)
+	}
 }
 
 // timingText says how long before now the last request of the key started and
@@ -158,14 +221,23 @@ func historyNote(prev, cur []uint64) string {
 	return ""
 }
 
-// promptText is what a log line says about the prompt of a request.
-func promptText(f codex.Fingerprint, items []uint64) string {
+// promptText formats one fingerprint and the result of registering its request.
+func promptText(f codex.Fingerprint, reg cacheRegistration, now time.Time) string {
 	text := f.String()
-	prev := promptWatch.Prev(f.Key)
-	if note := promptWatch.See(f, items); note != "" {
-		text += "; " + note
+	if reg.text != "" {
+		text += "; " + reg.text
 	}
-	if t := timingText(prev, time.Now()); t != "" {
+	if reg.running > 0 {
+		unit := "requests"
+		if reg.running == 1 {
+			unit = "request"
+		}
+		text += fmt.Sprintf("; %d other %s of this key running", reg.running, unit)
+	}
+	if reg.branch {
+		text += "; branch: history diverges from the last request while it is running"
+	}
+	if t := timingText(reg.prev, now); t != "" {
 		text += "; " + t
 	}
 	return text

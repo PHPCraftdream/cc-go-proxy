@@ -137,18 +137,25 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
 
   These three lines end with `| prompt key a1b2c3d4, system 5e4d3c2b, 63 tools 9f8e7d6c, 214 input items; …`: a
-  fingerprint of what the backend caches by prefix (the first digits of the cache key, a hash of the system prompt and one
-  of the tool definitions, the number of input items; no text and not the session id) and how it differs from the last
-  request of the same key since the server started: `same system prompt and tools as the last request of this key`,
-  `system prompt changed …`, `tools changed …`, `history shorter (214 -> 40 items)`, or `first request of this key`. The
+  fingerprint of what the backend caches by prefix. The full cache key is the identity (only its first digits are shown);
+  it comes from `metadata.user_id`, so subagents with the same value share a key and comparisons. The line shows a hash of
+  the system prompt and one of the tool definitions, and the number of input items; it logs no prompt text or session id.
+  Model, reasoning settings and tool choice are retained for comparisons but are not rendered as hashes (a changed model's
+  old/new names or a reasoning/tool-choice change note may appear). It also says how the request differs from the last
+  request of this key since the server started: `same system prompt
+  and tools as the last request of this key`, `system prompt changed …`, `tools changed …`, `model changed OLD -> NEW`,
+  `reasoning changed`, `tool choice changed`, `history shorter (214 -> 40 items)`, or `first request of this key`. The
   history is compared item by item (a hash of each, kept per key): `history extends the last request by 2 items` (the
-  prefix is the same, so a miss then is the backend's), `history changed at item 7 of 214 (the last request had 212)`
-  (item 0 is the system prompt; the items before the changed one can still be read from the cache), `history identical
-  to the last request`. When the reply of the last request had ended, the note adds `the last request had 711757 tokens
-  in`: a `cached` below it means the backend dropped part of what it had cached. Next to `| cache miss` (a prompt of 10000
+  prefix is the same), `history changed at item 7 of 214 (the last request had 212)` (item 0 is the system prompt; the
+  items before the changed one can still be read from the cache), `history identical to the last request`. Identical
+  history alone does not prove the backend caused a miss; model or request controls may differ, and even with matching
+  settings the backend may not have read its cache. When the reply of the last request had ended, the note adds `the last
+  request had 711757 tokens in`: a `cached` below it means the backend dropped part of what it had cached. Concurrent
+  calls report `2 other requests of this key running`; if history diverges while the last request is still running, the
+  line marks `branch: history diverges from the last request while it is running`. Next to `| cache miss` (a prompt of 10000
   tokens or more with nothing cached) or `| cache partial 64% (469888 of 732972)` (under 90% cached) it tells a miss that
   has a cause (the prefix changed, a compaction, a subagent with a prompt of its own) from one the backend alone explains
-  (same prefix, part or all of it not read from the cache). The note ends with `edge LAX -> PIT` (or `edge same (LAX)`):
+  (same prefix and settings, part or all of it not read from the cache). The note ends with `edge LAX -> PIT` (or `edge same (LAX)`):
   the data centre in the `cf-ray` of the key's last reply and of this one, to see whether a cache that is lost goes with a
   change of the way in. Before it comes `the last request started 8m19s ago, ended 12s ago` (or `… and had not ended`
   when another request of the key was still running): the backend keeps a cache entry for a few minutes, so a long stream

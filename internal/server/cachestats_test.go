@@ -115,30 +115,34 @@ func TestEdgeText(t *testing.T) {
 func TestCacheWatchKeepsTheEdge(t *testing.T) {
 	w := &cacheWatch{}
 	f := fp("k", "s", "t", 3)
-	w.See(f, nil)
-	if got := w.Prev("k").edge; got != "" {
+	reg := w.See(f, nil)
+	if got := reg.prev.edge; got != "" {
 		t.Errorf("edge before the reply: %q", got)
 	}
-	w.Done(f, 0, "LAX") // an edge alone is kept, without tokens
-	if got := w.Prev("k").edge; got != "LAX" {
+	w.Done(f.Key, reg.generation, 0, "LAX") // an edge alone is kept, without tokens
+	if got := w.last[f.Key].edge; got != "LAX" {
 		t.Errorf("edge = %q", got)
 	}
-	w.Done(f, 5000, "") // tokens do not wipe the edge
-	if got := w.Prev("k").edge; got != "LAX" {
+	w.Done(f.Key, reg.generation, 5000, "") // tokens do not wipe the edge
+	if got := w.last[f.Key].edge; got != "LAX" {
 		t.Errorf("edge after tokens = %q", got)
 	}
-	// The next request starts without an edge of its own; a stranger's key has none.
-	w.See(fp("k", "s", "t", 4), nil)
-	if got := w.Prev("k").edge; got != "" {
-		t.Errorf("a new request inherited the edge: %q", got)
+	// A later request sees the completed request's edge as its predecessor,
+	// while the newly registered request starts without its own edge.
+	next := w.See(fp("k", "s", "t", 4), nil)
+	if got := next.prev.edge; got != "LAX" {
+		t.Errorf("predecessor edge = %q, want LAX", got)
 	}
-	if got := w.Prev("other").edge; got != "" {
+	if got := w.last[f.Key].edge; got != "" {
+		t.Errorf("new request inherited the edge: %q", got)
+	}
+	if got := w.See(fp("other", "s", "t", 1), nil).prev.edge; got != "" {
 		t.Errorf("unknown key: %q", got)
 	}
 	// An older request's edge does not land on a newer one.
-	w.Done(f, 0, "PIT")
-	if got := w.Prev("k").edge; got != "" {
-		t.Errorf("an older reply set the edge: %q", got)
+	w.Done(f.Key, reg.generation, 0, "PIT")
+	if got := w.last[f.Key].edge; got != "" {
+		t.Errorf("an older reply set the current edge: %q", got)
 	}
 }
 
@@ -177,8 +181,10 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	f1 := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 4}
 	t1 := newUpstreamTrace()
 	t1.fp = f1
-	t1.prev = promptWatch.Prev(f1.Key)
-	t1.prompt = promptText(f1, []uint64{1, 2, 3, 4})
+	reg1 := promptWatch.See(f1, []uint64{1, 2, 3, 4})
+	t1.prev = reg1.prev
+	t1.promptGeneration = reg1.generation
+	t1.prompt = promptText(f1, reg1, time.Now())
 	logUpstreamEnd(context.Background(), &codex.Translator{Usage: codex.Usage{Input: 640000, Cached: 600000}}, t1,
 		&http.Response{Header: http.Header{"Cf-Ray": {"r1-LAX"}}}, "codex", "a -> b", 10)
 	if buf.Len() != 0 {
@@ -188,8 +194,10 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	f2 := codex.Fingerprint{Key: "abcd1234", System: "s", Tools: "t", NTools: 1, Items: 6}
 	t2 := newUpstreamTrace()
 	t2.fp = f2
-	t2.prev = promptWatch.Prev(f2.Key)
-	t2.prompt = promptText(f2, []uint64{1, 2, 3, 4, 5, 6})
+	reg2 := promptWatch.See(f2, []uint64{1, 2, 3, 4, 5, 6})
+	t2.prev = reg2.prev
+	t2.promptGeneration = reg2.generation
+	t2.prompt = promptText(f2, reg2, time.Now())
 	tr := &codex.Translator{Failed: "boom", Usage: codex.Usage{Input: 650000, Cached: 400000}}
 	logUpstreamEnd(context.Background(), tr, t2, &http.Response{Header: http.Header{"Cf-Ray": {"r2-PIT"}}}, "codex", "a -> b", 10)
 	got := buf.String()
@@ -230,29 +238,35 @@ func TestTimingText(t *testing.T) {
 
 func TestCacheWatchRemembersWhenTheLastRequestRan(t *testing.T) {
 	w := &cacheWatch{}
-	if p := w.Prev("k"); !p.start.IsZero() || !p.ended.IsZero() || p.edge != "" {
+	f := fp("k", "s", "t", 3)
+	before := time.Now()
+	if p := w.See(f, nil).prev; !p.start.IsZero() || !p.ended.IsZero() || p.edge != "" {
 		t.Errorf("an unknown key has a past: %+v", p)
 	}
-	before := time.Now()
-	f := fp("k", "s", "t", 3)
-	w.See(f, nil)
-	p := w.Prev("k")
-	if p.start.Before(before) || p.start.After(time.Now()) || !p.ended.IsZero() {
-		t.Errorf("after See: %+v", p)
+	reg := w.See(f, nil)
+	if reg.prev.start.Before(before) || reg.prev.start.After(time.Now()) || !reg.prev.ended.IsZero() {
+		t.Errorf("after See: %+v", reg.prev)
 	}
-	w.Done(f, 0, "") // nothing to say: the reply is not marked as ended either
-	if p = w.Prev("k"); !p.ended.IsZero() {
+	w.Done(f.Key, reg.generation, 0, "")
+	if p := w.last["k"]; !p.ended.IsZero() {
 		t.Errorf("a Done without data ended the request: %+v", p)
 	}
-	w.Done(f, 5000, "LAX")
-	if p = w.Prev("k"); p.ended.Before(p.start) || p.edge != "LAX" {
+	w.Done(f.Key, reg.generation, 5000, "LAX")
+	p := w.last["k"]
+	if p.ended.Before(p.start) || p.edge != "LAX" {
 		t.Errorf("after Done: %+v", p)
 	}
-	// A new request starts afresh.
-	w.See(fp("k", "s", "t", 4), nil)
-	if p = w.Prev("k"); !p.ended.IsZero() || p.edge != "" {
-		t.Errorf("a new request inherited the end: %+v", p)
+	if p := w.See(fp("k", "s", "t", 4), nil).prev; p.ended.IsZero() || p.edge != "LAX" {
+		t.Errorf("new request's predecessor lost the end or edge: %+v", p)
 	}
+	if p := w.last["k"]; !p.ended.IsZero() || p.edge != "" {
+		t.Errorf("new request inherited the predecessor's end: %+v", p)
+	}
+}
+
+func promptForCacheStatsTest(f codex.Fingerprint) string {
+	reg := promptWatch.See(f, nil)
+	return promptText(f, reg, time.Now())
 }
 
 // The prompt note of the next request says when the last one ran.
@@ -260,14 +274,15 @@ func TestPromptTextSaysWhenTheLastRequestRan(t *testing.T) {
 	promptWatch = &cacheWatch{}
 	t.Cleanup(func() { promptWatch = &cacheWatch{} })
 	f := fp("abcd1234", "11111111", "22222222", 2)
-	if first := promptText(f, nil); strings.Contains(first, "the last request") && !strings.Contains(first, "first request of this key") {
+	if first := promptForCacheStatsTest(f); strings.Contains(first, "the last request") && !strings.Contains(first, "first request of this key") {
 		t.Errorf("a first request has a past: %q", first)
 	}
-	if running := promptText(f, nil); !strings.Contains(running, "; the last request started ") || !strings.HasSuffix(running, " ago and had not ended") {
+	if running := promptForCacheStatsTest(f); !strings.Contains(running, "; the last request started ") || !strings.HasSuffix(running, " ago and had not ended") {
 		t.Errorf("running: %q", running)
 	}
-	promptWatch.Done(f, 1000, "")
-	if ended := promptText(f, nil); !strings.Contains(ended, "; the last request started ") || !strings.Contains(ended, " ago, ended ") || strings.HasSuffix(ended, "had not ended") {
+	reg := promptWatch.See(f, nil)
+	promptWatch.Done(f.Key, reg.generation, 1000, "")
+	if ended := promptForCacheStatsTest(f); !strings.Contains(ended, "; the last request started ") || !strings.Contains(ended, " ago, ended ") || strings.HasSuffix(ended, "had not ended") {
 		t.Errorf("ended: %q", ended)
 	}
 }
