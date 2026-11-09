@@ -6,12 +6,35 @@ import (
 	"strings"
 )
 
+type blockStrings struct {
+	text, thinking *strings.Builder
+}
+
 // Collector assembles Translator events into a non-streaming Messages response.
 type Collector struct {
-	msg    map[string]any
-	blocks []map[string]any
-	json   map[int]*strings.Builder
-	err    error
+	msg          map[string]any
+	blocks       []map[string]any
+	textThinking []blockStrings
+	json         map[int]*strings.Builder
+	err          error
+}
+
+func seededBuilder(initial string) *strings.Builder {
+	b := &strings.Builder{}
+	b.WriteString(initial)
+	return b
+}
+
+func (c *Collector) materialize(i int) {
+	if i < 0 || i >= len(c.blocks) {
+		return
+	}
+	if b := c.textThinking[i].text; b != nil {
+		c.blocks[i]["text"] = b.String()
+	}
+	if b := c.textThinking[i].thinking; b != nil {
+		c.blocks[i]["thinking"] = b.String()
+	}
 }
 
 func (c *Collector) Emit(event string, data any) {
@@ -26,6 +49,7 @@ func (c *Collector) Emit(event string, data any) {
 			cp[k] = v
 		}
 		c.blocks = append(c.blocks, cp)
+		c.textThinking = append(c.textThinking, blockStrings{})
 	case "content_block_delta":
 		i, _ := d["index"].(int)
 		if i < 0 || i >= len(c.blocks) {
@@ -34,9 +58,15 @@ func (c *Collector) Emit(event string, data any) {
 		b, delta := c.blocks[i], d["delta"].(map[string]any)
 		switch delta["type"] {
 		case "text_delta":
-			b["text"] = b["text"].(string) + delta["text"].(string)
+			if c.textThinking[i].text == nil {
+				c.textThinking[i].text = seededBuilder(b["text"].(string))
+			}
+			c.textThinking[i].text.WriteString(delta["text"].(string))
 		case "thinking_delta":
-			b["thinking"] = b["thinking"].(string) + delta["thinking"].(string)
+			if c.textThinking[i].thinking == nil {
+				c.textThinking[i].thinking = seededBuilder(b["thinking"].(string))
+			}
+			c.textThinking[i].thinking.WriteString(delta["thinking"].(string))
 		case "signature_delta":
 			b["signature"] = delta["signature"]
 		case "input_json_delta":
@@ -50,6 +80,7 @@ func (c *Collector) Emit(event string, data any) {
 		}
 	case "content_block_stop":
 		i, _ := d["index"].(int)
+		c.materialize(i)
 		if sb := c.json[i]; sb != nil && i < len(c.blocks) {
 			var input any
 			if json.Unmarshal([]byte(sb.String()), &input) == nil {
@@ -81,6 +112,7 @@ func (c *Collector) Result() (map[string]any, error) {
 	}
 	content := make([]any, len(c.blocks))
 	for i, b := range c.blocks {
+		c.materialize(i)
 		content[i] = b
 	}
 	c.msg["content"] = content
