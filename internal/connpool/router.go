@@ -55,13 +55,6 @@ func (r *Router) transportLocked(c proxydial.Choice) *Transport {
 	return t
 }
 
-// transport is kept as a helper for checks that need to inspect a route.
-func (r *Router) transport(c proxydial.Choice) *Transport {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.transportLocked(c)
-}
-
 // pruneLocked removes inactive routes. The current default route is retained,
 // and a route with an admitted request stays until its response body is closed.
 func (r *Router) pruneLocked(now time.Time) []*Transport {
