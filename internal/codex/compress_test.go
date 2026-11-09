@@ -179,6 +179,47 @@ func TestCallFallsBackToPlainWhenCompressionIsRefused(t *testing.T) {
 	}
 }
 
+// The session headers ride on every try: the compressed one and the plain one
+// sent again after a refusal.
+func TestCallKeepsTheSessionHeadersOnEveryBodyForm(t *testing.T) {
+	resetCompression(t)
+	type try struct{ enc, session, hint string }
+	var mu sync.Mutex
+	var tries []try
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		enc := r.Header.Get("Content-Encoding")
+		mu.Lock()
+		tries = append(tries, try{enc, r.Header.Get("session-id"), r.Header.Get("x-codex-routing-hint")})
+		mu.Unlock()
+		if enc != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer backend.Close()
+
+	req := bigRequest()
+	req.PromptCacheKey = "key9"
+	resp, err := Call(context.Background(), backend.URL, testSession(t), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(tries) != 2 || tries[0].enc != "zstd" || tries[1].enc != "" {
+		t.Fatalf("tries = %+v, want a zstd one, then a plain one", tries)
+	}
+	for i, tr := range tries {
+		if tr.session != "key9" || tr.hint != "model=m" {
+			t.Errorf("try %d (%q): session-id %q, routing hint %q", i, tr.enc, tr.session, tr.hint)
+		}
+	}
+}
+
 // A request that is bad in itself fails both ways and must not switch the
 // compression off.
 func TestCallKeepsCompressionWhenThePlainBodyFailsToo(t *testing.T) {

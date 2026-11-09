@@ -202,6 +202,68 @@ func TestStaleLaneKeepsItsRunningRequest(t *testing.T) {
 	tr.release(p)
 }
 
+// On real connections: a lane that is merely due sends the request down its old
+// connection while the next one warms up, but one left alone past
+// staleFactor*maxAge opens a connection of its own, drops the pending warm-up,
+// and that warm-up, finishing later, must not switch the lane again.
+func TestStaleLaneOnRealConnections(t *testing.T) {
+	srv, conns := tlsServer(t)
+	base := srv.Client().Transport.(*http.Transport)
+	tr := New(time.Minute, 1, 3, base.Clone)
+	c := withClock(tr)
+	var warmUps []func() // run by the test, when it says
+	tr.spawn = func(f func()) { warmUps = append(warmUps, f) }
+	client := &http.Client{Transport: tr}
+
+	reused := func() bool {
+		var got bool
+		ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+			GotConn: func(i httptrace.GotConnInfo) { got = i.Reused },
+		})
+		getCtx(t, client, srv.URL, ctx)
+		return got
+	}
+
+	if reused() {
+		t.Fatal("the first request cannot reuse a connection")
+	}
+	first := tr.lanes[0].cur
+
+	// Due late, not stale: the warm-up starts at 1m50s, so that the lane is
+	// stale 11 s later, well inside warmWait, where only the stale rule can
+	// still switch it.
+	c.t = c.t.Add(110 * time.Second)
+	if !reused() || tr.lanes[0].cur != first {
+		t.Fatal("a due lane must still serve on its old connection")
+	}
+	if tr.lanes[0].warming == nil || len(warmUps) != 1 {
+		t.Fatalf("a due lane must warm the next pool (warming %v, warm-ups %d)", tr.lanes[0].warming != nil, len(warmUps))
+	}
+
+	c.t = c.t.Add(11 * time.Second) // 2m1s old: stale
+	if reused() {
+		t.Fatal("a stale lane sent a request down its old connection")
+	}
+	fresh := tr.lanes[0].cur
+	if fresh == first || tr.lanes[0].warming != nil {
+		t.Fatalf("a stale lane keeps its old pool or its warm-up (new pool %v, warming %v)", fresh != first, tr.lanes[0].warming != nil)
+	}
+	if n := conns.Load(); n != 2 {
+		t.Fatalf("connections = %d, want 2 (old, new)", n)
+	}
+
+	warmUps[0]() // the dropped warm-up finishes now
+	if tr.lanes[0].cur != fresh {
+		t.Fatal("a dropped warm-up switched the lane again")
+	}
+	if st := tr.Stats(); st.WarmOpened != 0 {
+		t.Errorf("a dropped warm-up counts as opened: %+v", st)
+	}
+	if !reused() || tr.lanes[0].cur != fresh {
+		t.Error("the fresh pool's connection is not kept for the next request")
+	}
+}
+
 func TestFailedPoolIsReplaced(t *testing.T) {
 	tr := New(time.Hour, 1, 1, plain)
 	p := tr.acquire(nil)
