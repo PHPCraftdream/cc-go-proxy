@@ -95,15 +95,15 @@ func (s *linkStats) Take() string {
 	if replies == 0 && retried+failed == 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("%d replies", replies)}
+	parts := []string{count(replies, "reply", "replies")}
 	if len(tls) > 0 {
 		sort.Slice(tls, func(i, j int) bool { return tls[i] < tls[j] })
-		parts = append(parts, fmt.Sprintf("%d new connections, TLS median %s, max %s",
-			len(tls), roundDur(tls[len(tls)/2]), roundDur(tls[len(tls)-1])))
+		parts = append(parts, fmt.Sprintf("%s, TLS median %s, max %s",
+			count(len(tls), "new connection", "new connections"), roundDur(tls[len(tls)/2]), roundDur(tls[len(tls)-1])))
 	}
 	if uploads > 0 {
-		parts = append(parts, fmt.Sprintf("upload of %d big bodies %s/s overall, slowest %s/s",
-			uploads, sizeString(int(float64(upBytes)/upTime.Seconds())), sizeString(int(slowest))))
+		parts = append(parts, fmt.Sprintf("upload of %s %s/s overall, slowest %s/s",
+			count(uploads, "big body", "big bodies"), sizeString(int(float64(upBytes)/upTime.Seconds())), sizeString(int(slowest))))
 	}
 	if n := retried + failed; n > 0 {
 		var by []string
@@ -112,8 +112,8 @@ func (s *linkStats) Take() string {
 				by = append(by, fmt.Sprintf("%d %s", k, c))
 			}
 		}
-		parts = append(parts, fmt.Sprintf("%d broken calls (%d sent again by ccgp, %d reached the client): %s",
-			n, retried, failed, strings.Join(by, ", ")))
+		parts = append(parts, fmt.Sprintf("%s (%d sent again by ccgp, %d reached the client): %s",
+			count(n, "broken call", "broken calls"), retried, failed, strings.Join(by, ", ")))
 	} else {
 		parts = append(parts, "no broken calls")
 	}
@@ -156,4 +156,12 @@ func writeLinkStats(w io.Writer, now time.Time) {
 	if text := linkHealth.Take(); text != "" {
 		_, _ = fmt.Fprintf(w, "[%s] upstream link [codex]: %s\n", now.Format("15:04:05"), text)
 	}
+}
+
+// count is "1 reply" or "3 replies".
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }

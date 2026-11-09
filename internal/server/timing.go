@@ -415,7 +415,7 @@ func (u *upstreamTrace) stretchesLocked(firstToken, end time.Time) []phase {
 		}
 		ps = append(ps, phase{name, side, to.Sub(from)})
 	}
-	add("before the last try", "link", u.start, u.attempt)
+	add(preTryName(u.calls), "link", u.start, u.attempt)
 	add("connect", "link", u.attempt, u.got)
 	add("upload", "link", u.got, u.wrote)
 	headers := u.headers
@@ -528,4 +528,14 @@ func sizeString(n int) string {
 		return fmt.Sprintf("%.0f KiB", float64(n)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", n)
+}
+
+// preTryName names the stretch before the last attempt: with one attempt it is
+// the request's preparation (token, conversion, compression), with more it is
+// the earlier tries and their pauses.
+func preTryName(calls int) string {
+	if calls > 1 {
+		return "before the last try"
+	}
+	return "prepare"
 }

@@ -67,8 +67,31 @@ func TestLinkStatsTake(t *testing.T) {
 		t.Errorf("a second Take = %q, want a fresh window", again)
 	}
 	s.Reply(0, 0, 0)
-	if got := s.Take(); got != "1 replies; no broken calls" {
+	if got := s.Take(); got != "1 reply; no broken calls" {
 		t.Errorf("quiet window = %q", got)
+	}
+}
+
+// One of a kind is singular, more is plural.
+func TestLinkTextAgreesInNumber(t *testing.T) {
+	for n, want := range map[int]string{0: "0 replies", 1: "1 reply", 2: "2 replies"} {
+		if got := count(n, "reply", "replies"); got != want {
+			t.Errorf("count(%d) = %q, want %q", n, got, want)
+		}
+	}
+	s := &linkStats{}
+	s.Reply(900*time.Millisecond, 3<<20, 3*time.Second)
+	s.Break(causeLost, false)
+	got := s.Take()
+	for _, want := range []string{"1 reply;", "1 new connection,", "upload of 1 big body ", "1 broken call ("} {
+		if !strings.Contains(got, want) {
+			t.Errorf("link text %q lacks %q", got, want)
+		}
+	}
+	for _, bad := range []string{"1 replies", "1 new connections", "1 big bodies", "1 broken calls"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("link text %q has %q", got, bad)
+		}
 	}
 }
 
@@ -89,7 +112,7 @@ func TestWriteLinkStatsPrintsOnlyWhenSomethingHappened(t *testing.T) {
 	}
 	noteBreak("http2: client connection lost", false, true)
 	writeLinkStats(&b, now)
-	if want := "[18:00:00] upstream link [codex]: 0 replies; 1 broken calls (1 sent again by ccgp, 0 reached the client): 1 connection lost\n"; b.String() != want {
+	if want := "[18:00:00] upstream link [codex]: 0 replies; 1 broken call (1 sent again by ccgp, 0 reached the client): 1 connection lost\n"; b.String() != want {
 		t.Errorf("link line = %q\nwant        %q", b.String(), want)
 	}
 }
@@ -105,7 +128,7 @@ func TestCodexRepliesFeedTheLinkStats(t *testing.T) {
 	if status != fiber.StatusOK {
 		t.Fatalf("status = %d", status)
 	}
-	if got := linkHealth.Take(); !strings.Contains(got, "1 replies") || !strings.Contains(got, "no broken calls") {
+	if got := linkHealth.Take(); !strings.Contains(got, "1 reply") || !strings.Contains(got, "no broken calls") {
 		t.Errorf("link stats after a good reply = %q", got)
 	}
 
@@ -114,7 +137,7 @@ func TestCodexRepliesFeedTheLinkStats(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"))
 	}), time.Minute)
-	if got := linkHealth.Take(); !strings.Contains(got, "1 broken calls (0 sent again by ccgp, 1 reached the client): 1 other") {
+	if got := linkHealth.Take(); !strings.Contains(got, "1 broken call (0 sent again by ccgp, 1 reached the client): 1 other") {
 		t.Errorf("link stats after a cut stream = %q", got)
 	}
 
@@ -142,7 +165,7 @@ func TestReconnectIsCountedAsASentAgainBreak(t *testing.T) {
 	if !strings.Contains(log.String(), "upstream reconnect 1 after") {
 		t.Errorf("reconnect not logged: %q", log.String())
 	}
-	if got := linkHealth.Take(); !strings.Contains(got, "1 broken calls (1 sent again by ccgp, 0 reached the client): 1 connect timeout") {
+	if got := linkHealth.Take(); !strings.Contains(got, "1 broken call (1 sent again by ccgp, 0 reached the client): 1 connect timeout") {
 		t.Errorf("link stats = %q", got)
 	}
 }
@@ -171,6 +194,13 @@ func TestPhaseText(t *testing.T) {
 	got = phaseText(u.phasesLocked(time.Time{}, at(34*time.Second)))
 	if !strings.Contains(got, "before the last try 30s") || !strings.Contains(got, "(mostly before the last try on the link, 88%)") {
 		t.Errorf("earlier tries: %q", got)
+	}
+
+	// With a single attempt the time before it is the request's preparation, not earlier tries.
+	u = &upstreamTrace{start: start, calls: 1, attempt: at(2 * time.Second), got: at(2*time.Second + 10*time.Millisecond), wrote: at(3 * time.Second), headers: at(4 * time.Second)}
+	got = phaseText(u.phasesLocked(time.Time{}, at(5*time.Second)))
+	if !strings.Contains(got, "prepare 2s") || strings.Contains(got, "before the last try") || !strings.Contains(got, "(mostly prepare on the link, 40%)") {
+		t.Errorf("single attempt: %q", got)
 	}
 
 	// The reply of an earlier try is not this try's headers.
