@@ -3,6 +3,7 @@
 package codex
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -132,19 +133,30 @@ type reasoningItem struct {
 	EncryptedContent string        `json:"encrypted_content"`
 }
 
-// ConvertRequest translates an Anthropic Messages body. model is the mapped
-// backend model. wantStream reports what the client asked for; the backend
-// call itself always streams.
-func ConvertRequest(body []byte, model, cacheScope string) (req *Request, wantStream bool, err error) {
+// ParsedRequest is an owned, decoded Anthropic Messages request. It can be
+// converted to multiple backend models without decoding the body again.
+type ParsedRequest struct {
+	request anthropicRequest
+}
+
+// ParseRequest decodes an Anthropic Messages body. All decoded data is owned
+// by the returned value and remains valid if body is subsequently changed.
+func ParseRequest(body []byte) (*ParsedRequest, error) {
 	var in anthropicRequest
 	if err := json.Unmarshal(body, &in); err != nil {
-		return nil, false, fmt.Errorf("invalid request body: %w", err)
+		return nil, fmt.Errorf("invalid request body: %w", err)
 	}
-	for i := range in.Messages {
-		if in.Messages[i].Role != "assistant" {
-			in.Messages[i].Content = rewriteIdentity(in.Messages[i].Content, in.Model, model)
-		}
-	}
+	return &ParsedRequest{request: in}, nil
+}
+
+// Model returns the model named in the original Anthropic request.
+func (p *ParsedRequest) Model() string { return p.request.Model }
+
+// Convert translates this parsed request. model is the mapped backend model.
+// wantStream reports what the client asked for; the backend call itself always
+// streams.
+func (p *ParsedRequest) Convert(model, cacheScope string) (req *Request, wantStream bool, err error) {
+	in := &p.request
 	out := &Request{
 		Model:             model,
 		Stream:            true,
@@ -162,7 +174,7 @@ func ConvertRequest(body []byte, model, cacheScope string) (req *Request, wantSt
 		})
 	}
 	for i, m := range in.Messages {
-		items, err := convertMessage(m)
+		items, err := convertMessage(m, in.Model, model)
 		if err != nil {
 			return nil, false, fmt.Errorf("messages[%d]: %w", i, err)
 		}
@@ -190,6 +202,17 @@ func ConvertRequest(body []byte, model, cacheScope string) (req *Request, wantSt
 		out.PromptCacheKey = hex.EncodeToString(h[:16])
 	}
 	return out, in.Stream != nil && *in.Stream, nil
+}
+
+// ConvertRequest translates an Anthropic Messages body. model is the mapped
+// backend model. wantStream reports what the client asked for; the backend
+// call itself always streams.
+func ConvertRequest(body []byte, model, cacheScope string) (*Request, bool, error) {
+	parsed, err := ParseRequest(body)
+	if err != nil {
+		return nil, false, err
+	}
+	return parsed.Convert(model, cacheScope)
 }
 
 func effort(t *anthropicThink) string {
@@ -223,15 +246,31 @@ func toolChoice(c *anthropicChoice) any {
 
 // systemText joins system blocks, dropping Claude Code's billing header block.
 func systemText(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
 		return ""
 	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
+	if trimmed[0] == 'n' {
+		return ""
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if json.Unmarshal(trimmed, &s) != nil {
+			return ""
+		}
+		if strings.HasPrefix(s, "x-anthropic-billing-header") {
+			if newline := strings.IndexByte(s, '\n'); newline >= 0 {
+				return s[newline+1:]
+			}
+			return ""
+		}
 		return s
 	}
+	if trimmed[0] != '[' {
+		return ""
+	}
 	var blocks []anthropicBlock
-	if json.Unmarshal(raw, &blocks) != nil {
+	if json.Unmarshal(trimmed, &blocks) != nil {
 		return ""
 	}
 	var parts []string
@@ -243,39 +282,47 @@ func systemText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// rewriteIdentity corrects the model identity sentence Claude Code puts into non-assistant
-// message text (system reminders and context blocks).
-func rewriteIdentity(raw json.RawMessage, requested, backend string) json.RawMessage {
-	if !identity.Mentions(raw) {
-		return raw
-	}
-	var v any
-	if json.Unmarshal(raw, &v) != nil {
-		return raw
-	}
-	out, err := json.Marshal(identity.RewriteContent(v, requested, backend))
-	if err != nil {
-		return raw
-	}
-	return out
-}
-
 func parseBlocks(raw json.RawMessage) ([]anthropicBlock, error) {
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return []anthropicBlock{{Type: "text", Text: s}}, nil
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) > 0 {
+		switch trimmed[0] {
+		case '"':
+			var s string
+			if err := json.Unmarshal(trimmed, &s); err != nil {
+				return nil, fmt.Errorf("content: %w", err)
+			}
+			return []anthropicBlock{{Type: "text", Text: s}}, nil
+		case '[':
+			var blocks []anthropicBlock
+			if err := json.Unmarshal(trimmed, &blocks); err != nil {
+				return nil, fmt.Errorf("content: %w", err)
+			}
+			return blocks, nil
+		case 'n':
+			if bytes.Equal(trimmed, []byte("null")) {
+				// Unmarshalling null into a string historically succeeds as empty text.
+				return []anthropicBlock{{Type: "text"}}, nil
+			}
+		}
 	}
 	var blocks []anthropicBlock
-	if err := json.Unmarshal(raw, &blocks); err != nil {
+	if err := json.Unmarshal(trimmed, &blocks); err != nil {
 		return nil, fmt.Errorf("content: %w", err)
 	}
 	return blocks, nil
 }
 
-func convertMessage(m anthropicMsg) ([]any, error) {
+func convertMessage(m anthropicMsg, requested, backend string) ([]any, error) {
 	blocks, err := parseBlocks(m.Content)
 	if err != nil {
 		return nil, err
+	}
+	if m.Role != "assistant" && identity.Mentions(m.Content) {
+		for i := range blocks {
+			if blocks[i].Type == "text" {
+				blocks[i].Text = identity.Rewrite(blocks[i].Text, requested, backend)
+			}
+		}
 	}
 	if m.Role == "assistant" {
 		return convertAssistant(blocks), nil
