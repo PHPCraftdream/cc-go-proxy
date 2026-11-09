@@ -236,8 +236,6 @@ func handleStreamingMessages(c *fiber.Ctx, openaiReq *models.OpenAIRequest, cfg 
 type ToolCallState struct {
 	ID          string // Tool call ID from OpenAI
 	Name        string // Function name
-	ArgsBuffer  string // Accumulated JSON arguments
-	JSONSent    bool   // Flag if we sent the JSON delta
 	ClaudeIndex int    // The content block index for Claude
 	Started     bool   // Flag if content_block_start was sent
 }
@@ -251,10 +249,10 @@ type ToolCallState struct {
 // Handles:
 //   - Thinking blocks from reasoning models (OpenRouter's reasoning_details, OpenAI's reasoning_content)
 //   - Text content deltas
-//   - Tool call deltas (accumulates JSON arguments across chunks)
+//   - Tool call deltas (forwards each JSON argument fragment)
 //   - Token usage tracking and throughput calculation for simple log mode
 //
-// The function maintains state to track content block indices, tool call accumulation,
+// The function maintains state to track content block indices and tool call starts,
 // and ensures proper event ordering for Claude Code compatibility.
 func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel string, cfg *config.Config, startTime time.Time) {
 	if cfg.Debug {
@@ -265,8 +263,8 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 	// State variables
 	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
-	textBlockIndex := 1                              // Text block is index 1 (thinking is 0)
-	toolBlockCounter := 2                            // Tool calls start at index 2
+	textBlockIndex := 1   // Text block is index 1 (thinking is 0)
+	toolBlockCounter := 2 // Tool calls start at index 2
 	currentToolCalls := make(map[int]*ToolCallState)
 	finalStopReason := "end_turn"
 	usageData := map[string]interface{}{
@@ -285,6 +283,33 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 	thinkingBlockStarted := false
 	thinkingBlockHasContent := false
 	textBlockStarted := false // Track if we've sent text block_start
+	startThinkingBlock := func(thinking string) {
+		if thinking == "" {
+			return
+		}
+		if !thinkingBlockStarted {
+			writeSSEEvent(w, "content_block_start", map[string]interface{}{
+				"type":  "content_block_start",
+				"index": thinkingBlockIndex,
+				"content_block": map[string]interface{}{
+					"type":     "thinking",
+					"thinking": "",
+				},
+			})
+			thinkingBlockStarted = true
+			_ = w.Flush()
+		}
+		writeSSEEvent(w, "content_block_delta", map[string]interface{}{
+			"type":  "content_block_delta",
+			"index": thinkingBlockIndex,
+			"delta": map[string]interface{}{
+				"type":     "thinking_delta",
+				"thinking": thinking,
+			},
+		})
+		thinkingBlockHasContent = true
+		_ = w.Flush()
+	}
 
 	// Send initial SSE events
 	writeSSEEvent(w, "message_start", map[string]interface{}{
@@ -325,17 +350,15 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 			continue
 		}
 
-		// Check for [DONE] marker
-		if strings.Contains(line, "[DONE]") {
-			break
-		}
-
-		// Parse data line
-		if !strings.HasPrefix(line, "data: ") {
+		// Parse data lines and stop only on the exact [DONE] payload.
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 
-		dataJSON := strings.TrimPrefix(line, "data: ")
+		dataJSON := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if dataJSON == "[DONE]" {
+			break
+		}
 
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(dataJSON), &chunk); err != nil {
@@ -387,7 +410,12 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 			continue
 		}
 
-		choice := choices[0].(map[string]interface{})
+		choice, ok := choices[0].(map[string]interface{})
+		if !ok {
+			writeSSEError(w, fmt.Sprintf("invalid stream choice: expected object, got %T", choices[0]))
+			return
+		}
+
 		delta, ok := choice["delta"].(map[string]interface{})
 		if !ok {
 			continue
@@ -400,28 +428,7 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 		// First, check for OpenAI's reasoning_content format (o1/o3 models)
 		if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
-			// Send content_block_start for thinking block on first thinking delta
-			if !thinkingBlockStarted {
-				writeSSEEvent(w, "content_block_start", map[string]interface{}{
-					"type":  "content_block_start",
-					"index": thinkingBlockIndex,
-					"content_block": map[string]interface{}{
-						"type": "thinking",
-					},
-				})
-				thinkingBlockStarted = true
-				thinkingBlockHasContent = true
-			}
-
-			// Send thinking delta
-			writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-				"type":  "content_block_delta",
-				"index": thinkingBlockIndex,
-				"delta": map[string]interface{}{
-					"type": "thinking_delta",
-					"text": reasoningContent,
-				},
-			})
+			startThinkingBlock(reasoningContent)
 		}
 
 		// Then, check for OpenRouter's reasoning_details format
@@ -449,31 +456,7 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 						}
 
 						if thinkingText != "" {
-							// Send content_block_start for thinking block on first thinking delta
-							if !thinkingBlockStarted {
-								writeSSEEvent(w, "content_block_start", map[string]interface{}{
-									"type":  "content_block_start",
-									"index": thinkingBlockIndex,
-									"content_block": map[string]interface{}{
-										"type":     "thinking",
-										"thinking": "",
-									},
-								})
-								thinkingBlockStarted = true
-								_ = w.Flush()
-							}
-
-							// Send thinking block delta
-							writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-								"type":  "content_block_delta",
-								"index": thinkingBlockIndex,
-								"delta": map[string]interface{}{
-									"type":     "thinking_delta",
-									"thinking": thinkingText,
-								},
-							})
-							thinkingBlockHasContent = true
-							_ = w.Flush()
+							startThinkingBlock(thinkingText)
 						}
 					}
 				}
@@ -482,31 +465,7 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 		// Handle reasoning field directly (simpler format from some models)
 		if reasoning, ok := delta["reasoning"].(string); ok && reasoning != "" {
-			// Send content_block_start for thinking block on first thinking delta
-			if !thinkingBlockStarted {
-				writeSSEEvent(w, "content_block_start", map[string]interface{}{
-					"type":  "content_block_start",
-					"index": thinkingBlockIndex,
-					"content_block": map[string]interface{}{
-						"type":     "thinking",
-						"thinking": "",
-					},
-				})
-				thinkingBlockStarted = true
-				_ = w.Flush()
-			}
-
-			// Send thinking block delta
-			writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-				"type":  "content_block_delta",
-				"index": thinkingBlockIndex,
-				"delta": map[string]interface{}{
-					"type":     "thinking_delta",
-					"thinking": reasoning,
-				},
-			})
-			thinkingBlockHasContent = true
-			_ = w.Flush()
+			startThinkingBlock(reasoning)
 		}
 
 		// Handle text delta
@@ -563,8 +522,6 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 						currentToolCalls[tcIndex] = &ToolCallState{
 							ID:          "",
 							Name:        "",
-							ArgsBuffer:  "",
-							JSONSent:    false,
 							ClaudeIndex: 0,
 							Started:     false,
 						}
@@ -604,33 +561,16 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 						}
 
 						// Handle function arguments
-						// Type assertion handles nil check, Started flag, and we process even empty strings
-						if args, ok := functionData["arguments"].(string); ok && toolCall.Started {
-							// Only accumulate if args is not empty
-							if args != "" {
-								toolCall.ArgsBuffer += args
-							}
-
-							// Try to parse complete JSON and send delta when we have valid JSON
-							if toolCall.ArgsBuffer != "" {
-								var jsonTest interface{}
-								if err := json.Unmarshal([]byte(toolCall.ArgsBuffer), &jsonTest); err == nil {
-									// If parsing succeeds and we haven't sent this JSON yet
-									if !toolCall.JSONSent {
-										writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-											"type":  "content_block_delta",
-											"index": toolCall.ClaudeIndex,
-											"delta": map[string]interface{}{
-												"type":         "input_json_delta",
-												"partial_json": toolCall.ArgsBuffer,
-											},
-										})
-										_ = w.Flush()
-										toolCall.JSONSent = true
-									}
-								}
-							}
-							// If JSON is incomplete, continue accumulating (no action needed)
+						if args, ok := functionData["arguments"].(string); ok && toolCall.Started && args != "" {
+							writeSSEEvent(w, "content_block_delta", map[string]interface{}{
+								"type":  "content_block_delta",
+								"index": toolCall.ClaudeIndex,
+								"delta": map[string]interface{}{
+									"type":         "input_json_delta",
+									"partial_json": args,
+								},
+							})
+							_ = w.Flush()
 						}
 					}
 				}
