@@ -243,6 +243,45 @@ func TestProfileProxyValidation(t *testing.T) {
 	}
 }
 
+func TestEditFileRemovesProfileProxyAfterBlankLine(t *testing.T) {
+	const body = `connections.proxy: socks5://127.0.0.1:1080
+providers: [
+    {
+        name: p
+        type: codex_api
+    }
+]
+profiles: [
+    {
+
+        name: w
+        provider: p
+        proxy: none
+    }
+]
+`
+	path := writeKtav(t, body)
+	backup, err := EditFile(path, func(text string) (string, error) {
+		return SetProfileProxyText(text, "w", "")
+	})
+	if err != nil || backup == "" {
+		t.Fatalf("EditFile remove profile proxy = %q, %v", backup, err)
+	}
+
+	t.Setenv(ConfigFileEnv, path)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load edited config: %v", err)
+	}
+	t.Cleanup(func() { proxydial.SetDefault(nil) })
+	if got := cfg.Profiles["w"].Proxy; got != "" {
+		t.Errorf("profile proxy = %q, want unset", got)
+	}
+	if got := cfg.ProxyChoice("w").Key(); got != "proxy:socks5://127.0.0.1:1080" {
+		t.Errorf("inherited proxy = %q, want global proxy", got)
+	}
+}
+
 func TestSetProfileProxyText(t *testing.T) {
 	const base = "profiles: [\n    {\n        name: a\n        provider: p\n        models: [\n            {\n                match: *\n                model: m\n            }\n        ]\n    }\n    {\n        name: b\n        provider: p\n        proxy: none\n    }\n]\n"
 	got, err := SetProfileProxyText(base, "a", "socks5://127.0.0.1:1080")

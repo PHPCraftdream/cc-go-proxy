@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -11,10 +12,10 @@ import (
 // TestMaxTokensParameterErrorDetection tests the error detection logic for parameter errors
 func TestMaxTokensParameterErrorDetection(t *testing.T) {
 	tests := []struct {
-		name          string
-		errorMsg      string
-		shouldDetect  bool
-		description   string
+		name         string
+		errorMsg     string
+		shouldDetect bool
+		description  string
 	}{
 		{
 			name:         "max_completion_tokens unsupported",
@@ -76,218 +77,187 @@ func TestMaxTokensParameterErrorDetection(t *testing.T) {
 	}
 }
 
-// TestModelCapabilityCacheStructure tests the cache key and value structure
 func TestModelCapabilityCacheStructure(t *testing.T) {
-	// Test that cache keys are properly formed with both BaseURL and Model
-	cfg1 := &config.Config{
-		OpenAIBaseURL: "https://api.openai.com/v1",
+	scope := t.Name() + "/" + t.TempDir()
+	key := config.CacheKey{
+		BaseURL: "https://api.openai.com/v1/" + scope,
+		Model:   "gpt-5",
 	}
-
-	cfg2 := &config.Config{
-		OpenAIBaseURL: "https://openrouter.ai/api/v1",
+	reconstructed := config.CacheKey{
+		BaseURL: "https://api.openai.com/v1/" + scope,
+		Model:   "gpt-5",
 	}
-
-	// Same model, different providers should have different cache entries
-	model := "gpt-5"
-
-	key1 := CacheKey{
-		BaseURL: cfg1.OpenAIBaseURL,
-		Model:   model,
-	}
-
-	key2 := CacheKey{
-		BaseURL: cfg2.OpenAIBaseURL,
-		Model:   model,
-	}
-
-	// Keys should be different
-	if key1 == key2 {
-		t.Errorf("Different providers should have different cache keys")
-	}
-
-	// Keys with same provider and model should be equal
-	key1Copy := CacheKey{
-		BaseURL: cfg1.OpenAIBaseURL,
-		Model:   model,
-	}
-
-	if key1 != key1Copy {
-		t.Errorf("Same provider and model should have equal cache keys")
-	}
-}
-
-// TestCacheHitAndMiss tests cache behavior for hits and misses
-func TestCacheHitAndMiss(t *testing.T) {
-	cache := &ModelCapabilityCache{
-		data:  make(map[CacheKey]*ModelCapabilities),
-		mutex: &sync.RWMutex{},
-	}
-
-	key := CacheKey{
-		BaseURL: "https://api.openai.com/v1",
+	otherProvider := config.CacheKey{
+		BaseURL: "https://openrouter.ai/api/v1/" + scope,
 		Model:   "gpt-5",
 	}
 
-	// Test cache miss
-	caps, found := cache.Get(key)
-	if found {
-		t.Error("Cache should miss for new key")
+	want := &config.ModelCapabilities{UsesMaxCompletionTokens: true}
+	config.SetModelCapabilities(key, want)
+	got := config.GetModelCapabilities(reconstructed)
+	if got == nil {
+		t.Fatal("same provider and model should retrieve the stored cache entry")
 	}
-	if caps != nil {
-		t.Error("Cache miss should return nil capabilities")
+	if !got.UsesMaxCompletionTokens {
+		t.Fatal("retrieved cache entry has the wrong capability")
 	}
-
-	// Test cache set
-	newCaps := &ModelCapabilities{
-		UsesMaxCompletionTokens: true,
-		LastChecked:             time.Now(),
-	}
-	cache.Set(key, newCaps)
-
-	// Test cache hit
-	caps, found = cache.Get(key)
-	if !found {
-		t.Error("Cache should hit after setting value")
-	}
-	if caps.UsesMaxCompletionTokens != true {
-		t.Error("Cache should return correct capability value")
+	if got := config.GetModelCapabilities(otherProvider); got != nil {
+		t.Fatalf("different provider unexpectedly retrieved cache entry: %+v", got)
 	}
 }
 
-// TestPerModelPerProviderScoping tests that caching is properly scoped
+func TestCacheHitAndMiss(t *testing.T) {
+	scope := t.Name() + "/" + t.TempDir()
+	key := config.CacheKey{
+		BaseURL: "https://api.openai.com/v1/" + scope,
+		Model:   "gpt-5",
+	}
+
+	if caps := config.GetModelCapabilities(key); caps != nil {
+		t.Fatalf("new cache key unexpectedly hit: %+v", caps)
+	}
+
+	want := &config.ModelCapabilities{UsesMaxCompletionTokens: true}
+	config.SetModelCapabilities(key, want)
+
+	got := config.GetModelCapabilities(key)
+	if got == nil {
+		t.Fatal("cache should hit after setting capabilities")
+	}
+	if !got.UsesMaxCompletionTokens {
+		t.Fatalf("cached capability = %v, want true", got.UsesMaxCompletionTokens)
+	}
+}
+
 func TestPerModelPerProviderScoping(t *testing.T) {
-	cache := &ModelCapabilityCache{
-		data:  make(map[CacheKey]*ModelCapabilities),
-		mutex: &sync.RWMutex{},
-	}
-
-	// Test data: same model, different providers, different capabilities
-	testCases := []struct {
-		baseURL  string
-		model    string
-		supports bool
+	scope := t.Name() + "/" + t.TempDir()
+	providerA := "https://api.openai.com/v1/" + scope
+	providerB := "https://openrouter.ai/api/v1/" + scope
+	entries := []struct {
+		key   config.CacheKey
+		value bool
 	}{
-		{"https://api.openai.com/v1", "gpt-5", true},
-		{"https://openrouter.ai/api/v1", "gpt-5", true},
-		{"http://localhost:11434/v1", "gpt-5", false},
-		{"https://api.openai.com/v1", "gpt-4o", false},
-		{"https://openrouter.ai/api/v1", "gpt-4o", false},
+		{config.CacheKey{BaseURL: providerA, Model: "shared-model"}, true},
+		{config.CacheKey{BaseURL: providerB, Model: "shared-model"}, false},
+		{config.CacheKey{BaseURL: providerA, Model: "different-model"}, false},
 	}
 
-	// Set all cache entries
-	for _, tc := range testCases {
-		key := CacheKey{BaseURL: tc.baseURL, Model: tc.model}
-		caps := &ModelCapabilities{
-			UsesMaxCompletionTokens: tc.supports,
-			LastChecked:             time.Now(),
-		}
-		cache.Set(key, caps)
+	for _, entry := range entries {
+		config.SetModelCapabilities(entry.key, &config.ModelCapabilities{
+			UsesMaxCompletionTokens: entry.value,
+		})
 	}
-
-	// Verify each entry is correct
-	for _, tc := range testCases {
-		key := CacheKey{BaseURL: tc.baseURL, Model: tc.model}
-		caps, found := cache.Get(key)
-		if !found {
-			t.Errorf("Cache should contain %s on %s", tc.model, tc.baseURL)
+	for _, entry := range entries {
+		got := config.GetModelCapabilities(entry.key)
+		if got == nil {
+			t.Errorf("cache miss for provider %q, model %q", entry.key.BaseURL, entry.key.Model)
+			continue
 		}
-		if caps.UsesMaxCompletionTokens != tc.supports {
-			t.Errorf("Cache for %s on %s should be %v, got %v",
-				tc.model, tc.baseURL, tc.supports, caps.UsesMaxCompletionTokens)
+		if got.UsesMaxCompletionTokens != entry.value {
+			t.Errorf("provider %q, model %q capability = %v, want %v",
+				entry.key.BaseURL, entry.key.Model, got.UsesMaxCompletionTokens, entry.value)
 		}
 	}
 }
 
-// TestCacheConcurrency tests thread-safe cache operations
 func TestCacheConcurrency(t *testing.T) {
-	cache := &ModelCapabilityCache{
-		data:  make(map[CacheKey]*ModelCapabilities),
-		mutex: &sync.RWMutex{},
+	const workers, iterations = 10, 100
+	scope := t.Name() + "/" + t.TempDir()
+	keys := make([]config.CacheKey, workers)
+	wants := make([]bool, workers)
+	for i := range keys {
+		keys[i] = config.CacheKey{
+			BaseURL: "https://api.openai.com/v1/" + scope,
+			Model:   fmt.Sprintf("model-%d", i),
+		}
+		wants[i] = i%2 == 0
 	}
 
-	// Test concurrent reads and writes
-	done := make(chan bool)
-	errors := make(chan string, 100)
-
-	// Writer goroutines
-	for i := 0; i < 10; i++ {
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errors := make(chan string, workers*iterations)
+	for i := 0; i < workers; i++ {
+		wg.Add(2)
 		go func(id int) {
-			for j := 0; j < 10; j++ {
-				key := CacheKey{
-					BaseURL: "https://api.openai.com/v1",
-					Model:   "model-" + string(rune('a'+id)),
-				}
-				caps := &ModelCapabilities{
-					UsesMaxCompletionTokens: j%2 == 0,
-					LastChecked:             time.Now(),
-				}
-				cache.Set(key, caps)
+			defer wg.Done()
+			<-start
+			for j := 0; j < iterations; j++ {
+				// Each call publishes a fresh immutable value.
+				config.SetModelCapabilities(keys[id], &config.ModelCapabilities{
+					UsesMaxCompletionTokens: wants[id],
+				})
 			}
-			done <- true
+		}(i)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for j := 0; j < iterations; j++ {
+				got := config.GetModelCapabilities(keys[id])
+				if got == nil {
+					continue // The corresponding writer may not have published yet.
+				}
+				if got.UsesMaxCompletionTokens != wants[id] {
+					errors <- fmt.Sprintf("model %q capability = %v, want %v",
+						keys[id].Model, got.UsesMaxCompletionTokens, wants[id])
+				}
+			}
 		}(i)
 	}
-
-	// Reader goroutines
-	for i := 0; i < 10; i++ {
-		go func(id int) {
-			for j := 0; j < 10; j++ {
-				key := CacheKey{
-					BaseURL: "https://api.openai.com/v1",
-					Model:   "model-" + string(rune('a'+id)),
-				}
-				_, found := cache.Get(key)
-				// We don't assert found because writers are concurrent
-				if found && key.Model == "" {
-					errors <- "Invalid model in cache"
-				}
-			}
-			done <- true
-		}(i)
-	}
-
-	// Wait for all goroutines
-	for i := 0; i < 20; i++ {
-		<-done
-	}
-
+	close(start)
+	wg.Wait()
 	close(errors)
 	for err := range errors {
-		t.Errorf("Concurrency error: %s", err)
+		t.Error(err)
+	}
+
+	for i, key := range keys {
+		got := config.GetModelCapabilities(key)
+		if got == nil {
+			t.Errorf("no final cache value for model %q", key.Model)
+			continue
+		}
+		if got.UsesMaxCompletionTokens != wants[i] {
+			t.Errorf("final model %q capability = %v, want %v", key.Model, got.UsesMaxCompletionTokens, wants[i])
+		}
 	}
 }
 
-// TestCacheTimestampTracking tests that LastChecked is properly tracked
 func TestCacheTimestampTracking(t *testing.T) {
-	cache := &ModelCapabilityCache{
-		data:  make(map[CacheKey]*ModelCapabilities),
-		mutex: &sync.RWMutex{},
-	}
-
-	key := CacheKey{
-		BaseURL: "https://api.openai.com/v1",
+	scope := t.Name() + "/" + t.TempDir()
+	key := config.CacheKey{
+		BaseURL: "https://api.openai.com/v1/" + scope,
 		Model:   "gpt-5",
 	}
+	ancient := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+
+	config.SetModelCapabilities(key, &config.ModelCapabilities{
+		UsesMaxCompletionTokens: true,
+		LastChecked:             ancient,
+	})
+	previous := config.GetModelCapabilities(key)
+	if previous == nil {
+		t.Fatal("cache entry missing after initial set")
+	}
+	previousChecked := previous.LastChecked
 
 	before := time.Now()
-	caps := &ModelCapabilities{
-		UsesMaxCompletionTokens: true,
-		LastChecked:             before,
+	config.SetModelCapabilities(key, &config.ModelCapabilities{
+		UsesMaxCompletionTokens: false,
+		LastChecked:             ancient,
+	})
+	after := time.Now()
+	got := config.GetModelCapabilities(key)
+	if got == nil {
+		t.Fatal("cache entry missing after replacement")
 	}
-	cache.Set(key, caps)
-
-	retrieved, found := cache.Get(key)
-	if !found {
-		t.Error("Cache entry not found")
+	if got.UsesMaxCompletionTokens {
+		t.Fatal("replacement did not store the new capability value")
 	}
-
-	// Check that timestamp is preserved
-	if !retrieved.LastChecked.Equal(before) {
-		t.Errorf("LastChecked not preserved: %v vs %v", retrieved.LastChecked, before)
+	if got.LastChecked.Before(before) || got.LastChecked.After(after) {
+		t.Errorf("replacement LastChecked = %v, want between %v and %v", got.LastChecked, before, after)
 	}
-
-	// Check that timestamp is recent
-	if time.Since(retrieved.LastChecked) > time.Second {
-		t.Error("Cache timestamp should be recent")
+	if got.LastChecked.Before(previousChecked) {
+		t.Errorf("replacement LastChecked = %v, want not earlier than prior value %v", got.LastChecked, previousChecked)
 	}
 }
 
@@ -317,12 +287,12 @@ func TestErrorDetectionBroadMatching(t *testing.T) {
 
 	// These should NOT match: missing either indicator or parameter name
 	shouldNotMatch := []string{
-		"parameter 'max_input_tokens'",  // wrong parameter
-		"parameter mismatch",             // no token param
-		"max_tokens is great",            // no error indicator
-		"invalid request",                // no token param
-		"unsupported feature",            // no token param
-		"",                               // empty
+		"parameter 'max_input_tokens'", // wrong parameter
+		"parameter mismatch",           // no token param
+		"max_tokens is great",          // no error indicator
+		"invalid request",              // no token param
+		"unsupported feature",          // no token param
+		"",                             // empty
 	}
 
 	for _, pattern := range shouldNotMatch {
@@ -331,41 +301,3 @@ func TestErrorDetectionBroadMatching(t *testing.T) {
 		}
 	}
 }
-
-// Helper types and functions for testing (would be in actual implementation)
-
-// CacheKey identifies a model capability cache entry
-type CacheKey struct {
-	BaseURL string
-	Model   string
-}
-
-// ModelCapabilities holds learned model capabilities
-type ModelCapabilities struct {
-	UsesMaxCompletionTokens bool
-	LastChecked             time.Time
-}
-
-// ModelCapabilityCache manages per-model capabilities
-type ModelCapabilityCache struct {
-	data  map[CacheKey]*ModelCapabilities
-	mutex *sync.RWMutex
-}
-
-// Get retrieves a cache entry
-func (c *ModelCapabilityCache) Get(key CacheKey) (*ModelCapabilities, bool) {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-	caps, found := c.data[key]
-	return caps, found
-}
-
-// Set stores a cache entry
-func (c *ModelCapabilityCache) Set(key CacheKey, caps *ModelCapabilities) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	c.data[key] = caps
-}
-
-// NOTE: isMaxTokensParameterError is already defined in handlers.go
-// These tests use that implementation

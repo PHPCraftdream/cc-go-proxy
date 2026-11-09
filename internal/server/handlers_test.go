@@ -1,177 +1,83 @@
 package server
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/gofiber/fiber/v2"
 )
 
-// TestServerSetup tests that the server can be initialized
-func TestServerSetup(t *testing.T) {
-	cfg := &config.Config{
-		Host: "127.0.0.1",
-		Port: "9999",
-	}
-
-	// Just verify config is valid
-	if cfg.Host != "127.0.0.1" {
-		t.Errorf("Expected host 127.0.0.1")
-	}
-
-	if cfg.Port != "9999" {
-		t.Errorf("Expected port 9999")
-	}
-}
-
-// TestAPIKeyValidation tests API key validation logic
 func TestAPIKeyValidation(t *testing.T) {
+	var upstreamHits atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits.Add(1)
+		if r.Method != http.MethodPost || r.URL.Path != "/chat/completions" {
+			t.Errorf("upstream request = %s %s, want POST /chat/completions", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","object":"chat.completion","created":1,"model":"gpt-4o-mini","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer upstream.Close()
+
 	tests := []struct {
-		name           string
-		configuredKey  string
-		requestKey     string
-		shouldValidate bool
-		shouldPass     bool
+		name          string
+		configuredKey string
+		requestKey    string
+		wantStatus    int
+		wantUpstream  bool
 	}{
-		{
-			name:           "with matching key",
-			configuredKey:  "test-key",
-			requestKey:     "test-key",
-			shouldValidate: true,
-			shouldPass:     true,
-		},
-		{
-			name:           "with mismatched key",
-			configuredKey:  "test-key",
-			requestKey:     "wrong-key",
-			shouldValidate: true,
-			shouldPass:     false,
-		},
-		{
-			name:           "no validation when not configured",
-			configuredKey:  "",
-			requestKey:     "any-key",
-			shouldValidate: false,
-			shouldPass:     true,
-		},
+		{name: "matching key", configuredKey: "test-key", requestKey: "test-key", wantStatus: http.StatusOK, wantUpstream: true},
+		{name: "mismatched key", configuredKey: "test-key", requestKey: "wrong-key", wantStatus: http.StatusUnauthorized},
+		{name: "no key configured", requestKey: "any-key", wantStatus: http.StatusOK, wantUpstream: true},
+		{name: "missing key", configuredKey: "test-key", wantStatus: http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{
 				AnthropicAPIKey: tt.configuredKey,
+				OpenAIBaseURL:   upstream.URL,
 			}
+			app := fiber.New()
+			app.Post("/v1/messages", func(c *fiber.Ctx) error { return handleMessages(c, cfg) })
 
-			// Simulate validation logic
-			if cfg.AnthropicAPIKey != "" {
-				// Validation is required
-				if cfg.AnthropicAPIKey != tt.requestKey {
-					if tt.shouldPass {
-						t.Errorf("Expected validation to pass")
-					}
-				} else {
-					if !tt.shouldPass {
-						t.Errorf("Expected validation to fail")
-					}
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-4o-mini","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}`))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.requestKey != "" {
+				req.Header.Set("x-api-key", tt.requestKey)
+			}
+			previousHits := upstreamHits.Load()
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			hitDelta := upstreamHits.Load() - previousHits
+			wantHitDelta := int64(0)
+			if tt.wantUpstream {
+				wantHitDelta = 1
+			}
+			if hitDelta != wantHitDelta {
+				t.Errorf("upstream hit delta = %d, want %d", hitDelta, wantHitDelta)
+			}
+			if tt.wantUpstream {
+				var body map[string]any
+				if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+					t.Fatalf("decode accepted response: %v", err)
 				}
-			} else {
-				// No validation required
-				if !tt.shouldPass {
-					t.Errorf("Expected to pass when validation disabled")
+				if body["type"] != "message" {
+					t.Errorf("response type = %v, want message", body["type"])
 				}
 			}
 		})
-	}
-}
-
-// TestServerConfiguration tests server host and port configuration
-func TestServerConfiguration(t *testing.T) {
-	tests := []struct {
-		name string
-		host string
-		port string
-	}{
-		{
-			name: "default configuration",
-			host: "0.0.0.0",
-			port: "8082",
-		},
-		{
-			name: "localhost only",
-			host: "127.0.0.1",
-			port: "8082",
-		},
-		{
-			name: "custom port",
-			host: "0.0.0.0",
-			port: "9999",
-		},
-		{
-			name: "specific interface",
-			host: "192.168.1.100",
-			port: "8080",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				Host: tt.host,
-				Port: tt.port,
-			}
-
-			if cfg.Host != tt.host {
-				t.Errorf("Expected host %s, got %s", tt.host, cfg.Host)
-			}
-
-			if cfg.Port != tt.port {
-				t.Errorf("Expected port %s, got %s", tt.port, cfg.Port)
-			}
-		})
-	}
-}
-
-// TestDebugMode tests debug mode configuration
-func TestDebugMode(t *testing.T) {
-	tests := []struct {
-		name  string
-		debug bool
-	}{
-		{
-			name:  "debug enabled",
-			debug: true,
-		},
-		{
-			name:  "debug disabled",
-			debug: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				Debug: tt.debug,
-			}
-
-			if cfg.Debug != tt.debug {
-				t.Errorf("Expected Debug %v, got %v", tt.debug, cfg.Debug)
-			}
-		})
-	}
-}
-
-// TestSimpleLogMode tests simple log mode configuration
-func TestSimpleLogMode(t *testing.T) {
-	cfg := &config.Config{
-		SimpleLog: true,
-	}
-
-	if !cfg.SimpleLog {
-		t.Errorf("Expected SimpleLog to be true")
-	}
-
-	cfg.SimpleLog = false
-	if cfg.SimpleLog {
-		t.Errorf("Expected SimpleLog to be false")
 	}
 }
 
@@ -231,53 +137,5 @@ func TestProviderDetectionForHandlers(t *testing.T) {
 				t.Errorf("Expected provider %v, got %v", tt.expectedProvider, provider)
 			}
 		})
-	}
-}
-
-// TestPassthroughMode tests passthrough mode configuration
-func TestPassthroughMode(t *testing.T) {
-	cfg := &config.Config{
-		PassthroughMode: true,
-	}
-
-	if !cfg.PassthroughMode {
-		t.Errorf("Expected PassthroughMode to be true")
-	}
-}
-
-// TestConfigFormatDetection tests that config can detect different format scenarios
-func TestConfigFormatDetection(t *testing.T) {
-	// Test that config struct properly represents all fields
-	cfg := &config.Config{
-		OpenAIAPIKey:      "test-key",
-		OpenAIBaseURL:     "https://api.openai.com/v1",
-		AnthropicAPIKey:   "test-anthropic-key",
-		OpusModel:         "gpt-5",
-		SonnetModel:       "gpt-5",
-		HaikuModel:        "gpt-5-mini",
-		Host:              "0.0.0.0",
-		Port:              "8082",
-		Debug:             true,
-		SimpleLog:         true,
-		PassthroughMode:   false,
-		OpenRouterAppName: "app",
-		OpenRouterAppURL:  "https://example.com",
-	}
-
-	// Verify all fields are accessible
-	if cfg.OpenAIAPIKey != "test-key" {
-		t.Errorf("OpenAIAPIKey not set correctly")
-	}
-	if cfg.AnthropicAPIKey != "test-anthropic-key" {
-		t.Errorf("AnthropicAPIKey not set correctly")
-	}
-	if cfg.OpusModel != "gpt-5" {
-		t.Errorf("OpusModel not set correctly")
-	}
-	if cfg.SonnetModel != "gpt-5" {
-		t.Errorf("SonnetModel not set correctly")
-	}
-	if cfg.HaikuModel != "gpt-5-mini" {
-		t.Errorf("HaikuModel not set correctly")
 	}
 }

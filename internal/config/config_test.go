@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -164,44 +165,6 @@ func TestModelOverrides(t *testing.T) {
 			if tt.haikuModel != "" && cfg.HaikuModel != tt.expectedUsed {
 				t.Errorf("HaikuModel = %q, want %q", cfg.HaikuModel, tt.expectedUsed)
 			}
-		})
-	}
-}
-
-// TestProviderSpecificParameters tests that provider-specific params are set correctly
-func TestProviderSpecificParameters(t *testing.T) {
-	tests := []struct {
-		name                 string
-		provider             ProviderType
-		shouldHaveReasoning  bool
-		shouldHaveToolChoice bool
-	}{
-		{
-			name:                 "OpenRouter reasoning support",
-			provider:             ProviderOpenRouter,
-			shouldHaveReasoning:  true,
-			shouldHaveToolChoice: false,
-		},
-		{
-			name:                 "OpenAI Direct reasoning support",
-			provider:             ProviderOpenAI,
-			shouldHaveReasoning:  true,
-			shouldHaveToolChoice: false,
-		},
-		{
-			name:                 "Ollama tool choice",
-			provider:             ProviderOllama,
-			shouldHaveReasoning:  false,
-			shouldHaveToolChoice: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This is a design test - documenting expected behavior
-			// The actual implementation is in converter.go
-			t.Logf("Provider %v should have reasoning=%v, tool_choice=%v",
-				tt.provider, tt.shouldHaveReasoning, tt.shouldHaveToolChoice)
 		})
 	}
 }
@@ -535,52 +498,67 @@ func TestHostAndPortDefaults(t *testing.T) {
 	}
 }
 
-// TestPassthroughMode tests passthrough mode configuration
-func TestPassthroughMode(t *testing.T) {
-	// Save original env
-	originalMode := os.Getenv("PASSTHROUGH_MODE")
-	originalKey := os.Getenv("OPENAI_API_KEY")
-	originalBaseURL := os.Getenv("OPENAI_BASE_URL")
-	defer func() {
-		if originalMode != "" {
-			os.Setenv("PASSTHROUGH_MODE", originalMode)
-		} else {
-			os.Unsetenv("PASSTHROUGH_MODE")
-		}
-		os.Setenv("OPENAI_API_KEY", originalKey)
-		os.Setenv("OPENAI_BASE_URL", originalBaseURL)
-	}()
-
-	tests := []struct {
-		name     string
-		envValue string
-		expected bool
-	}{
-		{"enabled with true", "true", true},
-		{"enabled with 1", "1", true},
-		{"enabled with yes", "yes", true},
-		{"disabled with false", "false", false},
-		{"disabled with 0", "0", false},
-		{"default is disabled", "", false},
+// TestLoadIgnoresPassthroughMode verifies the obsolete environment variable has
+// no effect on loading or env-mode routing.
+func TestLoadIgnoresPassthroughMode(t *testing.T) {
+	if _, ok := reflect.TypeOf(Config{}).FieldByName("PassthroughMode"); ok {
+		t.Fatal("Config must not expose PassthroughMode")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.envValue != "" {
-				os.Setenv("PASSTHROUGH_MODE", tt.envValue)
-			} else {
-				os.Unsetenv("PASSTHROUGH_MODE")
-			}
-			os.Setenv("OPENAI_API_KEY", "test-key")
-			os.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv(ConfigFileEnv, "")
+	t.Setenv("PROXY_TOKEN", testToken)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	t.Setenv("PASSTHROUGH_MODE", "")
 
-			cfg, err := Load()
-			if err != nil {
-				t.Fatalf("Load failed: %v", err)
-			}
+	type routing struct {
+		profile         string
+		providerName    string
+		providerType    string
+		providerBaseURL string
+		profileProvider string
+	}
+	loadRouting := func() routing {
+		t.Helper()
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error: %v", err)
+		}
+		profile, ok := cfg.Profiles[EnvProfile]
+		if !ok {
+			t.Fatalf("Load() missing env profile %q", EnvProfile)
+		}
+		provider, ok := cfg.Providers[profile.Provider]
+		if !ok {
+			t.Fatalf("Load() missing provider %q", profile.Provider)
+		}
+		return routing{
+			profile:         cfg.Profile,
+			providerName:    cfg.ProviderName,
+			providerType:    cfg.ProviderType,
+			providerBaseURL: provider.BaseURL,
+			profileProvider: profile.Provider,
+		}
+	}
 
-			if cfg.PassthroughMode != tt.expected {
-				t.Errorf("Expected PassthroughMode=%v, got %v", tt.expected, cfg.PassthroughMode)
+	baseline := loadRouting()
+	if baseline.profile != EnvProfile || baseline.providerName != EnvProfile ||
+		baseline.providerType != ProviderTypeCodexAPI || baseline.profileProvider != EnvProfile ||
+		baseline.providerBaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("unexpected baseline routing: %+v", baseline)
+	}
+
+	for _, value := range []string{"true", "false", "not-a-bool"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("PASSTHROUGH_MODE", value)
+			if got := loadRouting(); got != baseline {
+				t.Errorf("routing with PASSTHROUGH_MODE=%q = %+v, want baseline %+v", value, got, baseline)
 			}
 		})
 	}

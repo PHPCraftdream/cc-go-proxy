@@ -265,35 +265,5 @@ func SetProfileProxyText(text, profile, proxy string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	child := indentOf(lines[open]) + "    "
-	if open+1 < closeAt {
-		child = indentOf(lines[open+1])
-	}
-	proxyAt, providerAt := -1, -1
-	for i := open + 1; i < closeAt; i++ {
-		if indentOf(lines[i]) != child {
-			continue // nested (models rules)
-		}
-		switch k, _, ok := keyValue(lines[i]); {
-		case ok && k == "proxy":
-			proxyAt = i
-		case ok && k == "provider":
-			providerAt = i
-		}
-	}
-	switch {
-	case proxyAt >= 0 && proxy == "":
-		return strings.Join(append(lines[:proxyAt:proxyAt], lines[proxyAt+1:]...), "\n"), nil
-	case proxyAt >= 0:
-		cr := lines[proxyAt][len(strings.TrimRight(lines[proxyAt], "\r")):]
-		lines[proxyAt] = child + "proxy: " + proxy + cr
-		return strings.Join(lines, "\n"), nil
-	case proxy == "":
-		return text, nil
-	}
-	if providerAt < 0 {
-		providerAt = open
-	}
-	add := withEndings([]string{child + "proxy: " + proxy}, dominantCRLF(lines))
-	return strings.Join(append(append(lines[:providerAt+1:providerAt+1], add...), lines[providerAt+1:]...), "\n"), nil
+	return setScalarKey(lines, open, closeAt, "proxy", proxy, []string{"provider"})
 }
