@@ -1,6 +1,9 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -35,6 +38,143 @@ type cacheWatch struct {
 }
 
 var promptWatch = &cacheWatch{}
+
+const (
+	maxTurnStateBuckets = 512
+	turnStateTTL        = 30 * time.Minute
+)
+
+type turnStateKey struct {
+	key    string
+	system string
+	tools  string
+}
+
+type turnStateBucket struct {
+	value      string
+	expiresAt  time.Time
+	generation uint64
+	sequence   uint64
+}
+
+type turnStateStore struct {
+	mu         sync.Mutex
+	buckets    map[turnStateKey]*turnStateBucket
+	order      []turnStateKey
+	generation uint64
+	sequence   uint64
+}
+
+var turnStates = &turnStateStore{}
+
+type turnRegistration struct {
+	threadID   string
+	state      string
+	newTurn    bool
+	store      *turnStateStore
+	key        turnStateKey
+	generation uint64
+	sequence   uint64
+}
+
+func (s *turnStateStore) Begin(f codex.Fingerprint, continuation, newTurn bool, now time.Time) turnRegistration {
+	key := turnStateKey{key: f.Key, system: f.System, tools: f.Tools}
+	reg := turnRegistration{threadID: turnThreadID(key), newTurn: newTurn}
+	if f.Key == "" {
+		return reg
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.buckets == nil {
+		s.buckets = make(map[turnStateKey]*turnStateBucket)
+	}
+	s.pruneExpiredLocked(now)
+	bucket, ok := s.buckets[key]
+	if !ok {
+		if len(s.buckets) == maxTurnStateBuckets {
+			oldest := s.order[0]
+			s.order = s.order[1:]
+			delete(s.buckets, oldest)
+		}
+		s.generation++
+		if s.generation == 0 {
+			s.generation++
+		}
+		bucket = &turnStateBucket{generation: s.generation, expiresAt: now.Add(turnStateTTL)}
+		s.buckets[key] = bucket
+		s.order = append(s.order, key)
+	}
+	if newTurn {
+		bucket.value = ""
+		bucket.expiresAt = now.Add(turnStateTTL)
+	}
+	s.sequence++
+	if s.sequence == 0 {
+		s.sequence++
+	}
+	bucket.sequence = s.sequence
+	reg.store = s
+	reg.key = key
+	reg.generation = bucket.generation
+	reg.sequence = bucket.sequence
+	if continuation {
+		reg.state = bucket.value
+	}
+	return reg
+}
+
+func (r turnRegistration) Store(value string, now time.Time) {
+	if r.store == nil {
+		return
+	}
+	s := r.store
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bucket, ok := s.buckets[r.key]
+	if !ok || bucket.generation != r.generation || bucket.sequence != r.sequence {
+		return
+	}
+	if !bucket.expiresAt.IsZero() && !now.Before(bucket.expiresAt) {
+		s.removeLocked(r.key)
+		return
+	}
+	bucket.value = value
+	bucket.expiresAt = now.Add(turnStateTTL)
+}
+
+func (s *turnStateStore) pruneExpiredLocked(now time.Time) {
+	if len(s.buckets) == 0 {
+		return
+	}
+	order := s.order[:0]
+	for _, key := range s.order {
+		bucket, ok := s.buckets[key]
+		if ok && (bucket.expiresAt.IsZero() || now.Before(bucket.expiresAt)) {
+			order = append(order, key)
+		} else {
+			delete(s.buckets, key)
+		}
+	}
+	s.order = order
+}
+
+func (s *turnStateStore) removeLocked(key turnStateKey) {
+	delete(s.buckets, key)
+	for i, ordered := range s.order {
+		if ordered == key {
+			copy(s.order[i:], s.order[i+1:])
+			s.order = s.order[:len(s.order)-1]
+			break
+		}
+	}
+}
+
+func turnThreadID(key turnStateKey) string {
+	encoded, _ := json.Marshal([3]string{key.key, key.system, key.tools})
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:])
+}
 
 type prevInfo struct {
 	start, ended time.Time

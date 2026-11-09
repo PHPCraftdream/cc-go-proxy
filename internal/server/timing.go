@@ -50,8 +50,10 @@ type upstreamTrace struct {
 	got              time.Time   // the last attempt got its connection
 	wrote            time.Time   // the last attempt's request was written out
 	wire             *codex.Wire // what went on the wire: compressed or not, how big
-	read             time.Time   // when the last byte of the reply came in (stamp)
-	prompt           string      // the request's fingerprint and what changed since the key's last one (promptText)
+	routing          *codex.Routing
+	newTurn          bool
+	read             time.Time // when the last byte of the reply came in (stamp)
+	prompt           string    // the request's fingerprint and what changed since the key's last one (promptText)
 	fp               codex.Fingerprint
 	promptGeneration uint64
 	prev             prevInfo // the key's last request: when it ran, the data centre of its reply
@@ -338,9 +340,31 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 		if e := edgeText(u.prev.edge, u.edge); e != "" {
 			prompt += "; " + e
 		}
+		if note := turnRoutingNote(u.routing, u.newTurn); note != "" {
+			prompt += "; " + note
+		}
 		parts = append(parts, "prompt "+prompt)
 	}
 	return strings.Join(parts, " | ")
+}
+
+func turnRoutingNote(routing *codex.Routing, newTurn bool) string {
+	if routing == nil {
+		return ""
+	}
+	var notes []string
+	if newTurn {
+		notes = append(notes, "new turn")
+	}
+	if routing.Sent() {
+		notes = append(notes, "turn state sent")
+	}
+	if routing.Returned() {
+		notes = append(notes, "turn state returned")
+	} else {
+		notes = append(notes, "no turn state returned")
+	}
+	return strings.Join(notes, "; ")
 }
 
 // cacheMark says when a big prompt was not read from the cache: nothing of it

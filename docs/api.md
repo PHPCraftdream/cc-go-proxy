@@ -76,6 +76,14 @@ false. What happens depends on the profile's provider:
 | `codex_api` | An OpenAI-compatible Chat Completions call with the provider's API key |
 | `anthropic_compat` | The same Messages request, forwarded with the provider's API key; only the model (and effort level) is changed |
 
+For `codex`, ccgp may replay the opaque `x-codex-turn-state` response header unchanged on a later upstream request only
+when its last input item is a `function_call_output` continuing the same tool loop. A new user turn drops it, while
+retries retain it; a retry for a new turn may acquire and send state during that request. State is bounded to 512 FIFO
+slots with a 30-minute TTL, keyed by the full `prompt_cache_key` plus system/tools hashes, and stale concurrent replies
+cannot overwrite newer state. `thread-id` and `x-client-request-id` use stable hexadecimal bucket-derived values, never
+the raw key. `session-id` and the model hint are unchanged. Without a returned hint there is no replay and no content
+behavior change; no live backend response header has yet been observed.
+
 The model is rewritten by the profile's rules and the model-identity sentence in the system prompt is corrected
 ([providers](providers.md#the-model-identity)). Bodies up to `listen.max_body_mb` (default 256 MiB) are accepted;
 larger ones answer `413`. If the provider has [peak hours](peak-hours.md) and the request arrives inside one (and no

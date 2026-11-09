@@ -209,8 +209,8 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	if !strings.HasPrefix(line, "2 big prompts, 1 read from the cache in part") {
 		t.Errorf("counters: %q", line)
 	}
-	// The second one is in the groups of its gap and its edge; the first had no past.
-	if by != "started <5m before: 1 prompts, 61% cached; other edge: 1 prompts, 61% cached" {
+	// The second reply has known gap/edge groups and both replies are not sent with turn state.
+	if by != "started <5m before: 1 prompts, 61% cached; other edge: 1 prompts, 61% cached; turn state not sent: 2 prompts, 77% cached" {
 		t.Errorf("groups: %q", by)
 	}
 	if !strings.Contains(got, "; the last request started ") || !strings.Contains(got, " ago, ended ") {
@@ -343,6 +343,27 @@ func TestCacheStatsGroups(t *testing.T) {
 	s.Add(codex.Usage{Input: 100000, Cached: 100000})
 	if total, by = s.Take(); total == "" || by != "" {
 		t.Errorf("no groups: %q %q", total, by)
+	}
+}
+
+func TestCacheStatsTurnStateGroups(t *testing.T) {
+	for sent, want := range map[bool]string{
+		true:  groupTurnStateSent,
+		false: groupTurnStateNotSent,
+	} {
+		if got := turnStateGroup(sent); got != want {
+			t.Errorf("turnStateGroup(%t) = %q, want %q", sent, got, want)
+		}
+	}
+
+	s := &cacheStats{}
+	s.Add(codex.Usage{Input: 100000, Cached: 100000}, groupGapShort, groupEdgeSame, turnStateGroup(true))
+	s.Add(codex.Usage{Input: 200000, Cached: 50000}, groupGapLong, groupEdgeOther, turnStateGroup(false))
+	s.Add(codex.Usage{Input: 200000, Cached: 100000}, groupGapMiddle)
+	_, by := s.Take()
+	want := "started <5m before: 1 prompts, 100% cached; started 5-10m before: 1 prompts, 50% cached; started >10m before: 1 prompts, 25% cached; same edge: 1 prompts, 100% cached; other edge: 1 prompts, 25% cached; turn state sent: 1 prompts, 100% cached; turn state not sent: 1 prompts, 25% cached"
+	if by != want {
+		t.Errorf("groups %q, want %q", by, want)
 	}
 }
 
