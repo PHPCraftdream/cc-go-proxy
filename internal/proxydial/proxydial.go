@@ -27,6 +27,8 @@ import (
 	"time"
 )
 
+var handshakeTimeout = 15 * time.Second
+
 // DialFunc is the shape of net.Dialer.DialContext.
 type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
@@ -74,10 +76,11 @@ func Dialer(u *url.URL, forward DialFunc) DialFunc {
 		if err != nil {
 			return nil, fmt.Errorf("proxy %s: %w", proxyAddr, err)
 		}
-		// The handshake obeys the context: a stuck proxy must not hang the dial.
-		if dl, ok := ctx.Deadline(); ok {
-			_ = c.SetDeadline(dl)
+		handshakeDeadline := time.Now().Add(handshakeTimeout)
+		if dl, ok := ctx.Deadline(); ok && dl.Before(handshakeDeadline) {
+			handshakeDeadline = dl
 		}
+		_ = c.SetDeadline(handshakeDeadline)
 		stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Unix(1, 0)) })
 		var out net.Conn
 		switch u.Scheme {
