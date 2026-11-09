@@ -94,10 +94,10 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 func sessionHeaders(req *Request) http.Header {
 	h := http.Header{}
 	if req.PromptCacheKey != "" {
-		h["session-id"] = []string{req.PromptCacheKey}
+		h.Set("session-id", req.PromptCacheKey)
 	}
 	if req.Model != "" {
-		h["x-codex-routing-hint"] = []string{"model=" + req.Model}
+		h.Set("x-codex-routing-hint", "model="+req.Model)
 	}
 	return h
 }
