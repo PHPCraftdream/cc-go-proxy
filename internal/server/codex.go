@@ -349,14 +349,12 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	obs := trace.observer()
 	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithRouting(codex.WithWire(ctx, trace.wire), routing), trace.clientTrace()), obs)
 	prepared, err := codex.PrepareRequest(req)
-	req = nil // the retry closure must not retain the converted conversation
 	retry := &codexRetry{
 		prepared: prepared,
 		call: func(p *codex.Prepared) (*http.Response, error) {
 			return codex.CallPrepared(ctx, baseURL, s, p)
 		},
 	}
-	prepared = nil // the holder is the sole owner, and is cleared on first content
 	var resp *http.Response
 	if err == nil {
 		resp, err = retry.callPrepared()

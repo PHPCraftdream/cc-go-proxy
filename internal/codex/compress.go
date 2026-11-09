@@ -119,13 +119,9 @@ func wireFrom(ctx context.Context) *Wire {
 	return w
 }
 
-// send posts body, compressed when it is big enough. A 400 or 415 for a
+// sendPrepared posts the prepared body, compressed when it is big enough. A 400 or 415 for a
 // compressed body is asked again plain; only when that is accepted is the
 // compression given up for good (a genuinely bad request fails both ways).
-func send(ctx context.Context, url string, body []byte, hdr http.Header, tok *oauth.Tokens) (*http.Response, error) {
-	return sendPrepared(ctx, url, &Prepared{body: body, headers: hdr}, tok)
-}
-
 func sendPrepared(ctx context.Context, url string, p *Prepared, tok *oauth.Tokens) (*http.Response, error) {
 	body, hdr := p.body, p.headers
 	w := wireFrom(ctx)
