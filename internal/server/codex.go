@@ -382,7 +382,10 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		defer release()
 		defer cancel()
 		tr := &codex.Translator{Model: probe.Model, Emit: func(ev string, data any) {
-			writeSSEEvent(w, ev, data)
+			if err := writeSSEEvent(w, ev, data); err != nil {
+				cancel() // client gone: abort upstream
+				return
+			}
 			if err := w.Flush(); err != nil {
 				cancel() // client gone: abort upstream
 			}
