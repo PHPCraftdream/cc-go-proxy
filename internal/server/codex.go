@@ -221,18 +221,22 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 // The upstream call happens before streaming starts so HTTP errors (429, 401)
 // reach Claude Code with their real status.
 func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) error {
-	body := append([]byte(nil), c.Body()...)
+	body := c.Body()
 	if cfg.Debug {
 		fmt.Printf("\n=== CLAUDE REQUEST ===\n%s\n=====================\n", body)
 	}
-	var probe struct {
-		Model string `json:"model"`
+	// ParseRequest owns decoded fields; the Fiber-backed body is only read here and for its length below.
+	parsed, err := codex.ParseRequest(body)
+	if err != nil {
+		return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", err.Error())
 	}
-	_ = json.Unmarshal(body, &probe)
-	model := converter.MapModel(probe.Model, cfg)
+	probe := struct {
+		Model string `json:"model"`
+	}{Model: parsed.Model()}
+	model := converter.MapModel(parsed.Model(), cfg)
 	c.Locals(localsModel, probe.Model+" -> "+model)
 
-	req, wantStream, err := codex.ConvertRequest(body, model, cfg.Profile)
+	req, wantStream, err := parsed.Convert(model, cfg.Profile)
 	if err != nil {
 		return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", err.Error())
 	}
