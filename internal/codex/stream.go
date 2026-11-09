@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -114,21 +115,21 @@ func (t *Translator) Run(r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), 16<<20) // encrypted reasoning can be large
 	for sc.Scan() {
-		line := sc.Text()
-		data, ok := strings.CutPrefix(line, "data:")
+		line := sc.Bytes()
+		data, ok := bytes.CutPrefix(line, []byte("data:"))
 		if !ok {
 			continue
 		}
-		data = strings.TrimSpace(data)
-		if data == "" || data == "[DONE]" {
+		data = bytes.TrimSpace(data)
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue
 		}
 		var ev event
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		if err := json.Unmarshal(data, &ev); err != nil {
 			continue
 		}
 		if ev.Type == "error" || ev.Type == "response.failed" {
-			t.Detail = data
+			t.Detail = string(data)
 		}
 		t.handle(&ev)
 		if t.retry {
