@@ -40,11 +40,11 @@ func SourceDir(env func(string) string, home string) (dir, stateFile string) {
 // preferenceKeys that the destination's lacks. It returns an error if an official
 // credential file cannot be removed from dst.
 func Prepare(src, srcState, dst string) error {
-	if err := os.MkdirAll(dst, 0o700); err != nil {
-		return err
-	}
 	if same(src, dst) {
 		return errors.New("claudehome: destination is the user's own Claude Code config dir")
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
 	}
 
 	// A login made inside the isolated session must not persist.
@@ -68,11 +68,11 @@ func Prepare(src, srcState, dst string) error {
 // from src (see mirrorShared): no .claude.json, session or account data is
 // carried over, and a login made in dst is kept.
 func PrepareOwn(src, dst string) error {
-	if err := os.MkdirAll(dst, 0o700); err != nil {
-		return err
-	}
 	if same(src, dst) {
 		return errors.New("claudehome: destination is the user's own Claude Code config dir")
+	}
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		return err
 	}
 	return mirrorShared(src, dst)
 }
@@ -104,9 +104,23 @@ func mirrorShared(src, dst string) error {
 }
 
 func same(a, b string) bool {
+	if sameFile(a, b) {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	if errA == nil && errB == nil && sameFile(resolvedA, resolvedB) {
+		return true
+	}
 	ca, err1 := filepath.Abs(a)
 	cb, err2 := filepath.Abs(b)
 	return err1 == nil && err2 == nil && strings.EqualFold(filepath.Clean(ca), filepath.Clean(cb))
+}
+
+func sameFile(a, b string) bool {
+	infoA, errA := os.Stat(a)
+	infoB, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
 }
 
 // mirrorFile copies src to dst, or removes dst when src is gone.
