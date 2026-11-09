@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
@@ -34,6 +35,82 @@ func newClient(headerTimeout time.Duration) *http.Client {
 		t.ResponseHeaderTimeout = headerTimeout
 		return t
 	})}
+}
+
+// Routing carries Codex conversation routing state across calls and retries.
+// Its opaque state is sent verbatim and is never interpreted by the client.
+type Routing struct {
+	mu       sync.Mutex
+	threadID string
+	state    string
+	sent     bool
+	returned bool
+	onState  func(string)
+}
+
+// NewRouting creates routing state for a Codex conversation. onState, when
+// non-nil, is called with each nonempty state returned by the backend.
+func NewRouting(threadID, state string, onState func(string)) *Routing {
+	return &Routing{threadID: threadID, state: state, onState: onState}
+}
+
+// WithRouting carries routing state through Call and every underlying POST.
+func WithRouting(ctx context.Context, routing *Routing) context.Context {
+	return context.WithValue(ctx, routingKey{}, routing)
+}
+
+type routingKey struct{}
+
+func routingFrom(ctx context.Context) *Routing {
+	routing, _ := ctx.Value(routingKey{}).(*Routing)
+	return routing
+}
+
+// Sent reports whether a nonempty opaque turn state has been sent on a POST.
+func (r *Routing) Sent() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sent
+}
+
+// Returned reports whether a response has included the turn-state header.
+func (r *Routing) Returned() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.returned
+}
+
+func (r *Routing) outgoing() (threadID, state string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state != "" {
+		r.sent = true
+	}
+	return r.threadID, r.state
+}
+
+func (r *Routing) capture(h http.Header) {
+	state, ok := headerValueFold(h, "x-codex-turn-state")
+	if !ok {
+		return
+	}
+	r.mu.Lock()
+	r.state = state
+	r.returned = true
+	callback := r.onState
+	r.mu.Unlock()
+	if state != "" && callback != nil {
+		callback(state)
+	}
+}
+
+func headerValueFold(h http.Header, name string) (string, bool) {
+	for key, values := range h {
+		if strings.EqualFold(key, name) && len(values) > 0 {
+			return values[0], true
+		}
+	}
+	return "", false
 }
 
 // Call POSTs req to baseURL/responses with OAuth headers. On 401 it forces a
@@ -84,7 +161,20 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 	for k, v := range hdr {
 		r.Header[k] = v
 	}
-	return HTTPClient.Do(r)
+	routing := routingFrom(ctx)
+	if routing != nil {
+		threadID, state := routing.outgoing()
+		r.Header.Set("thread-id", threadID)
+		r.Header.Set("x-client-request-id", threadID)
+		if state != "" {
+			r.Header.Set("x-codex-turn-state", state)
+		}
+	}
+	resp, err := HTTPClient.Do(r)
+	if routing != nil && resp != nil {
+		routing.capture(resp.Header)
+	}
+	return resp, err
 }
 
 // sessionHeaders are what the official Codex client sends to tie a request to

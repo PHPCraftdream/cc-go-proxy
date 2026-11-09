@@ -147,9 +147,10 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   `reasoning changed`, `tool choice changed`, `history shorter (214 -> 40 items)`, or `first request of this key`. The
   history is compared item by item (a hash of each, kept per key): `history extends the last request by 2 items` (the
   prefix is the same), `history changed at item 7 of 214 (the last request had 212)` (item 0 is the system prompt; the
-  items before the changed one can still be read from the cache), `history identical to the last request`. Identical
-  history alone does not prove the backend caused a miss; model or request controls may differ, and even with matching
-  settings the backend may not have read its cache. When the reply of the last request had ended, the note adds `the last
+  items before the changed one can still be read from the cache), `history identical to the last request`. For Codex, prompt
+  notes say `new turn`, `turn state sent`, and `turn state returned` or `no turn state returned`; the opaque token is never
+  shown. Identical history alone does not prove the backend caused a miss; model or request controls may differ, and even
+  with matching settings the backend may not have read its cache. When the reply of the last request had ended, the note adds `the last
   request had 711757 tokens in`: a `cached` below it means the backend dropped part of what it had cached. Concurrent
   calls report `2 other requests of this key running`; if history diverges while the last request is still running, the
   line marks `branch: history diverges from the last request while it is running`. Next to `| cache miss` (a prompt of 10000
@@ -165,15 +166,16 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   more (not only the slow ones); nothing is printed in a quiet period. The next line, `upstream cache by [codex]:
   started <5m before: 30 prompts, 96% cached; started >10m before: 6 prompts, 41% cached; same edge: …; other edge: …`,
   splits the same prompts by how long before the last request of their key started and by whether its reply came through
-  the same data centre; it shows which of the two goes with a lost cache.
+  the same data centre; it shows which of the two goes with a lost cache. It also splits prompts by whether turn state
+  was sent (`turn state sent` / `turn state not sent`).
 - `upstream stats [client]: …`: every 10 minutes, for each upstream client that did something: connections opened
   (`dials 3 (h2 2, http/1.1 1, 2 resumed)`: how many, the protocol they agreed on and how many resumed the TLS session of an earlier connection, which makes the handshake short), background warm-ups (`opened`, `used`,
   `failed`) and retries (after a connection could not open, after one broke). A warm-up count of `used` far below
   `opened`, or `http/1.1` where `h2` is expected, shows a connection problem before it becomes errors.
 - `upstream rate limit: retrying in …`: the backend answered 429 with a `Retry-After` of up to 5 s, so ccgp waited it
-  out and asked once more. The line lists the limit headers (`retry-after`, `x-ratelimit-*`, `*reset*`, `x-codex-*`);
-  a longer `Retry-After` is passed on to Claude Code in the 429 reply (header included) and the limits go to the log
-  line of the 429.
+  out and asked once more. The line lists the limit headers (`retry-after`, `x-ratelimit-*`, `*reset*`, and other
+  rate-limit `x-codex-*` headers); it explicitly excludes the opaque `x-codex-turn-state`. A longer `Retry-After` is passed
+  on to Claude Code in the 429 reply (header included) and the limits go to the log line of the 429.
 - `upstream retry N/M in …`: the stream failed before ccgp had sent any content to Claude Code, so ccgp sends the
   request again after a pause and Claude Code just waits longer. Two kinds, each with its own budget: the backend
   said it is overloaded (`server_is_overloaded` and similar; pauses of 2 s, then 5 s), or the connection broke

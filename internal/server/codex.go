@@ -204,7 +204,7 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	trace.edge = edgeOf(up.Header)
 	trace.mu.Unlock()
 	promptWatch.Done(trace.fp.Key, trace.promptGeneration, tr.Usage.Input, trace.edge)
-	promptStats.Add(tr.Usage, gapGroup(trace.prev, trace.start), edgeGroup(trace.prev.edge, trace.edge))
+	promptStats.Add(tr.Usage, gapGroup(trace.prev, trace.start), edgeGroup(trace.prev.edge, trace.edge), turnStateGroup(trace.routing != nil && trace.routing.Sent()))
 	ids := upstreamIDs(up.Header)
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
@@ -215,6 +215,53 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	case trace.slow(end):
 		logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 	}
+}
+
+// codexTurnKind tells where a request stands in its turn from the tail of the
+// converted input. A converted user message puts its tool results first and its
+// text after them, and Claude Code often appends reminder text to a tool
+// result, so trailing user messages are skipped: a tool output reached before
+// any assistant item is a continuation, and user messages right after an
+// assistant item (or alone) begin a new turn.
+func codexTurnKind(req *codex.Request) (continuation, newTurn bool) {
+	if req == nil {
+		return false, false
+	}
+	sawUser := false
+	for i := len(req.Input) - 1; i >= 0; i-- {
+		raw, err := json.Marshal(req.Input[i])
+		if err != nil {
+			return false, false
+		}
+		var item struct {
+			Type string `json:"type"`
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			return false, false
+		}
+		switch {
+		case item.Type == "function_call_output":
+			return true, false
+		case item.Type == "message" && item.Role == "user":
+			sawUser = true
+		default:
+			return false, sawUser
+		}
+	}
+	return false, sawUser
+}
+
+// codexRateHeaders redacts the backend's opaque turn state before the generic
+// rate-header formatter can include it in request logs.
+func codexRateHeaders(h http.Header) string {
+	filtered := h.Clone()
+	for key := range filtered {
+		if strings.EqualFold(key, "x-codex-turn-state") {
+			delete(filtered, key)
+		}
+	}
+	return rateHeaders(filtered)
 }
 
 // handleCodexMessages serves /v1/messages via the ChatGPT Codex backend.
@@ -245,9 +292,17 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if pr := cfg.Providers[cfg.ProviderName]; pr != nil {
 		baseURL = pr.BaseURL
 	}
+	fingerprint := codex.NewFingerprint(req)
+	continuation, newTurn := codexTurnKind(req)
+	turnRegistration := turnStates.Begin(fingerprint, continuation, newTurn, time.Now())
+	routing := codex.NewRouting(turnRegistration.threadID, turnRegistration.state, func(state string) {
+		turnRegistration.Store(state, time.Now())
+	})
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	trace := newUpstreamTrace()
-	trace.fp = codex.NewFingerprint(req)
+	trace.routing = routing
+	trace.newTurn = turnRegistration.newTurn
+	trace.fp = fingerprint
 	registration := promptWatch.See(trace.fp, codex.ItemHashes(req))
 	trace.prev = registration.prev
 	trace.promptGeneration = registration.generation
@@ -262,12 +317,12 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	trace.wire = &codex.Wire{}
 	obs := trace.observer()
-	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithWire(ctx, trace.wire), trace.clientTrace()), obs)
+	ctx = connpool.WithObserver(httptrace.WithClientTrace(codex.WithRouting(codex.WithWire(ctx, trace.wire), routing), trace.clientTrace()), obs)
 	resp, err := codex.Call(ctx, baseURL, s, req)
 	// A short rate limit is waited out here, once; a long one is Claude Code's to handle.
 	if err == nil && resp.StatusCode == http.StatusTooManyRequests {
 		if wait, ok := retryAfter(resp.Header, time.Now()); ok && wait <= rateRetryMax {
-			logRateRetry(logOut, cfg.Profile, probe.Model+" -> "+model, wait, rateHeaders(resp.Header))
+			logRateRetry(logOut, cfg.Profile, probe.Model+" -> "+model, wait, codexRateHeaders(resp.Header))
 			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 			_ = resp.Body.Close()
 			if sleepCtx(ctx, wait) {
@@ -340,7 +395,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
 			c.Set("Retry-After", ra) // Claude Code backs off by it
 		}
-		hdrs := rateHeaders(resp.Header)
+		hdrs := codexRateHeaders(resp.Header)
 		out := anthropicError(c, status, codex.ErrorType(status), msg)
 		// The log gets the limits and the ids; the client the message.
 		if status != http.StatusTooManyRequests {

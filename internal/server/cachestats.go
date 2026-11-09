@@ -15,15 +15,17 @@ import (
 // last request of its key started (a cache entry is kept for a few minutes) and
 // whether that request's reply came through the same data centre.
 const (
-	groupGapShort  = "started <5m before"
-	groupGapMiddle = "started 5-10m before"
-	groupGapLong   = "started >10m before"
-	groupEdgeSame  = "same edge"
-	groupEdgeOther = "other edge"
+	groupGapShort         = "started <5m before"
+	groupGapMiddle        = "started 5-10m before"
+	groupGapLong          = "started >10m before"
+	groupEdgeSame         = "same edge"
+	groupEdgeOther        = "other edge"
+	groupTurnStateSent    = "turn state sent"
+	groupTurnStateNotSent = "turn state not sent"
 )
 
 // cacheGroups is the order the groups are printed in.
-var cacheGroups = []string{groupGapShort, groupGapMiddle, groupGapLong, groupEdgeSame, groupEdgeOther}
+var cacheGroups = []string{groupGapShort, groupGapMiddle, groupGapLong, groupEdgeSame, groupEdgeOther, groupTurnStateSent, groupTurnStateNotSent}
 
 type cacheCount struct {
 	n             int
@@ -125,6 +127,14 @@ func edgeGroup(prev, cur string) string {
 		return groupEdgeSame
 	}
 	return groupEdgeOther
+}
+
+// turnStateGroup keeps the sent/not-sent split in stats.
+func turnStateGroup(sent bool) string {
+	if sent {
+		return groupTurnStateSent
+	}
+	return groupTurnStateNotSent
 }
 
 // millions writes n tokens as 23.4M, or 812k under a million.
