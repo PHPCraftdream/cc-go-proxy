@@ -140,7 +140,7 @@ func TestCodexPreparedRequestIsSerializedOnceForAttempts(t *testing.T) {
 		t.Fatal("handleCodexMessages not found")
 	}
 	prepares, retryCalls, preparedCalls := 0, 0, 0
-	var preparePos, nilReqPos token.Pos
+	capturedReq := false
 	ast.Inspect(handler.Body, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CallExpr:
@@ -148,7 +148,6 @@ func TestCodexPreparedRequestIsSerializedOnceForAttempts(t *testing.T) {
 				switch sel.Sel.Name {
 				case "PrepareRequest":
 					prepares++
-					preparePos = node.Pos()
 				case "CallPrepared":
 					preparedCalls++
 				}
@@ -156,21 +155,19 @@ func TestCodexPreparedRequestIsSerializedOnceForAttempts(t *testing.T) {
 					retryCalls++
 				}
 			}
-		case *ast.AssignStmt:
-			for i, lhs := range node.Lhs {
-				ident, ok := lhs.(*ast.Ident)
-				if !ok || ident.Name != "req" || i >= len(node.Rhs) {
-					continue
+		case *ast.FuncLit:
+			// No closure of the handler may capture the converted request.
+			ast.Inspect(node.Body, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok && id.Name == "req" {
+					capturedReq = true
 				}
-				if value, ok := node.Rhs[i].(*ast.Ident); ok && value.Name == "nil" {
-					nilReqPos = node.Pos()
-				}
-			}
+				return true
+			})
 		}
 		return true
 	})
-	if prepares != 1 || retryCalls != 4 || preparedCalls != 1 || nilReqPos <= preparePos {
-		t.Fatalf("handler prepares=%d retry calls=%d direct prepared calls=%d req-nil position=%v; want 1, 4, 1, and after preparation", prepares, retryCalls, preparedCalls, nilReqPos > preparePos)
+	if prepares != 1 || retryCalls != 4 || preparedCalls != 1 || capturedReq {
+		t.Fatalf("handler prepares=%d retry calls=%d direct prepared calls=%d closure captures req=%v; want 1, 4, 1, false", prepares, retryCalls, preparedCalls, capturedReq)
 	}
 
 	closures, closureCalls := 0, 0

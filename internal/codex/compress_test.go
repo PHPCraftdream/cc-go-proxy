@@ -382,7 +382,7 @@ func TestConcurrentCompressionRefusalsAreSafe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			resp, err := send(context.Background(), backend.URL+"/responses", []byte(strings.Repeat("x", compressThreshold+1)), nil, &oauth.Tokens{AccessToken: "tok"})
+			resp, err := sendPrepared(context.Background(), backend.URL+"/responses", &Prepared{body: []byte(strings.Repeat("x", compressThreshold+1))}, &oauth.Tokens{AccessToken: "tok"})
 			if err != nil {
 				t.Errorf("send: %v", err)
 				return
