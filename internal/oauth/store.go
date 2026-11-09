@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
 
@@ -22,6 +22,15 @@ type Store struct {
 }
 
 func (s Store) Load() (*Tokens, error) {
+	unlock, err := creds.LockFile(context.Background(), s.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return s.load()
+}
+
+func (s Store) load() (*Tokens, error) {
 	var t Tokens
 	err := ktavfile.Read(s.Path, &t, json.Unmarshal) // also picks up the oauth-*.json of earlier versions
 	if errors.Is(err, fs.ErrNotExist) {
@@ -38,6 +47,15 @@ func (s Store) Load() (*Tokens, error) {
 
 // Save writes atomically, owner-only.
 func (s Store) Save(t *Tokens) error {
+	unlock, err := creds.LockFile(context.Background(), s.Path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.save(t)
+}
+
+func (s Store) save(t *Tokens) error {
 	return ktavfile.Write(s.Path, t)
 }
 
@@ -47,15 +65,19 @@ type Session struct {
 	Store  Store
 	Client *Client
 
-	mu      sync.Mutex
-	tokens  *Tokens
-	modTime time.Time
+	mu     sync.Mutex
+	tokens *Tokens
 }
 
 // Token returns valid tokens, refreshing when close to expiry.
 func (s *Session) Token(ctx context.Context) (*Tokens, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := creds.LockFile(ctx, s.Store.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := s.reloadLocked(); err != nil {
 		return nil, err
 	}
@@ -70,6 +92,11 @@ func (s *Session) Token(ctx context.Context) (*Tokens, error) {
 func (s *Session) ForceRefresh(ctx context.Context, staleAccessToken string) (*Tokens, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := creds.LockFile(ctx, s.Store.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := s.reloadLocked(); err != nil {
 		return nil, err
 	}
@@ -79,27 +106,13 @@ func (s *Session) ForceRefresh(ctx context.Context, staleAccessToken string) (*T
 	return s.refreshLocked(ctx)
 }
 
-// reloadLocked picks up a new file written by `login` while running.
+// reloadLocked unconditionally reloads the file; the caller holds the file lock.
 func (s *Session) reloadLocked() error {
-	st, err := os.Stat(s.Store.Path)
-	if errors.Is(err, fs.ErrNotExist) {
-		// Maybe still the JSON file of an earlier version: Load converts it.
-		if _, lerr := s.Store.Load(); lerr != nil {
-			return lerr
-		}
-		st, err = os.Stat(s.Store.Path)
-	}
+	t, err := s.Store.load()
 	if err != nil {
 		return err
 	}
-	if s.tokens != nil && st.ModTime().Equal(s.modTime) {
-		return nil
-	}
-	t, err := s.Store.Load()
-	if err != nil {
-		return err
-	}
-	s.tokens, s.modTime = t, st.ModTime()
+	s.tokens = t
 	return nil
 }
 
@@ -109,11 +122,8 @@ func (s *Session) refreshLocked(ctx context.Context) (*Tokens, error) {
 		return nil, err
 	}
 	// Persist before use: the old refresh token is now invalid.
-	if err := s.Store.Save(next); err != nil {
+	if err := s.Store.save(next); err != nil {
 		return nil, fmt.Errorf("oauth: save rotated tokens: %w", err)
-	}
-	if st, err := os.Stat(s.Store.Path); err == nil {
-		s.modTime = st.ModTime()
 	}
 	s.tokens = next
 	return next, nil
