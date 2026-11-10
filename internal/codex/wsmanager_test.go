@@ -615,11 +615,11 @@ func TestWSManagerLRUEvictionAndAllBusy(t *testing.T) {
 		wsManagerRead(t, respB)
 	})
 
-	t.Run("default eight entries", func(t *testing.T) {
+	t.Run("default entries", func(t *testing.T) {
 		m, clock := newWSManagerForTest(t, wsManagerTestConfig{useDefaults: true})
 		backend := newWSManagerTestBackend(t)
 		var first *wsManagerTestRequest
-		for i := 0; i < 8; i++ {
+		for i := 0; i < wsManagerMaxConnections; i++ {
 			clock.Add(time.Second)
 			bucket := fmt.Sprintf("default-%d", i)
 			resp, _, err := backend.call(t, m, bucket, makeWSManagerTestRequest(bucket, wsManagerUser(bucket)))
@@ -638,8 +638,8 @@ func TestWSManagerLRUEvictionAndAllBusy(t *testing.T) {
 		m.mu.Lock()
 		entries := len(m.entries)
 		m.mu.Unlock()
-		if entries != 8 {
-			t.Fatalf("default entry count = %d, want 8", entries)
+		if entries != 16 {
+			t.Fatalf("default entry count = %d, want 16", entries)
 		}
 		clock.Add(time.Second)
 		resp, _, err := backend.call(t, m, "default-new", makeWSManagerTestRequest("default-new", wsManagerUser("new")))
