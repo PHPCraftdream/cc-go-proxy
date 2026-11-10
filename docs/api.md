@@ -86,23 +86,33 @@ behavior change. The backend returns the token with the first reply of a turn; t
 back and usually get no new one (the log does not call that a miss).
 
 <a id="codex-websocket-transport"></a>
-**Codex websocket transport (opt-in).** With `CODEX_TRANSPORT=websocket` (`ws` is an alias; the default is `http`) a
-Codex request goes out over one websocket per conversation instead of an HTTP POST, the way the official Codex client
-does it. The first request of a conversation (and any request after the connection was replaced) is sent in full; a later
-request whose history extends the last completed response is sent as a *delta*: `previous_response_id` plus only the new
-items (a tool result, a new user message), so a 4.7 MiB request becomes a few hundred bytes (live check: 24.6 KB -> 0.65 KB
-frames, the model sees the whole context, 96% of the prompt read from the cache). The delta is used only when the
-backend model, system prompt, tools, reasoning and tool choice are unchanged, the earlier items are byte for byte the same
-(item hashes) and the assistant items of the last answer match what the backend produced; anything else (a compaction, a
-subagent branch) is sent in full on the same connection. Requests without a cache key (`metadata.user_id`) use HTTP.
+**Codex websocket transport.** With `CODEX_TRANSPORT=auto` (the default) or `websocket` (alias `ws`) a Codex request goes
+out over one websocket per conversation instead of an HTTP POST, the way the official Codex client does it;
+`CODEX_TRANSPORT=http` turns it off. Only the Responses protocol has a websocket: `codex` providers use it, Chat
+Completions (`codex_api`) and Anthropic Messages (`anthropic_compat`) providers always use HTTP. The first request of a
+conversation (and any request after the connection was replaced) is sent in full; a later request whose history extends
+the last completed response is sent as a *delta*: `previous_response_id` plus only the new items (a tool result, a new
+user message), so a 4.7 MiB request becomes a few hundred bytes (live check: 24.6 KB -> 0.65 KB frames, the model sees the
+whole context, 96% of the prompt read from the cache). The delta is used only when the backend model, system prompt,
+tools, reasoning and tool choice are unchanged, the earlier items are byte for byte the same (item hashes) and the
+history holds exactly what the backend produced in its last answer: the same assistant text, tool calls with the same id,
+name and arguments (compared as JSON values), the same encrypted reasoning. Anything else (a compaction, a subagent
+branch, an edited or dropped item) is sent in full on the same connection, with the reason in the log. Requests without
+a cache key (`metadata.user_id`) use HTTP.
 
-HTTP stays the default and the safety net: a request that finds its conversation's connection busy (subagents share a
-key), a refused upgrade, a dial failure or any other websocket failure before a reply goes out over HTTP at once, and a
-dial that fails other than with a 429, a 5xx or a cancel (for example an upgrade the backend refuses) turns the websocket off
-for 10 minutes. A connection is
-replaced after 55 minutes (the backend closes at 60) or 10 idle minutes; at most 8 are open. A break before any content
-is retried like an HTTP one, in full on a fresh connection. Pings after 15 s of silence and a close after 30 s more are
-the same as for HTTP/2 connections. Tokens are refreshed exactly as for HTTP (one refresh after a `401` handshake).
+A connection belongs to one endpoint, one account and one way out (proxy): two accounts never share one, the login is
+checked on every request exactly as for HTTP (a refresh only when the token is due), and after a logout or an account
+switch the old connections are closed. HTTP is the fallback. A request that finds its conversation's connection busy
+(subagents share a key), or whose websocket failed before the request reached the backend (a refused upgrade, a dial or
+TLS failure, a frame that could not be written: the backend acts only on a complete message), goes out over HTTP at once.
+A connection that broke after the request went out and before any content is asked again, in full on a fresh connection,
+the same rule as for an HTTP request broken before its reply; once content reached the client the stream ends with an
+error and is never asked again. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 (no websocket
+there) gets none for 10 minutes; any other failed dial (401 or 403 after the token refresh, network, TLS, timeout) for 30
+seconds; a 429 or a 5xx not at all (that request still goes over HTTP); the windows are per endpoint and account. A
+connection is replaced after 55 minutes (the backend closes at 60) or 10 idle minutes; at most 8 are open. Pings after
+15 s of silence and a close after 30 s more are the same as for HTTP/2 connections. Tokens are refreshed exactly as for
+HTTP (one refresh after a `401` handshake).
 
 The model is rewritten by the profile's rules and the model-identity sentence in the system prompt is corrected
 ([providers](providers.md#the-model-identity)). Bodies up to `listen.max_body_mb` (default 256 MiB) are accepted;
