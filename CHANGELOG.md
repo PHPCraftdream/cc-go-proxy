@@ -229,6 +229,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- A proxy handshake that ran into the request's own deadline could end with a plain `i/o timeout` instead of the
+  context's `deadline exceeded` (the socket's deadline is the context's and fired a moment before the context's timer),
+  so callers that tell the two apart saw the wrong one; it is the context's error now.
 - `install.ps1` found the newest release through the GitHub API, whose anonymous limit is shared by every runner behind
   one address (the installer check failed with "rate limit exceeded"); it follows the `/releases/latest` redirect now,
   as `install.sh` does. The CI installer step too.
