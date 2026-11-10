@@ -39,7 +39,7 @@ func codexWSStatsManager() *codex.WSManager {
 
 func safeWSReason(reason string) string {
 	switch reason {
-	case "new connection", "connection broken", "connection too old", "ahead of backend limit", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch",
+	case "new connection", "connection broken", "connection too old", "lowered age limit", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch",
 		"output missing", "assistant text changed", "reasoning dropped", "reasoning differs", "tool call changed":
 		return reason
 	}
@@ -59,22 +59,23 @@ var (
 	wsToolChange = regexp.MustCompile(`^tool call changed \((id|name|arguments)(, ([A-Za-z0-9_.:-]{1,40}|\?))?\)$`)
 )
 
-// logWSLimit tells that the manager learned when the backend ends connections.
+// logWSLimit tells that the planned age of connections was lowered because the
+// backend ended them early, again and again.
 func logWSLimit(l codex.WSLimit) {
 	closeText := "no close frame"
 	if l.Status >= 0 {
 		closeText = fmt.Sprintf("close status %d", l.Status)
 	}
-	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: the backend ends connections after about %s (%d breaks agree, %s); replacing them after %s\n",
-		time.Now().Format("15:04:05"), roundDur(l.Limit), l.Samples, closeText, roundDur(l.ReplaceAfter))
+	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: the backend ended connections before the planned %s (the last at %s, %s); replacing them after %s from now on\n",
+		time.Now().Format("15:04:05"), roundDur(l.Was), roundDur(l.Broke), closeText, roundDur(l.Age))
 }
 
-// wsReasonText is the reason for the request line; a replacement ahead of the
-// learned limit says which limit.
+// wsReasonText is the reason for the request line; a replacement at a lowered
+// age says which age.
 func wsReasonText(info codex.WSInfo) string {
 	reason := safeWSReason(info.Reason)
-	if reason == "ahead of backend limit" && info.Limit > 0 {
-		return "replaced ahead of the backend's " + roundDur(info.Limit) + " limit"
+	if reason == "lowered age limit" && info.Limit > 0 {
+		return "replaced at the lowered age of " + roundDur(info.Limit)
 	}
 	return reason
 }
@@ -255,7 +256,7 @@ func wsStatsText(stats codex.WSStats, fallbacks int) string {
 		text += "; " + count(stats.Lost, "connection", "connections") + " ended by the backend or the network"
 	}
 	if stats.Early > 0 {
-		text += "; " + count(stats.Early, "connection", "connections") + " replaced ahead of the backend's limit"
+		text += "; " + count(stats.Early, "connection", "connections") + " replaced at the lowered age"
 	}
 	return text
 }

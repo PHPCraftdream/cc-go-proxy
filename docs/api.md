@@ -110,11 +110,12 @@ the same rule as for an HTTP request broken before its reply; once content reach
 error and is never asked again. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 (no websocket
 there) gets none for 10 minutes; any other failed dial (401 or 403 after the token refresh, network, TLS, timeout) for 30
 seconds; a 429 or a 5xx not at all (that request still goes over HTTP); the windows are per endpoint and account. A
-connection is replaced after 55 minutes or 10 idle minutes; at most 8 are open. The backend ends a connection at a fixed
-age (30 minutes seen, 60 documented): ccgp takes the age of the connections that the other side ended, and when two such
-breaks (each 5 minutes or older) agree within 10% it replaces that endpoint's and account's connections a tenth of the
-age ahead (1 to 5 minutes; 27 minutes for 30), so no request meets the cut; the next request then goes out in full on a
-fresh connection. The learned age is forgotten after 12 hours and found again by the next break. Pings after
+connection is replaced after 25 minutes or 10 idle minutes; at most 8 are open. The backend ends a connection at a
+fixed age (30 minutes seen, 60 documented), and replacing first keeps a request from meeting the cut: the next request
+goes out in full on a fresh connection. If the backend ends connections earlier than planned (a break of a connection
+5 minutes old or older, twice within an hour, per endpoint and account), the planned age is lowered by 5 minutes, down
+to 5, and each further pair of early breaks lowers it again; after 6 hours without an early break it goes back to 25.
+Breaks younger than 5 minutes are the network's, not an age limit, and count for nothing. Pings after
 15 s of silence and a close after 30 s more are the same as for HTTP/2 connections. Tokens are refreshed exactly as for
 HTTP (one refresh after a `401` handshake).
 

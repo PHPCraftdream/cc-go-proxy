@@ -177,17 +177,17 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   byte), `no reply in time`, `reset`, `websocket ended by the backend`, `other`; a stream that broke and was sent
   again counts too; a call the client left is not counted. It tells a bad stretch of the
   network (slow handshakes and uploads, breaks everywhere) from a slow model (none of them).
-- `upstream websocket [codex]: the backend ends connections after about 30m1s (2 breaks agree, close status 1001);
-  replacing them after 27m1s`: once, when ccgp has learned from two breaks at the same age when the backend ends
-  connections (see [API behavior](api.md#codex-websocket-transport)); from then on connections are replaced ahead of it.
+- `upstream websocket [codex]: the backend ended connections before the planned 25m0s (the last at 12m5s, close
+  status 1001); replacing them after 20m0s from now on`: once per step, when the backend ended connections earlier
+  than planned twice (see [API behavior](api.md#codex-websocket-transport)).
 - `upstream websocket [codex]: 12 delta, 3 full, 1 busy, 0 fallbacks, 2 dials; sent 41 KiB; 1 connection ended by the
-  backend or the network; 2 connections replaced ahead of the backend's limit`: every 10 minutes, unless
+  backend or the network; 2 connections replaced at the lowered age`: every 10 minutes, unless
   `CODEX_TRANSPORT=http` (see [API behavior](api.md#codex-websocket-transport)), and only when something happened:
   requests sent as a delta (`previous_response_id` plus the new items) or in full, requests that found the
   conversation's connection busy, deltas refused for a changed history, connections opened, and the bytes sent. A request's
   summary then carries `transport websocket (delta: sent 3 KiB of 4.7 MiB)`, `transport websocket (full: new connection,
   sent 4.7 MiB)` or `fallback to HTTP (<reason>)`. A full request names why: `new connection`, `connection broken`,
-  `replaced ahead of the backend's 30m limit`, `history diverged at item 412 of 1079` (the item that differs, of the items
+  `replaced at the lowered age of 20m`, `history diverged at item 412 of 1079` (the item that differs, of the items
   the backend holds: a deep one is a rewritten history, one near the end a branch), `tool call changed (arguments,
   Read)` (what differs and in which tool), `assistant text changed`, `reasoning dropped`.
 - `upstream speed [codex]: first token / whole reply, median: http 2.1s / 14s (40 replies), websocket full 2.3s / 15s

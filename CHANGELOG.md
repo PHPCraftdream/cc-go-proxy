@@ -59,13 +59,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   sends that request over HTTP; a break after the request went out and before any content is asked again (as for HTTP),
   after content never. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 gets no websocket for 10
   minutes, any other failed dial (401, 403, network, TLS) for 30 seconds, a 429 or 5xx not at all; per endpoint and
-  account. A connection is replaced after 55 minutes or 10 idle minutes, at most 8 are open; the backend was seen ending
-  connections after 30 minutes, so ccgp learns the age from the breaks it sees (two breaks of 5 minutes or more that
-  agree within 10%, per endpoint and account; forgotten after 12 hours) and replaces connections a tenth of it ahead
-  (1 to 5 minutes), before the backend cuts one mid-request. The log says
+  account. A connection is replaced after 25 minutes (the backend ends them after a fixed age, 30 minutes seen) or 10 idle
+  minutes, at most 8 are open. If the backend ends connections earlier than planned (a break at 5 minutes or more of
+  age, twice within an hour, per endpoint and account), the planned age drops by 5 minutes (down to 5), and goes back
+  to 25 after 6 hours without such a break; so no request meets the cut. The log says
   `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request,
   with the reason in detail (`history diverged at item 412 of 1079`, `tool call changed (arguments, Read)`,
-  `replaced ahead of the backend's 30m limit`), one line when a limit is learned, the broken connections in the
+  `replaced at the lowered age of 20m`), one line when the age is lowered, the broken connections in the
   `upstream link` line (cause `websocket ended by the backend`, also for streams ccgp sent again),
   `upstream websocket [codex]` and `upstream speed [codex]` (median time to the first token and to the end of the reply,
   for HTTP, websocket full and websocket delta) every 10 minutes. Adds the dependency `github.com/coder/websocket` (ISC).
