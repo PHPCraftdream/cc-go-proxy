@@ -44,6 +44,17 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- Codex over a websocket (opt-in: `CODEX_TRANSPORT=websocket`, default `http`): one websocket per conversation, as the
+  official Codex client does. After the first request, each request of a tool loop or a conversation is sent as
+  `previous_response_id` plus only the new items instead of the whole history (4.7 MiB request bodies, which were
+  re-sent in full every time and took 1.5-9 s on a slow uplink, become a few hundred bytes; live check: 24.6 KB -> 0.65 KB
+  frames, the model sees the whole context, 96% of the prompt read from the cache). The delta is used only when model,
+  system prompt, tools and reasoning settings are unchanged and the earlier items match byte for byte; a compaction or a
+  subagent branch is sent in full. HTTP stays the default and the fallback: a busy conversation, a refused upgrade or any
+  websocket failure before a reply sends that request over HTTP (a refused upgrade also turns the websocket off for 10
+  minutes); a connection is replaced after 55 minutes or 10 idle minutes, at most 8 are open. The log says
+  `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request
+  and `upstream websocket [codex]` every 10 minutes. Adds the dependency `github.com/coder/websocket` (ISC).
 - Log: `upstream link [codex]` every 10 minutes: how the link to the backend behaved in the window - replies, new
   connections with the median and the longest TLS handshake, the upload speed of big request bodies (overall and the
   slowest) and the broken calls by cause (connect timeout, connection lost, health-ping close, no reply in time, reset),
