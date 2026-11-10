@@ -27,6 +27,7 @@ func currentCodexWSManager() *codex.WSManager {
 	if codexWSManager == nil {
 		codexWSManager = codex.NewWSManager()
 		codexWSManager.OnLimit = logWSLimit
+		codexWSManager.OnSide = logWSSide
 	}
 	return codexWSManager
 }
@@ -140,6 +141,21 @@ func logWSLimit(l codex.WSLimit) {
 	}
 	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: the backend ended connections before the planned %s (the last at %s, %s); replacing them after %s from now on\n",
 		time.Now().Format("15:04:05"), roundDur(l.Was), roundDur(l.Broke), closeText, roundDur(l.Age))
+}
+
+// logWSSide tells that a message was learned as a background request's, so
+// requests ending in it now go over HTTP.
+func logWSSide(s codex.WSSide) {
+	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: a user message of %s was answered on a conversation's websocket and its reply was left out of the next request (a background request of the client); requests ending in it go over HTTP from now on, so they do not replace the websocket chain\n",
+		time.Now().Format("15:04:05"), sizeString(s.Size))
+}
+
+// noteSideRequest marks a request that skips the websocket because it is a
+// background one.
+func (u *upstreamTrace) noteSideRequest() {
+	u.mu.Lock()
+	u.transport = "transport http (side request)"
+	u.mu.Unlock()
 }
 
 // wsReasonText is the reason for the request line; a replacement at a lowered
@@ -316,7 +332,7 @@ func writeCodexWebsocketStats(w io.Writer, now time.Time) {
 	}
 	stats := manager.TakeStats()
 	fallbacks := codexWSFallbacks.Swap(0)
-	if stats.Delta+stats.Full+stats.Busy+stats.Fallbacks+int(fallbacks)+stats.Dials+stats.Lost+stats.Early == 0 && stats.SentBytes == 0 {
+	if stats.Delta+stats.Full+stats.Busy+stats.Fallbacks+int(fallbacks)+stats.Dials+stats.Lost+stats.Early+stats.Side == 0 && stats.SentBytes == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "[%s] upstream websocket [codex]: %s\n", now.Format("15:04:05"), wsStatsText(stats, int(fallbacks)))
@@ -339,6 +355,9 @@ func wsStatsText(stats codex.WSStats, fallbacks int) string {
 	}
 	if stats.Early > 0 {
 		text += "; " + count(stats.Early, "connection", "connections") + " replaced at the lowered age"
+	}
+	if stats.Side > 0 {
+		text += "; " + count(stats.Side, "background request", "background requests") + " sent over HTTP"
 	}
 	return text
 }
