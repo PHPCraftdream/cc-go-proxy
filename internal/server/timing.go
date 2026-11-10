@@ -46,9 +46,11 @@ type upstreamTrace struct {
 	retries          int           // attempts sent again
 	pool             time.Duration // age of the pool the attempt went to
 	hasPool          bool
-	attempt          time.Time   // start of the last attempt
-	got              time.Time   // the last attempt got its connection
-	wrote            time.Time   // the last attempt's request was written out
+	attempt          time.Time // start of the last attempt
+	got              time.Time // the last attempt got its connection
+	wrote            time.Time // the last attempt's request was written out
+	transport        string
+	wsConn           string
 	wire             *codex.Wire // what went on the wire: compressed or not, how big
 	routing          *codex.Routing
 	newTurn          bool
@@ -170,10 +172,17 @@ func (u *upstreamTrace) observer() *connpool.Observer {
 func (u *upstreamTrace) newConnText() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if u.calls == 0 || u.reused || u.warm {
-		return ""
+	if u.wsConn != "" {
+		request := ""
+		if u.wire != nil && u.wire.Raw > 0 {
+			request = "request " + sizeString(u.wire.Raw)
+		}
+		return joinNonEmpty(u.transport, u.wsConn, request)
 	}
-	return "conn new (tls " + u.tls.Round(time.Millisecond).String() + u.poolText(", ") + ")"
+	if u.calls == 0 || u.reused || u.warm {
+		return u.transport // a fallback note still belongs in the access line
+	}
+	return joinNonEmpty(u.transport, "conn new (tls "+u.tls.Round(time.Millisecond).String()+u.poolText(", ")+")")
 }
 
 // sentText says how far the last attempt got with its request when it failed:
@@ -197,6 +206,9 @@ func (u *upstreamTrace) sentLocked(now time.Time) string {
 			size += " (" + u.wire.Encoding + " " + sizeString(u.wire.Sent) + ")"
 		}
 		size += ": "
+	}
+	if u.wire != nil && u.wire.Encoding == "ws" && u.wire.Raw > 0 {
+		return size + "frame sent, no reply for " + r(now.Sub(u.attempt))
 	}
 	switch {
 	case u.got.IsZero():
@@ -279,6 +291,9 @@ func (u *upstreamTrace) pingClosed(end time.Time) bool {
 func (u *upstreamTrace) linkSample() (tls time.Duration, sent int, wrote time.Duration) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if u.wire != nil && u.wire.Encoding == "ws" {
+		return 0, 0, 0
+	}
 	if u.calls > 0 && !u.reused && !u.warm {
 		tls = u.tls
 	}
@@ -302,6 +317,9 @@ func (u *upstreamTrace) slow(end time.Time) bool {
 // the number of upstream calls; the caller holds u.mu.
 func (u *upstreamTrace) connLocked() string {
 	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
+	if u.wsConn != "" {
+		return u.wsConn
+	}
 	conn := "conn new (dns " + r(u.dns) + ", connect " + r(u.connect) + ", tls " + r(u.tls) + u.poolText(", ") + ")"
 	switch {
 	case u.reused:
@@ -323,7 +341,7 @@ func (u *upstreamTrace) connText() string {
 	if u.calls == 0 {
 		return ""
 	}
-	return u.connLocked()
+	return joinNonEmpty(u.transport, u.connLocked())
 }
 
 // summary describes the call: the connection, the waits from the start of the
@@ -352,8 +370,10 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 	if u.wire != nil && u.wire.Encoding != "" {
 		notes = append(notes, u.wire.Encoding+" "+sizeString(u.wire.Sent))
 	}
-	if !u.got.IsZero() && !u.wrote.IsZero() {
-		notes = append(notes, "written in "+r(u.wrote.Sub(u.got)))
+	if u.wire == nil || u.wire.Encoding != "ws" {
+		if !u.got.IsZero() && !u.wrote.IsZero() {
+			notes = append(notes, "written in "+r(u.wrote.Sub(u.got)))
+		}
 	}
 	if len(notes) > 0 {
 		req += " (" + strings.Join(notes, ", ") + ")"
@@ -380,6 +400,9 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 		}
 		parts = append(parts, "prompt "+prompt)
 	}
+	if u.transport != "" {
+		parts = append([]string{u.transport}, parts...)
+	}
 	return strings.Join(parts, " | ")
 }
 
@@ -398,6 +421,9 @@ const phaseMin = 50 * time.Millisecond
 // refresh), connect, upload, wait for the headers, first token, stream. A
 // stretch without both stamps is left out; the caller holds u.mu.
 func (u *upstreamTrace) phasesLocked(firstToken, end time.Time) []phase {
+	if u.wire != nil && u.wire.Encoding == "ws" {
+		return nil
+	}
 	ps := u.stretchesLocked(firstToken, end)
 	for _, p := range ps {
 		if p.d > end.Sub(u.start) {
@@ -416,8 +442,10 @@ func (u *upstreamTrace) stretchesLocked(firstToken, end time.Time) []phase {
 		ps = append(ps, phase{name, side, to.Sub(from)})
 	}
 	add(preTryName(u.calls), "link", u.start, u.attempt)
-	add("connect", "link", u.attempt, u.got)
-	add("upload", "link", u.got, u.wrote)
+	if u.wire == nil || u.wire.Encoding != "ws" {
+		add("connect", "link", u.attempt, u.got)
+		add("upload", "link", u.got, u.wrote)
+	}
 	headers := u.headers
 	if headers.Before(u.attempt) {
 		headers = time.Time{} // the reply of an earlier try
