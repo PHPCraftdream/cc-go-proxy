@@ -51,6 +51,7 @@ type upstreamTrace struct {
 	wrote            time.Time // the last attempt's request was written out
 	transport        string
 	wsConn           string
+	httpNote         string      // conversation and size of a request sent over HTTP that could have used the websocket
 	conv             string      // websocket conversation tag (wsConvTag), "" over HTTP
 	wire             *codex.Wire // what went on the wire: compressed or not, how big
 	routing          *codex.Routing
@@ -173,6 +174,10 @@ func (u *upstreamTrace) observer() *connpool.Observer {
 func (u *upstreamTrace) newConnText() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	return joinNonEmpty(u.connTextLocked(), u.httpNote)
+}
+
+func (u *upstreamTrace) connTextLocked() string {
 	if u.wsConn != "" {
 		request := ""
 		if u.wire != nil && u.wire.Raw > 0 {

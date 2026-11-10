@@ -11,12 +11,15 @@ import (
 
 func TestSafeWSReasonKeepsNumbersAndToolNamesOnly(t *testing.T) {
 	for reason, want := range map[string]string{
-		"lowered age limit":                              "lowered age limit",
-		"history diverged at item 412 of 1079":           "history diverged at item 412 of 1079",
-		"history diverged at item 0":                     "history diverged at item 0",
-		"history diverged at item x of y":                "history diverged",
-		"tool call changed (arguments, Read)":            "tool call changed (arguments, Read)",
-		"tool call changed (id, mcp__srv__do-it.v2:x)":   "tool call changed (id, mcp__srv__do-it.v2:x)",
+		"lowered age limit":                    "lowered age limit",
+		"history diverged at item 412 of 1079": "history diverged at item 412 of 1079",
+		"history diverged at item 0":           "history diverged at item 0",
+		"history diverged at item x of y":      "history diverged",
+		"tool call changed (arguments, Read)":  "tool call changed (arguments, Read)",
+		"tool call changed (arguments, Edit, was 312 B, now 340 B, first 120 B and last 40 B equal)": "tool call changed (arguments, Edit, was 312 B, now 340 B, first 120 B and last 40 B equal)",
+		"tool call changed (arguments, Edit, was x B, now 340 B, first 120 B and last 40 B equal)":   "full request",
+		"tool call changed (arguments, Edit, was 312 B, now 340 B, first 1 B and last 40 B equal) x": "full request",
+		"tool call changed (id, mcp__srv__do-it.v2:x)":                                               "tool call changed (id, mcp__srv__do-it.v2:x)",
 		"tool call changed (name, ?)":                    "tool call changed (name, ?)",
 		"tool call changed (secret, Read)":               "full request",
 		"tool call changed (arguments, rm -rf /)":        "full request",

@@ -124,11 +124,11 @@ the same rule as for an HTTP request broken before its reply; once content reach
 error and is never asked again. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 (no websocket
 there) gets none for 10 minutes; any other failed dial (401 or 403 after the token refresh, network, TLS, timeout) for 30
 seconds; a 429 or a 5xx not at all (that request still goes over HTTP); the windows are per endpoint and account. A
-connection is replaced after 25 minutes or 10 idle minutes; at most 16 are open (a conversation and its parallel subagents). The backend ends a connection at a
+connection is replaced after 20 minutes or 10 idle minutes; at most 16 are open (a conversation and its parallel subagents). The backend ends a connection at a
 fixed age (30 minutes seen, 60 documented), and replacing first keeps a request from meeting the cut: the next request
 goes out in full on a fresh connection. If the backend ends connections earlier than planned (a break of a connection
 5 minutes old or older, twice within an hour, per endpoint and account), the planned age is lowered by 5 minutes, down
-to 5, and each further pair of early breaks lowers it again; after 6 hours without an early break it goes back to 25.
+to 5, and each further pair of early breaks lowers it again; after 6 hours without an early break it goes back to 20.
 Breaks younger than 5 minutes are the network's, not an age limit, and count for nothing. Pings after
 15 s of silence and a close after 30 s more are the same as for HTTP/2 connections. Tokens are refreshed exactly as for
 HTTP (one refresh after a `401` handshake).

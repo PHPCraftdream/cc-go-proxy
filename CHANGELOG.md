@@ -59,19 +59,20 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   sends that request over HTTP; a break after the request went out and before any content is asked again (as for HTTP),
   after content never. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 gets no websocket for 10
   minutes, any other failed dial (401, 403, network, TLS) for 30 seconds, a 429 or 5xx not at all; per endpoint and
-  account. A connection is replaced after 25 minutes (the backend ends them after a fixed age, 30 minutes seen) or 10 idle
+  account. A connection is replaced after 20 minutes (the backend ends them after a fixed age, 30 minutes seen; a reply of 6 minutes met the cut at a planned 25) or 10 idle
   minutes, at most 16 are open (the conversation and each of its parallel subagents hold one: a connection is
   told apart by the first user message as well, so subagents sharing the conversation's key, system prompt and tools do
   not replace each other's chain or find it busy). If the backend ends connections earlier than planned (a break at 5 minutes or more of
   age, twice within an hour, per endpoint and account), the planned age drops by 5 minutes (down to 5), and goes back
-  to 25 after 6 hours without such a break; so no request meets the cut. Claude Code's background requests (a short
+  to 20 after 6 hours without such a break; so no request meets the cut. Claude Code's background requests (a short
   fixed message after the conversation's history) would replace the websocket chain with their own reply, and the next
   request of the conversation would go out in full (2-4 MiB): ccgp learns such a message from the divergence it causes
   and sends requests that end in it over HTTP (`transport http (side request)`, one line when learned, counted in the
   periodic line). Every connection the backend or the network ends is logged with its age, close status and whether it
-  counts toward lowering the planned age. The log says
+  counts toward lowering the planned age; the requests that went over HTTP (busy connection, background request) name
+  their conversation and size. The log says
   `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request,
-  with the reason in detail (`history diverged at item 412 of 1079`, `tool call changed (arguments, Read)`,
+  with the reason in detail (`history diverged at item 412 of 1079`, `tool call changed (arguments, Read, was 312 B, now 340 B, first 120 B and last 40 B equal)`,
   `assistant message missing (found user message)`, `replaced at the lowered age of 20m`) and the conversation
   (`conv 3fa2c1`), a line per diverged history (the item's kind, size and parts before and now, the bytes that stayed
   equal, whether the reply chained on is in the new request, the prompt comparison; never content), one line when the

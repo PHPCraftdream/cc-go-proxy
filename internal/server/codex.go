@@ -405,18 +405,21 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	// A background request of Claude Code would replace the conversation's
 	// websocket chain with its own reply: it goes over HTTP (wsside.go).
 	useWS := cfg.CodexWebsocket() && fingerprint.Key != ""
+	// One websocket per agent: the subagents of a conversation share its
+	// thread (key, system prompt, tools) and would replace each other's chain.
+	agent := ""
+	if useWS {
+		agent = codex.AgentKey(req)
+		trace.conv = wsConvTag(turnRegistration.threadID) + wsAgentTag(agent)
+	}
 	if useWS && currentCodexWSManager().SideRequest(req) {
 		useWS = false
-		trace.noteSideRequest()
+		trace.noteSideRequest(requestBytes)
 	}
 	if useWS {
 		retry.request = req
 		retry.websocket = true
-		// One websocket per agent: the subagents of a conversation share its
-		// thread (key, system prompt, tools) and would replace each other's chain.
-		agent := codex.AgentKey(req)
 		bucket := turnRegistration.threadID + ":" + agent
-		trace.conv = wsConvTag(turnRegistration.threadID) + wsAgentTag(agent)
 		retry.callWS = func(request *codex.Request) (*http.Response, codex.WSInfo, error) {
 			return currentCodexWSManager().Call(wsCtx, baseURL, s, bucket, request)
 		}

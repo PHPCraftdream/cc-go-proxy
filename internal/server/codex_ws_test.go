@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -457,6 +458,9 @@ func TestCodexWebsocketBusyBucketFallsBackToHTTP(t *testing.T) {
 	}
 	if httpCalls.Load() != 1 || !strings.Contains(h.access.String(), "fallback to HTTP (connection busy)") {
 		t.Errorf("HTTP fallback calls=%d access=%q", httpCalls.Load(), h.access.String())
+	}
+	if !regexp.MustCompile(`fallback to HTTP \(connection busy\)[^\n]*\| conv [0-9a-f]{6}\.[0-9a-f]{4} \| request \d`).MatchString(h.access.String()) {
+		t.Errorf("busy fallback line lacks conv and size: %q", h.access.String())
 	}
 	close(hold)
 	select {
@@ -1121,6 +1125,23 @@ func TestAccessLineKeepsTheFallbackNoteOnAReusedHTTPConnection(t *testing.T) {
 		if got := u.newConnText(); got != "fallback to HTTP (connection busy)" {
 			t.Errorf("%s: newConnText = %q", name, got)
 		}
+	}
+	// The conversation and size of the request follow the fallback note.
+	u := &upstreamTrace{calls: 1, reused: true, conv: "3fa2c1.9b0e"}
+	u.noteWSFallback("connection busy", 2<<20)
+	defer codexWSFallbacks.Add(-1)
+	if got, want := u.newConnText(), "fallback to HTTP (connection busy) | conv 3fa2c1.9b0e | request 2.0 MiB"; got != want {
+		t.Errorf("fallback with conv: %q, want %q", got, want)
+	}
+	u.noteSideRequest(300)
+	if got, want := u.newConnText(), "transport http (side request) | conv 3fa2c1.9b0e | request 300 B"; got != want {
+		t.Errorf("side request with conv: %q, want %q", got, want)
+	}
+	// Without a conversation (no thread id) only the size is named.
+	bare := &upstreamTrace{calls: 1, reused: true}
+	bare.noteSideRequest(300)
+	if got, want := bare.newConnText(), "transport http (side request) | request 300 B"; got != want {
+		t.Errorf("side request without conv: %q, want %q", got, want)
 	}
 	// Without a websocket in play the line is as before.
 	if got := (&upstreamTrace{calls: 1, reused: true}).newConnText(); got != "" {

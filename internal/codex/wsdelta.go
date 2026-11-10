@@ -175,7 +175,7 @@ func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 				return cursor, "tool call missing (found " + itemShape(input[cursor]).Kind + ")"
 			}
 			if field := toolCallDifference(converted, output); field != "" {
-				return cursor, "tool call changed (" + field + ", " + safeToolName(output.Name) + ")"
+				return cursor, toolChangeReason(field, converted, output)
 			}
 		default:
 			return cursor, "output item not compared (" + safeItemType(head.Type) + ")"
@@ -316,6 +316,18 @@ func toolCallDifference(got, want functionCallItem) string {
 		return "arguments"
 	}
 	return ""
+}
+
+// toolChangeReason is the reason for a changed tool call. For changed
+// arguments it adds sizes only (backend's was, client's now, the bytes equal at
+// the start and at the end), never the content.
+func toolChangeReason(field string, got, want functionCallItem) string {
+	reason := "tool call changed (" + field + ", " + safeToolName(want.Name)
+	if field == "arguments" {
+		head, tail := commonEnds([]byte(want.Arguments), []byte(got.Arguments))
+		reason += fmt.Sprintf(", was %d B, now %d B, first %d B and last %d B equal", len(want.Arguments), len(got.Arguments), head, tail)
+	}
+	return reason + ")"
 }
 
 // safeToolName is a tool name fit for a log line: letters, digits and _.:- only,
