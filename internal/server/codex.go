@@ -402,7 +402,14 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	}
 	var resp *http.Response
 	requestBytes := len(body)
-	if cfg.CodexWebsocket() && fingerprint.Key != "" {
+	// A background request of Claude Code would replace the conversation's
+	// websocket chain with its own reply: it goes over HTTP (wsside.go).
+	useWS := cfg.CodexWebsocket() && fingerprint.Key != ""
+	if useWS && currentCodexWSManager().SideRequest(req) {
+		useWS = false
+		trace.noteSideRequest()
+	}
+	if useWS {
 		retry.request = req
 		retry.websocket = true
 		trace.conv = wsConvTag(turnRegistration.threadID)

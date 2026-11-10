@@ -180,8 +180,13 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
 - `upstream websocket [codex]: the backend ended connections before the planned 25m0s (the last at 12m5s, close
   status 1001); replacing them after 20m0s from now on`: once per step, when the backend ended connections earlier
   than planned twice (see [API behavior](api.md#codex-websocket-transport)).
+- `upstream websocket [codex]: a user message of 329 B was answered on a conversation's websocket and its reply was left
+  out of the next request (a background request of the client); requests ending in it go over HTTP from now on, so they
+  do not replace the websocket chain`: once per such message, when ccgp learns it (see
+  [API behavior](api.md#codex-websocket-transport)); the requests then carry `transport http (side request)`.
 - `upstream websocket [codex]: 12 delta, 3 full (2 where a delta could not continue), 1 busy, 0 HTTP fallbacks, 2 dials;
-  sent 41 KiB; 1 connection ended by the backend or the network; 2 connections replaced at the lowered age`: every 10
+  sent 41 KiB; 1 connection ended by the backend or the network; 2 connections replaced at the lowered age; 4
+  background requests sent over HTTP`: every 10
   minutes, unless `CODEX_TRANSPORT=http` (see [API behavior](api.md#codex-websocket-transport)), and only when something
   happened: requests sent as a delta (`previous_response_id` plus the new items) or in full (of them, the ones whose
   conversation had a reply to continue but whose history or output no longer matched it), requests that found the

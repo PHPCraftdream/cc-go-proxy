@@ -89,6 +89,8 @@ type WSStats struct {
 	// them); Early those replaced ahead of the learned limit.
 	Lost  int
 	Early int
+	// Side counts requests that ended in a learned side message and were left to HTTP.
+	Side int
 }
 
 type wsManagerEntry struct {
@@ -115,7 +117,11 @@ type WSManager struct {
 	lifetimes map[string]*wsLifetime
 	// OnLimit is called (without the manager's lock) when a connection age limit
 	// is learned or changes.
-	OnLimit      func(WSLimit)
+	OnLimit func(WSLimit)
+	// OnSide is called (without the lock) when a message is learned as a side
+	// request's (wsside.go); side holds the hashes of those messages.
+	OnSide       func(WSSide)
+	side         map[uint64]struct{}
 	now          func() time.Time
 	maxEntries   int
 	maxAge       time.Duration
@@ -459,6 +465,7 @@ func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation 
 					div.Since = m.now().Sub(chain.done)
 				}
 				info.Divergence = div
+				m.learnSide(chain, div)
 			}
 			fallback = true
 		}

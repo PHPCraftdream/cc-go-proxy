@@ -100,6 +100,14 @@ name and arguments (compared as JSON values), the same encrypted reasoning. Anyt
 branch, an edited or dropped item) is sent in full on the same connection, with the reason in the log. Requests without
 a cache key (`metadata.user_id`) use HTTP.
 
+With `store: false` the backend keeps only the latest response of a connection, so a request that is not continued by
+the next one costs the chain. Claude Code sends such background requests (a short fixed user message after the
+conversation's history, with the same system prompt and tools); answered on the websocket they become the latest
+response, and the conversation's next request, which holds neither the message nor its reply, would go out in full
+(2-4 MiB). ccgp learns the message from that one divergence (the chain's last item is a user message of at most 8 KiB
+and its reply is not in the new request; an edited message whose reply is still there is not learned) and from then on
+sends requests that end in it over HTTP (zstd-compressed), so the websocket chain only holds the conversation.
+
 A connection belongs to one endpoint, one account and one way out (proxy): two accounts never share one, the login is
 checked on every request exactly as for HTTP (a refresh only when the token is due), and after a logout or an account
 switch the old connections are closed. HTTP is the fallback. A request that finds its conversation's connection busy
