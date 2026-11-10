@@ -67,6 +67,9 @@ type WSInfo struct {
 	Reason    string
 	ConnAge   time.Duration
 	DialTime  time.Duration
+	// Limit is the backend's connection age the manager learned (0: not known),
+	// set when Reason says a connection was replaced ahead of it.
+	Limit time.Duration
 }
 
 // WSStats counts the exchanges of a manager.
@@ -77,6 +80,10 @@ type WSStats struct {
 	Fallbacks int
 	Dials     int
 	SentBytes int64
+	// Lost counts connections the peer or the network ended (we did not close
+	// them); Early those replaced ahead of the learned limit.
+	Lost  int
+	Early int
 }
 
 type wsManagerEntry struct {
@@ -96,10 +103,14 @@ type wsManagerEntry struct {
 // WSManager keeps one websocket per conversation bucket and the chain state that
 // lets a later request be sent as a delta.
 type WSManager struct {
-	mu           sync.Mutex
-	entries      map[string]*wsManagerEntry
-	stats        WSStats
-	closing      int
+	mu        sync.Mutex
+	entries   map[string]*wsManagerEntry
+	stats     WSStats
+	closing   int
+	lifetimes map[string]*wsLifetime
+	// OnLimit is called (without the manager's lock) when a connection age limit
+	// is learned or changes.
+	OnLimit      func(WSLimit)
 	now          func() time.Time
 	maxEntries   int
 	maxAge       time.Duration
@@ -165,6 +176,9 @@ func (m *WSManager) initLocked() {
 	}
 	if m.disabled == nil {
 		m.disabled = make(map[string]time.Time)
+	}
+	if m.lifetimes == nil {
+		m.lifetimes = make(map[string]*wsLifetime)
 	}
 	if m.ctx == nil {
 		m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -271,6 +285,8 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 	var needsDial bool
 	var generation uint64
 	var evicted *WSConn
+	var lost *WSConn
+	var learnedLimit time.Duration
 
 	m.mu.Lock()
 	if m.closed {
@@ -289,11 +305,18 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 		return nil, WSInfo{}, ErrWSBusy
 	}
 	if entry != nil && entry.conn != nil {
+		limit, learned := m.ageLimitLocked(owner, now)
 		switch {
 		case entry.conn.Err() != nil:
 			reason = "connection broken"
-		case now.Sub(entry.dialedAt) > m.maxAge:
+			lost = entry.conn
+		case now.Sub(entry.dialedAt) > limit:
 			reason = "connection too old"
+			if learned {
+				reason = "ahead of backend limit"
+				learnedLimit = m.lifetimes[owner].limit
+				m.stats.Early++
+			}
 		case now.Sub(entry.lastUse) > m.maxIdle:
 			reason = "connection too old"
 		default:
@@ -367,6 +390,7 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 	if evicted != nil {
 		m.closeTracked(evicted)
 	}
+	m.noteLost(owner, lost)
 
 	snapshot := req // not modified by the caller while the exchange runs; the chain keeps only hashes
 	if needsDial {
@@ -403,7 +427,7 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 		if reason == "" {
 			reason = "new connection"
 		}
-		info := WSInfo{Mode: "full", Reused: false, Reason: reason, ConnAge: connAge, DialTime: dialTime}
+		info := WSInfo{Mode: "full", Reused: false, Reason: reason, ConnAge: connAge, DialTime: dialTime, Limit: learnedLimit}
 		return m.send(ctx, entry, generation, conn, nil, snapshot, info)
 	}
 
@@ -567,6 +591,7 @@ func (m *WSManager) releaseWithoutExchange(entry *wsManagerEntry, generation uin
 }
 
 func (m *WSManager) dropLease(entry *wsManagerEntry, generation uint64, conn *WSConn) {
+	m.noteLost(entry.owner, conn)
 	m.mu.Lock()
 	removed := m.entries[entry.key] == entry && entry.busy && entry.generation == generation && entry.conn == conn
 	if removed {
@@ -583,6 +608,7 @@ func (m *WSManager) dropLease(entry *wsManagerEntry, generation uint64, conn *WS
 }
 
 func (m *WSManager) finishLease(entry *wsManagerEntry, generation uint64, conn *WSConn, req *Request, result WSResult, retain bool) {
+	m.noteLost(entry.owner, conn)
 	var chain *WSChain
 	if retain {
 		retain = result.Completed && conn.Err() == nil
@@ -633,7 +659,8 @@ func (m *WSManager) janitor(ctx context.Context, done chan struct{}, interval ti
 }
 
 func (m *WSManager) cleanIdle() {
-	var closeList []*WSConn
+	var closeList, lostList []*WSConn
+	var lostOwners []string
 	m.mu.Lock()
 	now := m.now()
 	for key, entry := range m.entries {
@@ -644,7 +671,12 @@ func (m *WSManager) cleanIdle() {
 		if !dead && entry.busy {
 			continue
 		}
-		if dead || now.Sub(entry.lastUse) > m.maxIdle || now.Sub(entry.dialedAt) > m.maxAge {
+		limit, _ := m.ageLimitLocked(entry.owner, now)
+		if dead || now.Sub(entry.lastUse) > m.maxIdle || now.Sub(entry.dialedAt) > limit {
+			if dead {
+				lostList = append(lostList, entry.conn)
+				lostOwners = append(lostOwners, entry.owner)
+			}
 			delete(m.entries, key)
 			entry.generation++
 			entry.chain = nil
@@ -653,6 +685,9 @@ func (m *WSManager) cleanIdle() {
 		}
 	}
 	m.mu.Unlock()
+	for i, conn := range lostList {
+		m.noteLost(lostOwners[i], conn)
+	}
 	for _, conn := range closeList {
 		m.closeTracked(conn)
 	}
@@ -725,3 +760,45 @@ func (b *wsManagerBody) Close() error {
 }
 
 var _ io.ReadCloser = (*wsManagerBody)(nil)
+
+// ageLimitLocked is the age a connection of owner is replaced at: the default,
+// or ahead of the backend's limit when one was learned (learned = true then).
+func (m *WSManager) ageLimitLocked(owner string, now time.Time) (limit time.Duration, learned bool) {
+	limit = m.maxAge
+	if l := m.lifetimes[owner]; l != nil {
+		if backend := l.current(now); backend > 0 {
+			if after := wsReplaceAfter(backend); after < limit {
+				return after, true
+			}
+		}
+	}
+	return limit, false
+}
+
+// noteLost counts a connection the peer ended (once per connection) and learns
+// the backend's age limit from it.
+func (m *WSManager) noteLost(owner string, conn *WSConn) {
+	age, status, ok := conn.TakePeerLost()
+	if !ok {
+		return
+	}
+	m.observeLost(owner, age, status)
+}
+
+// observeLost takes a break of a connection of the given age.
+func (m *WSManager) observeLost(owner string, age time.Duration, status int) {
+	m.mu.Lock()
+	m.initLocked()
+	m.stats.Lost++
+	l := m.lifetimes[owner]
+	if l == nil {
+		l = &wsLifetime{}
+		m.lifetimes[owner] = l
+	}
+	limit, samples, changed := l.observe(age, m.now())
+	notify := m.OnLimit
+	m.mu.Unlock()
+	if changed && notify != nil {
+		notify(WSLimit{Limit: limit, ReplaceAfter: wsReplaceAfter(limit), Samples: samples, Status: status})
+	}
+}

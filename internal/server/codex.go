@@ -227,6 +227,9 @@ func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, a
 			}
 			return up
 		}
+		if tr.RetryTransport {
+			noteBreak(tr.Retry, false, true)
+		}
 		if retry != nil && retry.websocket {
 			_, _ = io.Copy(io.Discard, up.Body)
 		}

@@ -77,14 +77,14 @@ func (c *WSChain) Delta(next *Request) (items []any, ok bool, reason string) {
 	hashes := ItemHashes(next)
 	for i := 0; i < min(len(hashes), len(c.hashes)); i++ {
 		if hashes[i] != c.hashes[i] {
-			return nil, false, fmt.Sprintf("history diverged at item %d", i)
+			return nil, false, fmt.Sprintf("history diverged at item %d of %d", i, len(c.hashes))
 		}
 	}
 	if len(hashes) < len(c.hashes) {
-		return nil, false, fmt.Sprintf("history diverged at item %d", len(hashes))
+		return nil, false, fmt.Sprintf("history diverged at item %d of %d", len(hashes), len(c.hashes))
 	}
 	if len(next.Input) < c.inputLen {
-		return nil, false, fmt.Sprintf("history diverged at item %d", len(next.Input))
+		return nil, false, fmt.Sprintf("history diverged at item %d of %d", len(next.Input), len(c.hashes))
 	}
 	cursor, why := c.matchOutput(next.Input, c.inputLen)
 	if why != "" {
@@ -152,8 +152,8 @@ func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 			if !decodeInputItem(input[cursor], &converted) || converted.Type != "function_call" {
 				return cursor, "output mismatch"
 			}
-			if converted.CallID != output.CallID || converted.Name != output.Name || !sameJSON(converted.Arguments, output.Arguments) {
-				return cursor, "tool call changed"
+			if field := toolCallDifference(converted, output); field != "" {
+				return cursor, "tool call changed (" + field + ", " + safeToolName(output.Name) + ")"
 			}
 		default:
 			return cursor, "output mismatch"
@@ -280,4 +280,34 @@ func WSCreatePayload(req *Request, previousResponseID string, input []any) ([]by
 		PreviousResponseID: previousResponseID,
 	}
 	return json.Marshal(payload)
+}
+
+// toolCallDifference names the first field in which the client's tool call
+// differs from the backend's: id, name or arguments; "" when they are the same.
+func toolCallDifference(got, want functionCallItem) string {
+	switch {
+	case got.CallID != want.CallID:
+		return "id"
+	case got.Name != want.Name:
+		return "name"
+	case !sameJSON(got.Arguments, want.Arguments):
+		return "arguments"
+	}
+	return ""
+}
+
+// safeToolName is a tool name fit for a log line: letters, digits and _.:- only,
+// at most 40 characters, "?" for anything else.
+func safeToolName(name string) string {
+	if name == "" || len(name) > 40 {
+		return "?"
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.', r == ':', r == '-':
+		default:
+			return "?"
+		}
+	}
+	return name
 }

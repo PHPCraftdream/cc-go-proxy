@@ -174,14 +174,22 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   lost, 1 silence (health-ping close)`: every 10 minutes, next to the stats line, how the link to the backend behaved in
   the window (nothing is printed in a quiet one). Bodies of 256 KiB or more count for the upload speed. Causes: `connect
   timeout` (TLS handshake or no connection), `connection lost`, `silence (health-ping close)` (about 45 s without a
-  byte), `no reply in time`, `reset`, `other`; a call the client left is not counted. It tells a bad stretch of the
+  byte), `no reply in time`, `reset`, `websocket ended by the backend`, `other`; a stream that broke and was sent
+  again counts too; a call the client left is not counted. It tells a bad stretch of the
   network (slow handshakes and uploads, breaks everywhere) from a slow model (none of them).
-- `upstream websocket [codex]: 12 delta, 3 full, 1 busy, 0 fallbacks, 2 dials; sent 41 KiB`: every 10 minutes, unless
+- `upstream websocket [codex]: the backend ends connections after about 30m1s (2 breaks agree, close status 1001);
+  replacing them after 27m1s`: once, when ccgp has learned from two breaks at the same age when the backend ends
+  connections (see [API behavior](api.md#codex-websocket-transport)); from then on connections are replaced ahead of it.
+- `upstream websocket [codex]: 12 delta, 3 full, 1 busy, 0 fallbacks, 2 dials; sent 41 KiB; 1 connection ended by the
+  backend or the network; 2 connections replaced ahead of the backend's limit`: every 10 minutes, unless
   `CODEX_TRANSPORT=http` (see [API behavior](api.md#codex-websocket-transport)), and only when something happened:
   requests sent as a delta (`previous_response_id` plus the new items) or in full, requests that found the
   conversation's connection busy, deltas refused for a changed history, connections opened, and the bytes sent. A request's
   summary then carries `transport websocket (delta: sent 3 KiB of 4.7 MiB)`, `transport websocket (full: new connection,
-  sent 4.7 MiB)` or `fallback to HTTP (<reason>)`.
+  sent 4.7 MiB)` or `fallback to HTTP (<reason>)`. A full request names why: `new connection`, `connection broken`,
+  `replaced ahead of the backend's 30m limit`, `history diverged at item 412 of 1079` (the item that differs, of the items
+  the backend holds: a deep one is a rewritten history, one near the end a branch), `tool call changed (arguments,
+  Read)` (what differs and in which tool), `assistant text changed`, `reasoning dropped`.
 - `upstream speed [codex]: first token / whole reply, median: http 2.1s / 14s (40 replies), websocket full 2.3s / 15s
   (3 replies), websocket delta 1.2s / 11s (12 replies)`: every 10 minutes, when Codex replies completed: the median time
   to the first token and to the end of the reply, per transport. Medians over different prompts: a trend to read over
