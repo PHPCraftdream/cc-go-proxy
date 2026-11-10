@@ -102,7 +102,7 @@ func TestWSChainPrefixCompactionAndReasoningConversion(t *testing.T) {
 	}
 
 	compacted := wsRequest(t, wsBody(wsUser("question"), ""))
-	if _, ok, reason := chain.Delta(compacted); ok || reason != "history diverged at item 0" {
+	if _, ok, reason := chain.Delta(compacted); ok || reason != "history diverged at item 0 of 2" {
 		t.Fatalf("compacted divergent history = %v, %q", ok, reason)
 	}
 }
@@ -112,7 +112,7 @@ func TestWSChainBranchesControlsAndOutputMismatch(t *testing.T) {
 	base := wsRequest(t, baseBody)
 	chain := NewChain(base, "resp", []json.RawMessage{json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}`)})
 	branch := wsRequest(t, wsBody(wsUser("branch"), `"system":"system","tools":[{"name":"f","input_schema":{"type":"object"}}],`))
-	if _, ok, reason := chain.Delta(branch); ok || reason != "history diverged at item 1" {
+	if _, ok, reason := chain.Delta(branch); ok || reason != "history diverged at item 1 of 2" {
 		t.Fatalf("same-key branch = %v, %q; want history divergence", ok, reason)
 	}
 
@@ -183,8 +183,8 @@ func TestWSChainOutputSequenceCountAndMalformed(t *testing.T) {
 		{"present reasoning encrypted content must match", []json.RawMessage{reasoningOutput}, []any{reasoningItem{Type: "reasoning", EncryptedContent: "different"}, userNext}, "reasoning differs"},
 		{"reasoning cannot skip input reasoning before message", []json.RawMessage{messageOutput}, []any{reasoning, assistantMessage("after"), userNext}, mismatch},
 		{"function arguments whitespace and key order may vary", []json.RawMessage{json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{\"y\":2,\"x\":1}"}`)}, []any{call2("lookup", `{ "x" : 1, "y": 2 }`), userNext}, ""},
-		{"function arguments must match", []json.RawMessage{callOutput}, []any{call2("lookup", `{"x":2}`), userNext}, "tool call changed"},
-		{"function name must match", []json.RawMessage{callOutput}, []any{call2("other", `{"x":1}`), userNext}, "tool call changed"},
+		{"function arguments must match", []json.RawMessage{callOutput}, []any{call2("lookup", `{"x":2}`), userNext}, "tool call changed (arguments, lookup)"},
+		{"function name must match", []json.RawMessage{callOutput}, []any{call2("other", `{"x":1}`), userNext}, "tool call changed (name, lookup)"},
 		{"empty arguments equal an empty object", []json.RawMessage{json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"lookup","arguments":""}`)}, []any{call2("lookup", `{}`), userNext}, ""},
 		{"function call cannot reorder input reasoning", []json.RawMessage{callOutput, reasoningOutput}, []any{reasoning, call, userNext}, mismatch},
 		{"message and call type order must match", []json.RawMessage{messageOutput, callOutput}, []any{call, assistantMessage("after"), userNext}, mismatch},
@@ -253,8 +253,8 @@ func TestWSChainRejectsMismatchedFunctionCallID(t *testing.T) {
 	chain := NewChain(base, "resp-call", []json.RawMessage{json.RawMessage(`{"type":"function_call","call_id":"expected","name":"lookup","arguments":"{}"}`)})
 	assistant := `{"role":"assistant","content":[{"type":"tool_use","id":"different","name":"lookup","input":{}}]}`
 	next := wsRequest(t, wsBody(wsUser("call")+`,`+assistant, controls))
-	if _, ok, reason := chain.Delta(next); ok || reason != "tool call changed" {
-		t.Fatalf("mismatched call id Delta() = %v, %q; want tool call changed", ok, reason)
+	if _, ok, reason := chain.Delta(next); ok || reason != "tool call changed (id, lookup)" {
+		t.Fatalf("mismatched call id Delta() = %v, %q; want tool call changed (id, lookup)", ok, reason)
 	}
 }
 
@@ -449,4 +449,16 @@ func inputKind(item any) string {
 		return ""
 	}
 	return head.Type
+}
+
+func TestSafeToolName(t *testing.T) {
+	for name, want := range map[string]string{
+		"Read": "Read", "mcp__srv__do-it.v2:x": "mcp__srv__do-it.v2:x",
+		"": "?", "has space": "?", "path/../x": "?", "a\nb": "?", "кириллица": "?",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "?", // 41 characters
+	} {
+		if got := safeToolName(name); got != want {
+			t.Errorf("safeToolName(%q) = %q, want %q", name, got, want)
+		}
+	}
 }

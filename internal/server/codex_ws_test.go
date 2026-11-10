@@ -506,6 +506,7 @@ func TestCodexWebsocketBrokenBeforeContentRetriesFullFrameWithoutHTTP(t *testing
 	brokenBackoff = []time.Duration{time.Millisecond}
 	t.Cleanup(func() { brokenBackoff = oldBreaks })
 	h := newCodexWSTestHarness(t, backend, "websocket")
+	linkHealth.Take() // start from nothing
 	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"ws-retry-session"},"system":"retry system","messages":[{"role":"user","content":"retry whole conversation"}]}`
 	status, response := h.post(t, body)
 	if status != fiber.StatusOK || !strings.Contains(response, "message_stop") || strings.Contains(response, "event: error") {
@@ -526,6 +527,10 @@ func TestCodexWebsocketBrokenBeforeContentRetriesFullFrameWithoutHTTP(t *testing
 	}
 	if strings.Contains(h.access.String(), "fallback to HTTP") || !strings.Contains(h.stream.String(), "upstream retry 1/1") {
 		t.Errorf("retry log/access log = %q / %q", h.stream.String(), h.access.String())
+	}
+	// A break the retry hid from the client still shows in the link line.
+	if link := linkHealth.Take(); !strings.Contains(link, "1 broken call (1 sent again by ccgp, 0 reached the client): 1 "+causeWSEnded) {
+		t.Errorf("link line after a retried websocket break = %q", link)
 	}
 }
 

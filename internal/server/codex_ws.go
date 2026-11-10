@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +26,7 @@ func currentCodexWSManager() *codex.WSManager {
 	defer codexWSManagerMu.Unlock()
 	if codexWSManager == nil {
 		codexWSManager = codex.NewWSManager()
+		codexWSManager.OnLimit = logWSLimit
 	}
 	return codexWSManager
 }
@@ -37,14 +39,44 @@ func codexWSStatsManager() *codex.WSManager {
 
 func safeWSReason(reason string) string {
 	switch reason {
-	case "new connection", "connection broken", "connection too old", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch",
+	case "new connection", "connection broken", "connection too old", "ahead of backend limit", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch",
 		"output missing", "assistant text changed", "reasoning dropped", "reasoning differs", "tool call changed":
+		return reason
+	}
+	if wsDivergence.MatchString(reason) || wsToolChange.MatchString(reason) {
 		return reason
 	}
 	if strings.HasPrefix(reason, "history diverged at item ") {
 		return "history diverged"
 	}
 	return "full request"
+}
+
+// The numbers of a divergence and the name of the tool whose call changed are
+// safe to log; nothing else of the history is.
+var (
+	wsDivergence = regexp.MustCompile(`^history diverged at item \d+( of \d+)?$`)
+	wsToolChange = regexp.MustCompile(`^tool call changed \((id|name|arguments)(, ([A-Za-z0-9_.:-]{1,40}|\?))?\)$`)
+)
+
+// logWSLimit tells that the manager learned when the backend ends connections.
+func logWSLimit(l codex.WSLimit) {
+	closeText := "no close frame"
+	if l.Status >= 0 {
+		closeText = fmt.Sprintf("close status %d", l.Status)
+	}
+	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: the backend ends connections after about %s (%d breaks agree, %s); replacing them after %s\n",
+		time.Now().Format("15:04:05"), roundDur(l.Limit), l.Samples, closeText, roundDur(l.ReplaceAfter))
+}
+
+// wsReasonText is the reason for the request line; a replacement ahead of the
+// learned limit says which limit.
+func wsReasonText(info codex.WSInfo) string {
+	reason := safeWSReason(info.Reason)
+	if reason == "ahead of backend limit" && info.Limit > 0 {
+		return "replaced ahead of the backend's " + roundDur(info.Limit) + " limit"
+	}
+	return reason
 }
 
 func safeWSFallbackReason(err error) string {
@@ -104,7 +136,7 @@ func (u *upstreamTrace) noteWebsocket(info codex.WSInfo, bodyBytes int) {
 	if info.Mode == "delta" {
 		transport = fmt.Sprintf("transport websocket (delta: sent %s of %s)", frameSize, sizeString(bodyBytes))
 	} else {
-		transport = fmt.Sprintf("transport websocket (full: %s, sent %s)", safeWSReason(info.Reason), frameSize)
+		transport = fmt.Sprintf("transport websocket (full: %s, sent %s)", wsReasonText(info), frameSize)
 	}
 	conn := "conn new (dial " + roundDur(info.DialTime) + ")"
 	if info.Reused {
@@ -207,11 +239,23 @@ func writeCodexWebsocketStats(w io.Writer, now time.Time) {
 	}
 	stats := manager.TakeStats()
 	fallbacks := int64(stats.Fallbacks) + codexWSFallbacks.Swap(0)
-	if stats.Delta+stats.Full+stats.Busy+int(fallbacks)+stats.Dials == 0 && stats.SentBytes == 0 {
+	if stats.Delta+stats.Full+stats.Busy+int(fallbacks)+stats.Dials+stats.Lost+stats.Early == 0 && stats.SentBytes == 0 {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "[%s] upstream websocket [codex]: %s, %s, %s, %s, %s; sent %s\n",
-		now.Format("15:04:05"), count(stats.Delta, "delta", "delta"), count(stats.Full, "full", "full"),
-		count(stats.Busy, "busy", "busy"), count(int(fallbacks), "fallback", "fallbacks"), count(stats.Dials, "dial", "dials"),
+	_, _ = fmt.Fprintf(w, "[%s] upstream websocket [codex]: %s\n", now.Format("15:04:05"), wsStatsText(stats, int(fallbacks)))
+}
+
+// wsStatsText is the body of the periodic websocket line.
+func wsStatsText(stats codex.WSStats, fallbacks int) string {
+	text := fmt.Sprintf("%s, %s, %s, %s, %s; sent %s",
+		count(stats.Delta, "delta", "delta"), count(stats.Full, "full", "full"),
+		count(stats.Busy, "busy", "busy"), count(fallbacks, "fallback", "fallbacks"), count(stats.Dials, "dial", "dials"),
 		sizeString(int(stats.SentBytes)))
+	if stats.Lost > 0 {
+		text += "; " + count(stats.Lost, "connection", "connections") + " ended by the backend or the network"
+	}
+	if stats.Early > 0 {
+		text += "; " + count(stats.Early, "connection", "connections") + " replaced ahead of the backend's limit"
+	}
+	return text
 }

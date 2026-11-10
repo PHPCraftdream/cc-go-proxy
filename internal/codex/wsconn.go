@@ -91,6 +91,11 @@ type WSConn struct {
 	active *wsExchange
 	err    error
 	result WSResult
+
+	// The peer (or the network) ended the connection; we did not close it.
+	lostAt     time.Time
+	lostStatus int // websocket close status, -1 when there was none
+	lostTaken  bool
 }
 
 type wsExchange struct {
@@ -446,6 +451,23 @@ func (c *WSConn) Age() time.Duration {
 	return time.Since(c.started)
 }
 
+// TakePeerLost reports once that the other side (or the network) ended the
+// connection, how old it was then and the websocket close status (-1: none, the
+// connection just dropped). A connection we closed (a cancel, a keepalive
+// timeout, Close) is not reported.
+func (c *WSConn) TakePeerLost() (age time.Duration, status int, ok bool) {
+	if c == nil {
+		return 0, 0, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lostAt.IsZero() || c.lostTaken {
+		return 0, 0, false
+	}
+	c.lostTaken = true
+	return c.lostAt.Sub(c.started), c.lostStatus, true
+}
+
 // Err reports the safe terminal connection error, if any.
 func (c *WSConn) Err() error {
 	if c == nil {
@@ -495,6 +517,8 @@ func (c *WSConn) readPump() {
 			ex := c.active
 			if !c.closed {
 				c.closed = true
+				c.lostAt = time.Now()
+				c.lostStatus = int(websocket.CloseStatus(err))
 				c.err = errWSConnection
 				c.active = nil
 				c.busy = false

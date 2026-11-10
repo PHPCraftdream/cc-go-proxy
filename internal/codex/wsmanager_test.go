@@ -462,7 +462,7 @@ func TestWSManagerDivergentHistoryFallsBackOnSameConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := backend.next(t)
-	if info.Mode != "full" || !info.Reused || info.Reason != "history diverged at item 0" || first.connection != second.connection {
+	if info.Mode != "full" || !info.Reused || info.Reason != "history diverged at item 0 of 1" || first.connection != second.connection {
 		t.Fatalf("divergent fallback info=%+v connections %d/%d", info, first.connection, second.connection)
 	}
 	if previous := wsManagerPrevious(second); previous != "" {

@@ -25,10 +25,11 @@ const (
 	causePing    = "silence (health-ping close)"
 	causeNoReply = "no reply in time"
 	causeReset   = "reset"
+	causeWSEnded = "websocket ended by the backend"
 	causeOther   = "other"
 )
 
-var linkCauses = []string{causeConnect, causeLost, causePing, causeNoReply, causeReset, causeOther}
+var linkCauses = []string{causeConnect, causeLost, causePing, causeNoReply, causeReset, causeWSEnded, causeOther}
 
 // linkStats says how the link to the Codex backend behaved since the last Take:
 // how long the TLS handshakes took, how fast big bodies went out, what broke
@@ -137,6 +138,8 @@ func linkCause(msg string, ping bool) (cause string, ok bool) {
 		return causeNoReply, true
 	case strings.Contains(m, "client connection lost"):
 		return causeLost, true
+	case strings.Contains(m, "codex websocket: connection failed"):
+		return causeWSEnded, true
 	case strings.Contains(m, "forcibly closed"), strings.Contains(m, "connection reset"),
 		strings.Contains(m, "broken pipe"), strings.Contains(m, "unexpected eof"), strings.HasSuffix(m, "eof"):
 		return causeReset, true
