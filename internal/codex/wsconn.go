@@ -400,6 +400,8 @@ func (c *WSConn) Do(ctx context.Context, frame []byte) (*http.Response, error) {
 		return nil, ctx.Err()
 	}
 
+	// A failed Write did not hand the whole frame to the socket; the backend acts
+	// only on a complete message, so the caller may send the request elsewhere.
 	if err := c.conn.Write(ctx, websocket.MessageText, frame); err != nil {
 		safeErr := safeContextError(ctx, err, errWSConnection)
 		c.failExchange(ex, safeErr)

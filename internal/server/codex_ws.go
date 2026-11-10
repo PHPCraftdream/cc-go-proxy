@@ -146,6 +146,17 @@ func (u *upstreamTrace) noteWSCanceled(err error) {
 	u.mu.Unlock()
 }
 
+// requestCall sends the request over the websocket, or over HTTP when the
+// websocket fails before the request reached the backend. Where a request may
+// go again:
+//   - an error from the manager means the backend has no complete request: the
+//     dial failed, or the frame's write did (a websocket message is
+//     length-framed, the backend does not act on a part of one). HTTP sends it.
+//   - the frame went out and the connection broke before any content: runUpstream
+//     asks again (brokenBackoff), the same rule as for an HTTP request broken
+//     before its reply. At worst the backend ran it twice; the client sees one.
+//   - content reached the client: the stream ends with an error, never a second
+//     inference (codex.Translator allows no retry after the first block).
 func (r *codexRetry) requestCall(ctx context.Context, trace *upstreamTrace, bodyBytes int) (*http.Response, error) {
 	if !r.websocket {
 		if err := ctx.Err(); err != nil {

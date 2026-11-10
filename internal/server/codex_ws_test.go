@@ -529,6 +529,48 @@ func TestCodexWebsocketBrokenBeforeContentRetriesFullFrameWithoutHTTP(t *testing
 	}
 }
 
+// Once content reached the client, a broken websocket ends the stream with an
+// error: no second inference, neither over the websocket nor over HTTP.
+func TestCodexWebsocketBrokenAfterContentIsNotAskedAgain(t *testing.T) {
+	oldSlowTotal := slowTotal
+	slowTotal = 0
+	t.Cleanup(func() { slowTotal = oldSlowTotal })
+	var upgrades, posts, frames atomic.Int32
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			posts.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			okStream(w)
+			return
+		}
+		upgrades.Add(1)
+		conn := acceptCodexWSTest(t, w, r)
+		if conn == nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		_ = readCodexWSTestFrame(t, conn)
+		frames.Add(1)
+		writeCodexWSTestEvents(t, conn,
+			`{"type":"response.created","response":{"id":"cut-response"}}`,
+			`{"type":"response.output_item.added","item":{"id":"msg-1","type":"message","role":"assistant"}}`,
+			`{"type":"response.output_text.delta","item_id":"msg-1","delta":"partial answer"}`)
+		_ = conn.CloseNow()
+	})
+	oldBreaks := brokenBackoff
+	brokenBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { brokenBackoff = oldBreaks })
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"ws-cut-session"},"system":"cut system","messages":[{"role":"user","content":"answer at length"}]}`
+	_, response := h.post(t, body)
+	if !strings.Contains(response, "partial answer") || !strings.Contains(response, "event: error") {
+		t.Fatalf("client did not get the partial content and then an error: %q", response)
+	}
+	if upgrades.Load() != 1 || frames.Load() != 1 || posts.Load() != 0 {
+		t.Fatalf("handshakes=%d frames=%d HTTP POSTs=%d after content; want 1, 1, 0 (no second inference)", upgrades.Load(), frames.Load(), posts.Load())
+	}
+}
+
 func TestCodexWebsocketDisconnectCancelsUpstreamAndLogsCancellation(t *testing.T) {
 	upstreamClosed := make(chan struct{}, 1)
 	startFlood := make(chan struct{})
