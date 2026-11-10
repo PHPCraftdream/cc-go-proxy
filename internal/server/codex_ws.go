@@ -37,7 +37,8 @@ func codexWSStatsManager() *codex.WSManager {
 
 func safeWSReason(reason string) string {
 	switch reason {
-	case "new connection", "connection broken", "connection too old", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch":
+	case "new connection", "connection broken", "connection too old", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch",
+		"output missing", "assistant text changed", "reasoning dropped", "reasoning differs", "tool call changed":
 		return reason
 	}
 	if strings.HasPrefix(reason, "history diverged at item ") {
