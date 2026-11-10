@@ -64,6 +64,8 @@ func safeWSFallbackReason(err error) string {
 	switch {
 	case errors.Is(err, codex.ErrWSBusy):
 		return "connection busy"
+	case errors.Is(err, codex.ErrWSToken):
+		return "no usable login"
 	case errors.Is(err, codex.ErrWSUnavailable):
 		return "unavailable"
 	case errors.Is(err, context.Canceled):

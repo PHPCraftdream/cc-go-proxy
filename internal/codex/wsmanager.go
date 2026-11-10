@@ -10,11 +10,14 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
 var (
 	ErrWSBusy        = errWSBusy
 	ErrWSUnavailable = errors.New("codex websocket unavailable")
+	// ErrWSToken: no usable login (logged out, refresh failed); HTTP reports it.
+	ErrWSToken = errors.New("codex websocket: no usable token")
 )
 
 var (
@@ -22,8 +25,39 @@ var (
 	wsManagerMaxAge         = 55 * time.Minute
 	wsManagerMaxIdle        = 10 * time.Minute
 	wsManagerJanitorEvery   = time.Minute
-	wsManagerDisabledFor    = 10 * time.Minute
+	// wsManagerDisabledFor: the endpoint said it has no websocket (400, 404, 405, 410, 426, 501).
+	wsManagerDisabledFor = 10 * time.Minute
+	// wsManagerBackoffFor: any other failed dial (401, 403, network, TLS, timeout):
+	// not proof of "unsupported", only a pause so each request does not pay for it.
+	wsManagerBackoffFor = 30 * time.Second
 )
+
+// wsUnsupported tells handshake statuses that mean "no websocket here".
+func wsUnsupported(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusGone,
+		http.StatusUpgradeRequired, http.StatusNotImplemented:
+		return true
+	}
+	return false
+}
+
+// wsOwnerKey is who a connection belongs to: endpoint, account and way out.
+// Kept in memory only (the proxy key may hold a password).
+func wsOwnerKey(baseURL, account string, choice proxydial.Choice) string {
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+	return baseURL + "\x00" + account + "\x00" + choice.Key()
+}
+
+// wsAccount names the login: its account id, else its token file.
+func wsAccount(s *oauth.Session, tok *oauth.Tokens) string {
+	if tok != nil && tok.AccountID != "" {
+		return "account:" + tok.AccountID
+	}
+	return "file:" + s.Store.Path
+}
 
 // WSInfo says how a request went out.
 type WSInfo struct {
@@ -46,6 +80,10 @@ type WSStats struct {
 }
 
 type wsManagerEntry struct {
+	key        string // owner + bucket: the map key
+	owner      string
+	session    *oauth.Session
+	account    string
 	bucket     string
 	conn       *WSConn
 	chain      *WSChain
@@ -68,6 +106,7 @@ type WSManager struct {
 	maxIdle      time.Duration
 	janitorEvery time.Duration
 	disabledFor  time.Duration
+	backoffFor   time.Duration
 	ctx          context.Context
 	cancel       context.CancelFunc
 	janitorDone  chan struct{}
@@ -75,7 +114,7 @@ type WSManager struct {
 	closeDone    chan struct{}
 	closed       bool
 	dials        sync.WaitGroup
-	disabledTil  time.Time
+	disabled     map[string]time.Time // owner -> no websocket until
 }
 
 // NewWSManager returns an empty manager; the zero value works as well.
@@ -117,6 +156,15 @@ func (m *WSManager) initLocked() {
 	}
 	if m.disabledFor <= 0 {
 		m.disabledFor = 10 * time.Minute
+	}
+	if m.backoffFor <= 0 {
+		m.backoffFor = wsManagerBackoffFor
+	}
+	if m.backoffFor <= 0 {
+		m.backoffFor = 30 * time.Second
+	}
+	if m.disabled == nil {
+		m.disabled = make(map[string]time.Time)
 	}
 	if m.ctx == nil {
 		m.ctx, m.cancel = context.WithCancel(context.Background())
@@ -182,6 +230,24 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 	if req == nil {
 		return nil, WSInfo{}, errors.New("codex websocket: nil request")
 	}
+	if s == nil {
+		return nil, WSInfo{}, fmt.Errorf("%w: %w", ErrWSUnavailable, ErrWSToken)
+	}
+	// The login is checked on every use, as the HTTP path does: after a logout or
+	// a failed refresh no connection of this session is used (they are closed),
+	// and a new account never gets a connection of the old one.
+	tok, err := s.Token(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, WSInfo{}, ctx.Err()
+		}
+		m.closeSessionExcept(s, "")
+		return nil, WSInfo{}, fmt.Errorf("%w: %w", ErrWSUnavailable, ErrWSToken)
+	}
+	account := wsAccount(s, tok)
+	m.closeSessionExcept(s, account)
+	owner := wsOwnerKey(baseURL, account, proxydial.ChoiceFor(ctx))
+	key := owner + "\x00" + bucket
 
 	m.mu.Lock()
 	m.initLocked()
@@ -189,7 +255,7 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 		m.mu.Unlock()
 		return nil, WSInfo{}, ErrWSUnavailable
 	}
-	if !m.disabledTil.IsZero() && m.now().Before(m.disabledTil) {
+	if m.disabledLocked(owner) {
 		m.mu.Unlock()
 		return nil, WSInfo{}, ErrWSUnavailable
 	}
@@ -211,12 +277,12 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 		m.mu.Unlock()
 		return nil, WSInfo{}, ErrWSUnavailable
 	}
-	if !m.disabledTil.IsZero() && m.now().Before(m.disabledTil) {
+	if m.disabledLocked(owner) {
 		m.mu.Unlock()
 		return nil, WSInfo{}, ErrWSUnavailable
 	}
 	now := m.now()
-	entry = m.entries[bucket]
+	entry = m.entries[key]
 	if entry != nil && entry.busy {
 		m.stats.Busy++
 		m.mu.Unlock()
@@ -269,7 +335,7 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 					}
 					return nil, WSInfo{}, ErrWSBusy
 				}
-				delete(m.entries, oldest.bucket)
+				delete(m.entries, oldest.key)
 				oldest.generation++
 				evicted = oldest.conn
 				if evicted != nil {
@@ -283,8 +349,8 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 				}
 				return nil, WSInfo{}, ErrWSBusy
 			}
-			entry = &wsManagerEntry{bucket: bucket}
-			m.entries[bucket] = entry
+			entry = &wsManagerEntry{key: key, owner: owner, session: s, account: account, bucket: bucket}
+			m.entries[key] = entry
 		}
 		entry.busy = true
 		entry.generation++
@@ -312,13 +378,13 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 		stopManagerCancel()
 		cancel()
 		if dialErr != nil {
-			dialErr = m.handleDialError(ctx, dialErr)
+			dialErr = m.handleDialError(ctx, owner, dialErr)
 			m.failReservation(entry, generation)
 			m.dials.Done()
 			return nil, WSInfo{Mode: "full", Reason: reason, DialTime: dialTime}, dialErr
 		}
 		m.mu.Lock()
-		if m.closed || m.entries[bucket] != entry || !entry.busy || entry.generation != generation {
+		if m.closed || m.entries[key] != entry || !entry.busy || entry.generation != generation {
 			m.mu.Unlock()
 			_ = newConn.Close()
 			m.dials.Done()
@@ -411,7 +477,11 @@ func (m *WSManager) closeTracked(conn *WSConn) {
 	m.mu.Unlock()
 }
 
-func (m *WSManager) handleDialError(ctx context.Context, err error) error {
+// handleDialError decides how long owner goes without a websocket after a failed
+// dial: disabledFor when the endpoint said it has none, nothing for 429 and 5xx
+// (passing trouble; this request still goes over HTTP), backoffFor otherwise.
+// A canceled request says nothing about the endpoint.
+func (m *WSManager) handleDialError(ctx context.Context, owner string, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -419,34 +489,77 @@ func (m *WSManager) handleDialError(ctx context.Context, err error) error {
 		return err
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	if ctx.Err() != nil {
-		cancelErr := ctx.Err()
-		m.mu.Unlock()
-		return cancelErr
+		return ctx.Err()
 	}
 	var handshake *WSHandshakeError
-	if errors.As(err, &handshake) && (handshake.Status == http.StatusTooManyRequests || handshake.Status >= 500) {
-		m.mu.Unlock()
+	status := 0
+	if errors.As(err, &handshake) {
+		status = handshake.Status
+	}
+	if status == http.StatusTooManyRequests || status >= 500 && !wsUnsupported(status) {
 		return err
 	}
+	pause := m.backoffFor
+	if wsUnsupported(status) {
+		pause = m.disabledFor
+	}
 	if !m.closed {
-		m.disabledTil = m.now().Add(m.disabledFor)
+		m.disabled[owner] = m.now().Add(pause)
+	}
+	return fmt.Errorf("%w: %w", ErrWSUnavailable, err)
+}
+
+// disabledLocked reports that owner is in a no-websocket window; expired
+// windows are dropped.
+func (m *WSManager) disabledLocked(owner string) bool {
+	until, ok := m.disabled[owner]
+	if !ok {
+		return false
+	}
+	if m.now().Before(until) {
+		return true
+	}
+	delete(m.disabled, owner)
+	return false
+}
+
+// closeSessionExcept closes the idle connections of s that belong to another
+// account than account ("" = every one of them): after a logout or an account
+// switch no old connection is left open. Busy ones end with their exchange.
+func (m *WSManager) closeSessionExcept(s *oauth.Session, account string) {
+	var closeList []*WSConn
+	m.mu.Lock()
+	for key, entry := range m.entries {
+		if entry.session != s || entry.account == account || entry.busy {
+			continue
+		}
+		delete(m.entries, key)
+		entry.generation++
+		entry.chain = nil
+		if entry.conn != nil {
+			m.closing++
+			closeList = append(closeList, entry.conn)
+		}
 	}
 	m.mu.Unlock()
-	return fmt.Errorf("%w: %v", ErrWSUnavailable, err)
+	for _, conn := range closeList {
+		m.closeTracked(conn)
+	}
 }
 
 func (m *WSManager) failReservation(entry *wsManagerEntry, generation uint64) {
 	m.mu.Lock()
-	if m.entries[entry.bucket] == entry && entry.busy && entry.generation == generation {
-		delete(m.entries, entry.bucket)
+	if m.entries[entry.key] == entry && entry.busy && entry.generation == generation {
+		delete(m.entries, entry.key)
 	}
 	m.mu.Unlock()
 }
 
 func (m *WSManager) releaseWithoutExchange(entry *wsManagerEntry, generation uint64, conn *WSConn) {
 	m.mu.Lock()
-	if !m.closed && m.entries[entry.bucket] == entry && entry.busy && entry.generation == generation && entry.conn == conn {
+	if !m.closed && m.entries[entry.key] == entry && entry.busy && entry.generation == generation && entry.conn == conn {
 		entry.busy = false
 		entry.lastUse = m.now()
 	}
@@ -455,9 +568,9 @@ func (m *WSManager) releaseWithoutExchange(entry *wsManagerEntry, generation uin
 
 func (m *WSManager) dropLease(entry *wsManagerEntry, generation uint64, conn *WSConn) {
 	m.mu.Lock()
-	removed := m.entries[entry.bucket] == entry && entry.busy && entry.generation == generation && entry.conn == conn
+	removed := m.entries[entry.key] == entry && entry.busy && entry.generation == generation && entry.conn == conn
 	if removed {
-		delete(m.entries, entry.bucket)
+		delete(m.entries, entry.key)
 		entry.generation++
 		m.closing++
 	}
@@ -478,7 +591,7 @@ func (m *WSManager) finishLease(entry *wsManagerEntry, generation uint64, conn *
 		}
 	}
 	m.mu.Lock()
-	if m.entries[entry.bucket] != entry || !entry.busy || entry.generation != generation || entry.conn != conn {
+	if m.entries[entry.key] != entry || !entry.busy || entry.generation != generation || entry.conn != conn {
 		m.mu.Unlock()
 		return
 	}
@@ -489,7 +602,7 @@ func (m *WSManager) finishLease(entry *wsManagerEntry, generation uint64, conn *
 		m.mu.Unlock()
 		return
 	}
-	delete(m.entries, entry.bucket)
+	delete(m.entries, entry.key)
 	m.closing++
 	m.mu.Unlock()
 	m.closeTracked(conn)
@@ -523,7 +636,7 @@ func (m *WSManager) cleanIdle() {
 	var closeList []*WSConn
 	m.mu.Lock()
 	now := m.now()
-	for bucket, entry := range m.entries {
+	for key, entry := range m.entries {
 		if entry.conn == nil {
 			continue
 		}
@@ -532,7 +645,7 @@ func (m *WSManager) cleanIdle() {
 			continue
 		}
 		if dead || now.Sub(entry.lastUse) > m.maxIdle || now.Sub(entry.dialedAt) > m.maxAge {
-			delete(m.entries, bucket)
+			delete(m.entries, key)
 			entry.generation++
 			entry.chain = nil
 			m.closing++
