@@ -65,7 +65,7 @@ func safeWSReason(reason string) string {
 // safe to log; nothing else of the history is.
 var (
 	wsDivergence = regexp.MustCompile(`^history diverged at item \d+( of \d+)?$`)
-	wsToolChange = regexp.MustCompile(`^tool call changed \((id|name|arguments)(, ([A-Za-z0-9_.:-]{1,40}|\?))?\)$`)
+	wsToolChange = regexp.MustCompile(`^tool call changed \((id|name|arguments)(, ([A-Za-z0-9_.:-]{1,40}|\?)(, was \d{1,9} B, now \d{1,9} B, first \d{1,9} B and last \d{1,9} B equal)?)?\)$`)
 	wsItemKind   = regexp.MustCompile(`^((assistant message|tool call) missing \(found [a-z_]{1,32}( message)?\)|new item not sendable \([a-z_]{1,32}( message)?\)|output item not compared \([a-z_]{1,32}\))$`)
 )
 
@@ -186,10 +186,25 @@ func logWSSide(s codex.WSSide) {
 
 // noteSideRequest marks a request that skips the websocket because it is a
 // background one.
-func (u *upstreamTrace) noteSideRequest() {
+func (u *upstreamTrace) noteSideRequest(bodyBytes int) {
 	u.mu.Lock()
 	u.transport = "transport http (side request)"
+	u.httpNote = u.httpNoteLocked(bodyBytes)
 	u.mu.Unlock()
+}
+
+// httpNoteLocked names the conversation and the size of a request that went
+// over HTTP in place of the websocket, so its cost can be told per agent.
+func (u *upstreamTrace) httpNoteLocked(bodyBytes int) string {
+	conv := ""
+	if u.conv != "" {
+		conv = "conv " + u.conv
+	}
+	size := ""
+	if bodyBytes > 0 {
+		size = "request " + sizeString(bodyBytes)
+	}
+	return joinNonEmpty(conv, size)
 }
 
 // wsReasonText is the reason for the request line; a replacement at a lowered
@@ -286,8 +301,9 @@ func (u *upstreamTrace) noteWebsocket(info codex.WSInfo, bodyBytes int) {
 	u.mu.Unlock()
 }
 
-func (u *upstreamTrace) noteWSFallback(reason string) {
+func (u *upstreamTrace) noteWSFallback(reason string, bodyBytes int) {
 	u.mu.Lock()
+	u.httpNote = u.httpNoteLocked(bodyBytes)
 	if u.wire != nil && u.wire.Encoding == "ws" {
 		u.wire.Raw = 0
 		u.wire.Sent = 0
@@ -332,7 +348,7 @@ func (r *codexRetry) requestCall(ctx context.Context, trace *upstreamTrace, body
 		}
 		trace.noteWSFailure(info, err)
 		r.websocket = false
-		trace.noteWSFallback(safeWSFallbackReason(err))
+		trace.noteWSFallback(safeWSFallbackReason(err), bodyBytes)
 		return r.callPrepared()
 	}
 	trace.noteWebsocket(info, bodyBytes)

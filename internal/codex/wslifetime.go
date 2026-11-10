@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-// A websocket is replaced at a planned age (wsManagerMaxAge, 25 minutes): the
+// A websocket is replaced at a planned age (wsManagerMaxAge, 20 minutes): the
 // backend ends connections after a fixed age (30 minutes seen), and replacing
 // first keeps a request from meeting the cut. If the backend ends connections
 // younger than planned, again and again, the age is lowered a step at a time

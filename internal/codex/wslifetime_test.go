@@ -15,9 +15,9 @@ var lifetimeT0 = time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
 
 const lifetimeDefault = 25 * time.Minute
 
-func TestWSDefaultAgeIsTwentyFiveMinutes(t *testing.T) {
-	if wsManagerMaxAge != 25*time.Minute {
-		t.Fatalf("default connection age = %s, want 25m", wsManagerMaxAge)
+func TestWSDefaultAgeIsTwentyMinutes(t *testing.T) {
+	if wsManagerMaxAge != 20*time.Minute {
+		t.Fatalf("default connection age = %s, want 20m", wsManagerMaxAge)
 	}
 }
 

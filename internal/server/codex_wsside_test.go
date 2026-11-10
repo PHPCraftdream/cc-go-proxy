@@ -76,6 +76,10 @@ func TestCodexWebsocketBackgroundRequestsGoOverHTTPOnceLearned(t *testing.T) {
 	if !strings.Contains(h.access.String(), "transport http (side request)") {
 		t.Errorf("access log lacks the side request note: %q", h.access.String())
 	}
+	// The line names the conversation and agent and the size, so the cost is told per agent.
+	if !regexp.MustCompile(`transport http \(side request\)[^\n]*\| conv [0-9a-f]{6}\.[0-9a-f]{4} \| request \d`).MatchString(h.access.String()) {
+		t.Errorf("side request line lacks conv and size: %q", h.access.String())
+	}
 	var stats strings.Builder
 	writeCodexWebsocketStats(&stats, time.Now())
 	if !strings.Contains(stats.String(), "1 background request sent over HTTP") {

@@ -24,8 +24,10 @@ var (
 	// wsManagerMaxConnections: a conversation and its parallel subagents each hold one.
 	wsManagerMaxConnections = 16
 	// wsManagerMaxAge is the planned age of a connection: the backend ends them
-	// after a fixed age (30 minutes seen), so they are replaced before it.
-	wsManagerMaxAge       = 25 * time.Minute
+	// after a fixed age (30 minutes seen), so they are replaced before it. A
+	// reply can run for minutes, so the margin is wide: a request started at
+	// the planned age must still end before the cut.
+	wsManagerMaxAge       = 20 * time.Minute
 	wsManagerMaxIdle      = 10 * time.Minute
 	wsManagerJanitorEvery = time.Minute
 	// wsManagerDisabledFor: the endpoint said it has no websocket (400, 404, 405, 410, 426, 501).
@@ -163,7 +165,7 @@ func (m *WSManager) initLocked() {
 		m.maxAge = wsManagerMaxAge
 	}
 	if m.maxAge <= 0 {
-		m.maxAge = 25 * time.Minute
+		m.maxAge = 20 * time.Minute
 	}
 	if m.maxIdle <= 0 {
 		m.maxIdle = wsManagerMaxIdle

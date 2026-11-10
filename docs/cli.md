@@ -177,14 +177,16 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   byte), `no reply in time`, `reset`, `websocket ended by the backend`, `other`; a stream that broke and was sent
   again counts too; a call the client left is not counted. It tells a bad stretch of the
   network (slow handshakes and uploads, breaks everywhere) from a slow model (none of them).
-- `upstream websocket [codex]: the backend ended connections before the planned 25m0s (the last at 12m5s, close
-  status 1001); replacing them after 20m0s from now on`: once per step, when the backend ended connections earlier
+- `upstream websocket [codex]: the backend ended connections before the planned 20m0s (the last at 12m5s, close
+  status 1001); replacing them after 15m0s from now on`: once per step, when the backend ended connections earlier
   than planned twice (see [API behavior](api.md#codex-websocket-transport)).
 - `upstream websocket [codex]: a connection was ended by the backend or the network at 12m5s of age (close status 1001;
-  planned 25m0s): before the planned age, counts toward lowering it`: for every such connection (`no close frame` when
+  planned 20m0s): before the planned age, counts toward lowering it`: for every such connection (`no close frame` when
   there was none; `too young to say anything about a limit` under 5 minutes, `at or after the planned age`).
 - The conversation tag in the connection part of a request, `conv 3fa2c1.1a2b`: the thread (key, system prompt, tools) and
-  the agent (its first user message).
+  the agent (its first user message). A request that went over HTTP though the websocket was in play (`fallback to HTTP
+  (connection busy)` or `transport http (side request)`) ends with `| conv 3fa2c1.1a2b | request 2.1 MiB`: whose request it
+  was and how big.
 - `upstream websocket [codex]: a user message of 329 B was answered on a conversation's websocket and its reply was left
   out of the next request (a background request of the client); requests ending in it go over HTTP from now on, so they
   do not replace the websocket chain`: once per such message, when ccgp learns it (see
@@ -200,7 +202,7 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   sent 4.7 MiB)` or `fallback to HTTP (<reason>)`. A full request names why: `new connection`, `connection broken`,
   `replaced at the lowered age of 20m`, `history diverged at item 412 of 1079` (the item that differs, of the items
   the backend holds: a deep one is a rewritten history, one near the end a branch), `tool call changed (arguments,
-  Read)` (what differs and in which tool), `assistant text changed`, `reasoning dropped`, `assistant message missing
+  Read, was 312 B, now 340 B, first 120 B and last 40 B equal)` (what differs, in which tool, and for arguments the sizes backend and client hold and how many bytes stay equal at the start and the end; never content), `assistant text changed`, `reasoning dropped`, `assistant message missing
   (found user message)` / `tool call missing (found reasoning)` (what the client sent where the reply should be),
   `new item not sendable (assistant message)`, `output item not compared (web_search_call)`. The connection part names
   the conversation: `conn reused (age 9m57s, conv 3fa2c1)` (the start of its thread id, a hash), so the requests of one
