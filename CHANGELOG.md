@@ -60,13 +60,16 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   after content never. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 gets no websocket for 10
   minutes, any other failed dial (401, 403, network, TLS) for 30 seconds, a 429 or 5xx not at all; per endpoint and
   account. A connection is replaced after 25 minutes (the backend ends them after a fixed age, 30 minutes seen) or 10 idle
-  minutes, at most 8 are open. If the backend ends connections earlier than planned (a break at 5 minutes or more of
+  minutes, at most 16 are open (the conversation and each of its parallel subagents hold one: a connection is
+  told apart by the first user message as well, so subagents sharing the conversation's key, system prompt and tools do
+  not replace each other's chain or find it busy). If the backend ends connections earlier than planned (a break at 5 minutes or more of
   age, twice within an hour, per endpoint and account), the planned age drops by 5 minutes (down to 5), and goes back
   to 25 after 6 hours without such a break; so no request meets the cut. Claude Code's background requests (a short
   fixed message after the conversation's history) would replace the websocket chain with their own reply, and the next
   request of the conversation would go out in full (2-4 MiB): ccgp learns such a message from the divergence it causes
   and sends requests that end in it over HTTP (`transport http (side request)`, one line when learned, counted in the
-  periodic line). The log says
+  periodic line). Every connection the backend or the network ends is logged with its age, close status and whether it
+  counts toward lowering the planned age. The log says
   `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request,
   with the reason in detail (`history diverged at item 412 of 1079`, `tool call changed (arguments, Read)`,
   `assistant message missing (found user message)`, `replaced at the lowered age of 20m`) and the conversation

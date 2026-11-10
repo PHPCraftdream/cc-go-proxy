@@ -1405,7 +1405,7 @@ func TestWSManagerZeroValueUsesDefaultCapacity(t *testing.T) {
 	var m WSManager
 	defer m.Close()
 	backend := newWSManagerTestBackend(t)
-	for i := 0; i < 9; i++ {
+	for i := 0; i < wsManagerMaxConnections+1; i++ {
 		bucket := fmt.Sprintf("zero-capacity-%d", i)
 		resp, _, err := backend.call(t, &m, bucket, makeWSManagerTestRequest(bucket, wsManagerUser(bucket)))
 		if err != nil {
@@ -1420,8 +1420,8 @@ func TestWSManagerZeroValueUsesDefaultCapacity(t *testing.T) {
 	m.mu.Lock()
 	count := len(m.entries)
 	m.mu.Unlock()
-	if count != 8 {
-		t.Fatalf("zero-value manager entry count = %d, want default 8", count)
+	if count != 16 {
+		t.Fatalf("zero-value manager entry count = %d, want default 16", count)
 	}
 	m.Close()
 }
