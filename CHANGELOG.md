@@ -44,17 +44,25 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
-- Codex over a websocket (opt-in: `CODEX_TRANSPORT=websocket`, default `http`): one websocket per conversation, as the
-  official Codex client does. After the first request, each request of a tool loop or a conversation is sent as
-  `previous_response_id` plus only the new items instead of the whole history (4.7 MiB request bodies, which were
-  re-sent in full every time and took 1.5-9 s on a slow uplink, become a few hundred bytes; live check: 24.6 KB -> 0.65 KB
-  frames, the model sees the whole context, 96% of the prompt read from the cache). The delta is used only when model,
-  system prompt, tools and reasoning settings are unchanged and the earlier items match byte for byte; a compaction or a
-  subagent branch is sent in full. HTTP stays the default and the fallback: a busy conversation, a refused upgrade or any
-  websocket failure before a reply sends that request over HTTP (a refused upgrade also turns the websocket off for 10
-  minutes); a connection is replaced after 55 minutes or 10 idle minutes, at most 8 are open. The log says
-  `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request
-  and `upstream websocket [codex]` every 10 minutes. Adds the dependency `github.com/coder/websocket` (ISC).
+- Codex over a websocket (`CODEX_TRANSPORT=auto`, the default; `http` turns it off): one websocket per conversation, as
+  the official Codex client does. Only the Responses protocol has a websocket, so only `codex` providers use it; Chat
+  Completions (`codex_api`) and Anthropic Messages (`anthropic_compat`) providers are not affected. After the first
+  request, each request of a tool loop or a conversation is sent as `previous_response_id` plus only the new items
+  instead of the whole history (4.7 MiB request bodies, which were re-sent in full every time and took 1.5-9 s on a slow
+  uplink, become a few hundred bytes; live check: 24.6 KB -> 0.65 KB frames, the model sees the whole context, 96% of the
+  prompt read from the cache). The delta is used only when model, system prompt, tools, reasoning and tool choice are
+  unchanged, the earlier items match byte for byte and the history holds exactly what the backend produced (the same
+  assistant text, tool calls with the same id, name and arguments, the same encrypted reasoning); otherwise, e.g. after a
+  compaction or in a subagent branch, the request is sent in full. A connection belongs to one endpoint, account and
+  proxy: the login is checked on every request as for HTTP, and after a logout or an account switch the old connections
+  are closed. HTTP is the fallback: a busy conversation or any websocket failure before the request reached the backend
+  sends that request over HTTP; a break after the request went out and before any content is asked again (as for HTTP),
+  after content never. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 gets no websocket for 10
+  minutes, any other failed dial (401, 403, network, TLS) for 30 seconds, a 429 or 5xx not at all; per endpoint and
+  account. A connection is replaced after 55 minutes or 10 idle minutes, at most 8 are open. The log says
+  `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request,
+  `upstream websocket [codex]` and `upstream speed [codex]` (median time to the first token and to the end of the reply,
+  for HTTP, websocket full and websocket delta) every 10 minutes. Adds the dependency `github.com/coder/websocket` (ISC).
 - Log: `upstream link [codex]` every 10 minutes: how the link to the backend behaved in the window - replies, new
   connections with the median and the longest TLS handshake, the upload speed of big request bodies (overall and the
   slowest) and the broken calls by cause (connect timeout, connection lost, health-ping close, no reply in time, reset),

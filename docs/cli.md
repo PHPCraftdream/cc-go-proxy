@@ -176,12 +176,16 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   timeout` (TLS handshake or no connection), `connection lost`, `silence (health-ping close)` (about 45 s without a
   byte), `no reply in time`, `reset`, `other`; a call the client left is not counted. It tells a bad stretch of the
   network (slow handshakes and uploads, breaks everywhere) from a slow model (none of them).
-- `upstream websocket [codex]: 12 delta, 3 full, 1 busy, 0 fallbacks, 2 dials; sent 41 KiB`: every 10 minutes, only with
-  `CODEX_TRANSPORT=websocket` (see [API behavior](api.md#codex-websocket-transport)) and only when something happened:
+- `upstream websocket [codex]: 12 delta, 3 full, 1 busy, 0 fallbacks, 2 dials; sent 41 KiB`: every 10 minutes, unless
+  `CODEX_TRANSPORT=http` (see [API behavior](api.md#codex-websocket-transport)), and only when something happened:
   requests sent as a delta (`previous_response_id` plus the new items) or in full, requests that found the
   conversation's connection busy, deltas refused for a changed history, connections opened, and the bytes sent. A request's
   summary then carries `transport websocket (delta: sent 3 KiB of 4.7 MiB)`, `transport websocket (full: new connection,
   sent 4.7 MiB)` or `fallback to HTTP (<reason>)`.
+- `upstream speed [codex]: first token / whole reply, median: http 2.1s / 14s (40 replies), websocket full 2.3s / 15s
+  (3 replies), websocket delta 1.2s / 11s (12 replies)`: every 10 minutes, when Codex replies completed: the median time
+  to the first token and to the end of the reply, per transport. Medians over different prompts: a trend to read over
+  hours, not a benchmark.
 - A slow, failed or cancelled stream's line has `time connect 300ms, upload 21.7s, headers wait 8s, first token 2s,
   stream 8s (mostly upload on the link, 54%)`: where its time went. `connect` and `upload` (and the time before the
   last try) are the link's, the rest the backend's.
@@ -422,7 +426,7 @@ inside the npm package, and the next npm install would put the packaged version 
 | `ANTHROPIC_MODEL` | profile runs | The session's main model, for the compaction window |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | profile runs | Set by ccgp from the profile; yours win |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `PROXY_TOKEN`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | env-only mode | See [configuration](configuration.md#env-only-mode) |
-| `CODEX_TRANSPORT` | server | `http` (default) or `websocket` (alias `ws`): how Codex requests go out; read at start ([Codex websocket transport](api.md#codex-websocket-transport)) |
+| `CODEX_TRANSPORT` | server | `auto` (default) or `websocket` (alias `ws`): Codex requests try the websocket, HTTP is the fallback; `http`: HTTP only. Read at start ([Codex websocket transport](api.md#codex-websocket-transport)) |
 | `CCGP_VERSION`, `CCGP_INSTALL_DIR` | `install.sh`, `install.ps1` | Version and directory to install |
 
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN` and the Bedrock / Vertex /
