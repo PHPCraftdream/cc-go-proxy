@@ -38,10 +38,17 @@ func TestCodexTransportDefault(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if cfg.CodexTransport != "http" || cfg.CodexWebsocket() {
-				t.Errorf("transport = %q, websocket = %v; want http, false", cfg.CodexTransport, cfg.CodexWebsocket())
+			if cfg.CodexTransport != "auto" || !cfg.CodexWebsocket() {
+				t.Errorf("transport = %q, websocket = %v; want auto, true", cfg.CodexTransport, cfg.CodexWebsocket())
 			}
 		})
+	}
+}
+
+func TestCodexTransportZeroValueIsHTTP(t *testing.T) {
+	// A Config not made by Load (tests, tools) keeps the plain HTTP path.
+	if (&Config{}).CodexWebsocket() {
+		t.Fatal("zero Config uses the websocket")
 	}
 }
 
@@ -50,14 +57,14 @@ func TestCodexTransportAcceptedValues(t *testing.T) {
 	for _, tt := range []struct {
 		value string
 		want  string
-	}{{"http", "http"}, {"HTTP", "http"}, {"websocket", "websocket"}, {"WEBSOCKET", "websocket"}, {"ws", "websocket"}, {"Ws", "websocket"}} {
+	}{{"http", "http"}, {"HTTP", "http"}, {"websocket", "websocket"}, {"WEBSOCKET", "websocket"}, {"ws", "websocket"}, {"Ws", "websocket"}, {"auto", "auto"}, {"AUTO", "auto"}} {
 		t.Run(tt.value, func(t *testing.T) {
 			t.Setenv("CODEX_TRANSPORT", tt.value)
 			cfg, err := Load()
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if cfg.CodexTransport != tt.want || cfg.CodexWebsocket() != (tt.want == "websocket") {
+			if cfg.CodexTransport != tt.want || cfg.CodexWebsocket() != (tt.want != "http") {
 				t.Errorf("transport = %q, websocket = %v; want %q", cfg.CodexTransport, cfg.CodexWebsocket(), tt.want)
 			}
 		})
@@ -73,8 +80,8 @@ func TestCodexTransportInvalidValue(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if cfg.CodexTransport != "http" || cfg.CodexWebsocket() {
-				t.Errorf("transport = %q, websocket = %v; want http, false", cfg.CodexTransport, cfg.CodexWebsocket())
+			if cfg.CodexTransport != "auto" || !cfg.CodexWebsocket() {
+				t.Errorf("transport = %q, websocket = %v; want the default auto, true", cfg.CodexTransport, cfg.CodexWebsocket())
 			}
 		})
 	}
