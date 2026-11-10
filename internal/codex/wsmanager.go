@@ -72,6 +72,9 @@ type WSInfo struct {
 	// Limit is the lowered planned age (0: the default), set when Reason says
 	// a connection was replaced at it.
 	Limit time.Duration
+	// Divergence describes where the history left the chain, set when Reason
+	// says it diverged.
+	Divergence *WSDivergence
 }
 
 // WSStats counts the exchanges of a manager.
@@ -441,7 +444,7 @@ func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation 
 	var frame []byte
 	fallback := false
 	if chain != nil || info.Reused {
-		if delta, ok, why := chain.Delta(req); ok {
+		if delta, ok, why, div := chain.delta(req); ok {
 			var err error
 			frame, err = WSCreatePayload(req, chain.ResponseID(), delta)
 			if err != nil {
@@ -451,6 +454,12 @@ func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation 
 			info.Mode = "delta"
 		} else {
 			info.Reason = why
+			if div != nil {
+				if !chain.done.IsZero() {
+					div.Since = m.now().Sub(chain.done)
+				}
+				info.Divergence = div
+			}
 			fallback = true
 		}
 	}
@@ -624,6 +633,9 @@ func (m *WSManager) finishLease(entry *wsManagerEntry, generation uint64, conn *
 		return
 	}
 	if retain && !m.closed {
+		if chain != nil {
+			chain.done = m.now()
+		}
 		entry.chain = chain
 		entry.busy = false
 		entry.lastUse = m.now()

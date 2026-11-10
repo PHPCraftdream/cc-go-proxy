@@ -180,16 +180,29 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
 - `upstream websocket [codex]: the backend ended connections before the planned 25m0s (the last at 12m5s, close
   status 1001); replacing them after 20m0s from now on`: once per step, when the backend ended connections earlier
   than planned twice (see [API behavior](api.md#codex-websocket-transport)).
-- `upstream websocket [codex]: 12 delta, 3 full, 1 busy, 0 fallbacks, 2 dials; sent 41 KiB; 1 connection ended by the
-  backend or the network; 2 connections replaced at the lowered age`: every 10 minutes, unless
-  `CODEX_TRANSPORT=http` (see [API behavior](api.md#codex-websocket-transport)), and only when something happened:
-  requests sent as a delta (`previous_response_id` plus the new items) or in full, requests that found the
-  conversation's connection busy, deltas refused for a changed history, connections opened, and the bytes sent. A request's
+- `upstream websocket [codex]: 12 delta, 3 full (2 where a delta could not continue), 1 busy, 0 HTTP fallbacks, 2 dials;
+  sent 41 KiB; 1 connection ended by the backend or the network; 2 connections replaced at the lowered age`: every 10
+  minutes, unless `CODEX_TRANSPORT=http` (see [API behavior](api.md#codex-websocket-transport)), and only when something
+  happened: requests sent as a delta (`previous_response_id` plus the new items) or in full (of them, the ones whose
+  conversation had a reply to continue but whose history or output no longer matched it), requests that found the
+  conversation's connection busy, requests that went over HTTP instead, connections opened, and the bytes sent. A request's
   summary then carries `transport websocket (delta: sent 3 KiB of 4.7 MiB)`, `transport websocket (full: new connection,
   sent 4.7 MiB)` or `fallback to HTTP (<reason>)`. A full request names why: `new connection`, `connection broken`,
   `replaced at the lowered age of 20m`, `history diverged at item 412 of 1079` (the item that differs, of the items
   the backend holds: a deep one is a rewritten history, one near the end a branch), `tool call changed (arguments,
-  Read)` (what differs and in which tool), `assistant text changed`, `reasoning dropped`.
+  Read)` (what differs and in which tool), `assistant text changed`, `reasoning dropped`, `assistant message missing
+  (found user message)` / `tool call missing (found reasoning)` (what the client sent where the reply should be),
+  `new item not sendable (assistant message)`, `output item not compared (web_search_call)`. The connection part names
+  the conversation: `conn reused (age 9m57s, conv 3fa2c1)` (the start of its thread id, a hash), so the requests of one
+  conversation can be followed among several.
+- `upstream websocket [codex] conv 3fa2c1: history diverged at item 1236 of 1237 (this request has 1240): was
+  function_call_output 12 KiB, now function_call_output 14 KiB (+2 KiB); first 12 KiB and last 3 B equal, between them
+  2 B -> 2 KiB; the reply chained on is at item 1237; the chained reply ended 41s ago | prompt key …`: once per request
+  whose history left the chain it would have continued. It names the item (its kind, size and, for a message, number
+  of parts; never its content), and when that is the last item the backend holds, how much of it stayed the same at
+  the start and the end. `the reply chained on is at item N` means the client edited an item it had sent and kept the
+  reply; `not in this request` means the chain belonged to another request of the conversation (a side request with
+  the same history). After `|` the prompt comparison with the key's last request, as in the slow-stream line.
 - `upstream speed [codex]: first token / whole reply, median: http 2.1s / 14s (40 replies), websocket full 2.3s / 15s
   (3 replies), websocket delta 1.2s / 11s (12 replies)`: every 10 minutes, when Codex replies completed: the median time
   to the first token and to the end of the reply, per transport. Medians over different prompts: a trend to read over

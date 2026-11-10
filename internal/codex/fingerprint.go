@@ -49,11 +49,21 @@ func NewFingerprint(req *Request) Fingerprint {
 // ItemHashes hashes every input item in order. The log compares them with the
 // last request of the same session to name the first item that changed.
 func ItemHashes(req *Request) []uint64 {
+	hashes, _, _ := itemDigests(req, false)
+	return hashes
+}
+
+// itemDigests hashes every input item and, with sized, also returns the encoded
+// size of each and a copy of the last item's encoding.
+func itemDigests(req *Request, sized bool) (hashes []uint64, sizes []int, last []byte) {
 	if req.PromptCacheKey == "" {
-		return nil
+		return nil, nil, nil
 	}
 
-	out := make([]uint64, len(req.Input))
+	hashes = make([]uint64, len(req.Input))
+	if sized {
+		sizes = make([]int, len(req.Input))
+	}
 	h := fnv.New64a()
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -65,9 +75,15 @@ func ItemHashes(req *Request) []uint64 {
 		b := buf.Bytes()[:buf.Len()-1] // Encoder appends a newline; Marshal does not.
 		h.Reset()
 		_, _ = h.Write(b)
-		out[i] = h.Sum64()
+		hashes[i] = h.Sum64()
+		if sized {
+			sizes[i] = len(b)
+			if i == len(req.Input)-1 {
+				last = append([]byte(nil), b...)
+			}
+		}
 	}
-	return out
+	return hashes, sizes, last
 }
 
 func hash8(v any) string {

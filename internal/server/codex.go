@@ -405,6 +405,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if cfg.CodexWebsocket() && fingerprint.Key != "" {
 		retry.request = req
 		retry.websocket = true
+		trace.conv = wsConvTag(turnRegistration.threadID)
 		retry.callWS = func(request *codex.Request) (*http.Response, codex.WSInfo, error) {
 			return currentCodexWSManager().Call(wsCtx, baseURL, s, turnRegistration.threadID, request)
 		}

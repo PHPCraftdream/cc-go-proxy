@@ -51,6 +51,7 @@ type upstreamTrace struct {
 	wrote            time.Time // the last attempt's request was written out
 	transport        string
 	wsConn           string
+	conv             string      // websocket conversation tag (wsConvTag), "" over HTTP
 	wire             *codex.Wire // what went on the wire: compressed or not, how big
 	routing          *codex.Routing
 	newTurn          bool

@@ -828,7 +828,7 @@ func TestCodexWebsocketStatsCountFormsAndTakeSilence(t *testing.T) {
 	}
 	var single bytes.Buffer
 	writeCodexWebsocketStats(&single, time.Now())
-	if got := single.String(); !strings.Contains(got, "1 full") || !strings.Contains(got, "1 dial") || !strings.Contains(got, "0 busy") || !strings.Contains(got, "0 fallbacks") {
+	if got := single.String(); !strings.Contains(got, "1 full") || !strings.Contains(got, "1 dial") || !strings.Contains(got, "0 busy") || !strings.Contains(got, "0 HTTP fallbacks") {
 		t.Errorf("singular websocket stats line = %q", got)
 	}
 	body = `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"stats-one"},"messages":[{"role":"user","content":"first stats request"},{"role":"user","content":"second stats request"}]}`
@@ -843,13 +843,13 @@ func TestCodexWebsocketStatsCountFormsAndTakeSilence(t *testing.T) {
 	}
 	var full bytes.Buffer
 	writeCodexWebsocketStats(&full, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
-	if got := full.String(); !strings.Contains(got, "2 full") || !strings.Contains(got, "1 delta") || !strings.Contains(got, "2 dials") || !strings.Contains(got, "0 busy") || !strings.Contains(got, "0 fallbacks") {
+	if got := full.String(); !strings.Contains(got, "2 full") || !strings.Contains(got, "1 delta") || !strings.Contains(got, "2 dials") || !strings.Contains(got, "0 busy") || !strings.Contains(got, "0 HTTP fallbacks") {
 		t.Errorf("plural websocket stats line = %q", got)
 	}
 	codexWSFallbacks.Store(1)
 	var fallback bytes.Buffer
 	writeCodexWebsocketStats(&fallback, time.Now())
-	if got := fallback.String(); !strings.Contains(got, "1 fallback") || strings.Contains(got, "1 fallbacks") {
+	if got := fallback.String(); !strings.Contains(got, "1 HTTP fallback,") {
 		t.Errorf("singular fallback stats line = %q", got)
 	}
 	var second bytes.Buffer
