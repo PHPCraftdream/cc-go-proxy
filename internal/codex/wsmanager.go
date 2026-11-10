@@ -820,11 +820,13 @@ func (m *WSManager) observeLost(owner string, age time.Duration, status int) {
 		m.lifetimes[owner] = l
 	}
 	was := l.current(m.maxAge, m.now())
+	early := age >= wsLearnMinAge && age < was
+	burst := early && l.inBurst(m.now())
 	limit, lowered := l.observe(m.maxAge, age, m.now())
 	notify, notifyLost := m.OnLimit, m.OnLost
 	m.mu.Unlock()
 	if notifyLost != nil {
-		notifyLost(WSLost{Age: age, Status: status, Planned: was, Counts: age >= wsLearnMinAge && age < was})
+		notifyLost(WSLost{Age: age, Status: status, Planned: was, Counts: early && !burst, Burst: burst})
 	}
 	if lowered && notify != nil {
 		notify(WSLimit{Age: limit, Was: was, Broke: age, Status: status})

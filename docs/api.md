@@ -105,7 +105,8 @@ the next one costs the chain. Claude Code sends such background requests (a shor
 conversation's history, with the same system prompt and tools); answered on the websocket they become the latest
 response, and the conversation's next request, which holds neither the message nor its reply, would go out in full
 (2-4 MiB). ccgp learns the message from that one divergence (the chain's last item is a user message of at most 8 KiB
-and its reply is not in the new request; an edited message whose reply is still there is not learned) and from then on
+and its reply is not in the new request; an edited message whose reply is still there is not learned; the message is
+recognised by its first 128 bytes, since the template changes a little from request to request) and from then on
 sends requests that end in it over HTTP (zstd-compressed), so the websocket chain only holds the conversation.
 
 A connection also belongs to one agent: the subagents of a conversation share its cache key, system prompt and tools, so
@@ -127,7 +128,8 @@ seconds; a 429 or a 5xx not at all (that request still goes over HTTP); the wind
 connection is replaced after 20 minutes or 10 idle minutes; at most 16 are open (a conversation and its parallel subagents). The backend ends a connection at a
 fixed age (30 minutes seen, 60 documented), and replacing first keeps a request from meeting the cut: the next request
 goes out in full on a fresh connection. If the backend ends connections earlier than planned (a break of a connection
-5 minutes old or older, twice within an hour, per endpoint and account), the planned age is lowered by 5 minutes, down
+5 minutes old or older, twice within an hour, per endpoint and account; breaks less than a minute apart are one event, as
+a network failure ends all connections together), the planned age is lowered by 5 minutes, down
 to 5, and each further pair of early breaks lowers it again; after 6 hours without an early break it goes back to 20.
 Breaks younger than 5 minutes are the network's, not an age limit, and count for nothing. Pings after
 15 s of silence and a close after 30 s more are the same as for HTTP/2 connections. Tokens are refreshed exactly as for

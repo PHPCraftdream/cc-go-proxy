@@ -38,7 +38,9 @@ func TestWSLifetimeLowersByFiveMinutesAfterTwoEarlyBreaks(t *testing.T) {
 	}
 	// Each further pair of breaks younger than the new age lowers it again, to the floor.
 	for _, want := range []time.Duration{15 * time.Minute, 10 * time.Minute, 5 * time.Minute} {
+		now = now.Add(wsLowerBurst)
 		l.observe(lifetimeDefault, 5*time.Minute+time.Second, now)
+		now = now.Add(wsLowerBurst)
 		limit, lowered := l.observe(lifetimeDefault, 5*time.Minute+time.Second, now)
 		if limit != want || !lowered {
 			t.Fatalf("step to %s: got %s %v", want, limit, lowered)
@@ -75,17 +77,17 @@ func TestWSLifetimeEarlyBreaksFarApartDoNotAddUp(t *testing.T) {
 func TestWSLifetimeGoesBackToTheDefault(t *testing.T) {
 	var l wsLifetime
 	l.observe(lifetimeDefault, 12*time.Minute, lifetimeT0)
-	l.observe(lifetimeDefault, 12*time.Minute, lifetimeT0)
+	l.observe(lifetimeDefault, 12*time.Minute, lifetimeT0.Add(wsLowerBurst))
 	if got := l.current(lifetimeDefault, lifetimeT0.Add(wsLimitRestore-time.Minute)); got != 20*time.Minute {
 		t.Fatalf("restored too early: %s", got)
 	}
-	if got := l.current(lifetimeDefault, lifetimeT0.Add(wsLimitRestore+time.Minute)); got != lifetimeDefault {
+	if got := l.current(lifetimeDefault, lifetimeT0.Add(wsLimitRestore+2*time.Minute)); got != lifetimeDefault {
 		t.Fatalf("not restored after %s without early breaks: %s", wsLimitRestore, got)
 	}
 	// An early break keeps a lowered age lowered.
 	var k wsLifetime
 	k.observe(lifetimeDefault, 12*time.Minute, lifetimeT0)
-	k.observe(lifetimeDefault, 12*time.Minute, lifetimeT0)
+	k.observe(lifetimeDefault, 12*time.Minute, lifetimeT0.Add(wsLowerBurst))
 	k.observe(lifetimeDefault, 12*time.Minute, lifetimeT0.Add(5*time.Hour))
 	if got := k.current(lifetimeDefault, lifetimeT0.Add(8*time.Hour)); got != 20*time.Minute {
 		t.Fatalf("a recent early break did not keep the age lowered: %s", got)
@@ -180,6 +182,7 @@ func TestWSManagerLowersTheAgeAfterEarlyBreaks(t *testing.T) {
 	if len(lowered) != 0 {
 		t.Fatalf("one early break reported: %+v", lowered)
 	}
+	clock.Add(wsLowerBurst)
 	m.observeLost(owner, 12*time.Minute+5*time.Second, 1001)
 	want := WSLimit{Age: 20 * time.Minute, Was: 25 * time.Minute, Broke: 12*time.Minute + 5*time.Second, Status: 1001}
 	if len(lowered) != 1 || lowered[0] != want {
@@ -207,6 +210,7 @@ func TestWSManagerLoweredAgeIsPerOwner(t *testing.T) {
 	backend := newWSManagerTestBackend(t)
 	other := wsOwnerKey(backend.server.URL, "account:someone-else", proxydial.ChoiceFor(context.Background()))
 	m.observeLost(other, 12*time.Minute, -1)
+	clock.Add(wsLowerBurst)
 	m.observeLost(other, 12*time.Minute, -1)
 	first, _ := wsManagerRoundTrip(t, m, backend, testSession(t), "conv", "one")
 	clock.Add(24 * time.Minute)
@@ -254,6 +258,45 @@ func TestWSManagerCountsABackendBreak(t *testing.T) {
 	for _, l := range m.lifetimes {
 		if l.limit != 0 || l.early != 0 {
 			t.Fatalf("a connection that broke after milliseconds counted: %+v", l)
+		}
+	}
+}
+
+// A network failure ends every connection together: six breaks within seconds,
+// at the same young age, are one event and must not lower the age.
+func TestWSLifetimeABurstOfBreaksIsOneEvent(t *testing.T) {
+	var l wsLifetime
+	for i := 0; i < 6; i++ {
+		now := lifetimeT0.Add(time.Duration(i) * 10 * time.Second)
+		if limit, lowered := l.observe(lifetimeDefault, 5*time.Minute+30*time.Second, now); limit != lifetimeDefault || lowered {
+			t.Fatalf("break %d of a burst: %s %v", i, limit, lowered)
+		}
+	}
+	// The burst counted once: one more break, a minute after the first, is the second event.
+	if limit, lowered := l.observe(lifetimeDefault, 6*time.Minute, lifetimeT0.Add(wsLowerBurst)); limit != 20*time.Minute || !lowered {
+		t.Fatalf("second event: %s %v, want 20m lowered", limit, lowered)
+	}
+}
+
+func TestWSManagerReportsABurstedBreakAsNotCounted(t *testing.T) {
+	m, clock := lifetimeManager(t)
+	var got []WSLost
+	var limits []WSLimit
+	m.OnLost = func(l WSLost) { got = append(got, l) }
+	m.OnLimit = func(l WSLimit) { limits = append(limits, l) }
+	for i := 0; i < 4; i++ {
+		m.observeLost("owner", 5*time.Minute+35*time.Second, -1)
+		clock.Add(time.Second)
+	}
+	if len(limits) != 0 {
+		t.Fatalf("a burst lowered the age: %+v", limits)
+	}
+	if len(got) != 4 || !got[0].Counts || got[0].Burst {
+		t.Fatalf("first break = %+v, want counted", got)
+	}
+	for i := 1; i < 4; i++ {
+		if got[i].Counts || !got[i].Burst {
+			t.Errorf("break %d = %+v, want a burst, not counted", i, got[i])
 		}
 	}
 }

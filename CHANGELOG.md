@@ -63,7 +63,8 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   minutes, at most 16 are open (the conversation and each of its parallel subagents hold one: a connection is
   told apart by the first user message as well, so subagents sharing the conversation's key, system prompt and tools do
   not replace each other's chain or find it busy). If the backend ends connections earlier than planned (a break at 5 minutes or more of
-  age, twice within an hour, per endpoint and account), the planned age drops by 5 minutes (down to 5), and goes back
+  age, twice within an hour, per endpoint and account; breaks less than a minute apart count once: a network failure
+  ends every connection together), the planned age drops by 5 minutes (down to 5), and goes back
   to 20 after 6 hours without such a break; so no request meets the cut. Claude Code's background requests (a short
   fixed message after the conversation's history) would replace the websocket chain with their own reply, and the next
   request of the conversation would go out in full (2-4 MiB): ccgp learns such a message from the divergence it causes
@@ -229,6 +230,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- Codex websocket, three finds of two hours of real logs: (1) one network failure ended six connections within 22
+  seconds and the age rule took them for four independent early breaks, lowering the planned age from 20 to 10 minutes
+  for six hours (50 needless full resends); breaks less than a minute apart count once now. (2) Claude Code stores an
+  `Edit` call with `"replace_all":false` that the model did not write, so the next request never matched the backend's
+  version of the call and went out in full (21 times); a client call that only adds keys whose value is `false` is the
+  same call now. (3) The background message of Claude Code is a template of about 700 bytes with a part that changes,
+  so it was learned again 18 times in two hours, each time after a broken chain; it is recognised by its first 128
+  bytes now.
 - A proxy handshake that ran into the request's own deadline could end with a plain `i/o timeout` instead of the
   context's `deadline exceeded` (the socket's deadline is the context's and fired a moment before the context's timer),
   so callers that tell the two apart saw the wrong one; it is the context's error now.

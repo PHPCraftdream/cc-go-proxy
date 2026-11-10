@@ -171,14 +171,16 @@ func TestLogWSLostSaysWhetherTheBreakCountsTowardTheLimit(t *testing.T) {
 	logWSLost(codex.WSLost{Age: 12*time.Minute + 5*time.Second, Status: 1001, Planned: 25 * time.Minute, Counts: true})
 	logWSLost(codex.WSLost{Age: 2 * time.Minute, Status: -1, Planned: 25 * time.Minute})
 	logWSLost(codex.WSLost{Age: 25 * time.Minute, Status: 1006, Planned: 25 * time.Minute})
+	logWSLost(codex.WSLost{Age: 5*time.Minute + 35*time.Second, Status: -1, Planned: 20 * time.Minute, Burst: true})
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) != 3 {
+	if len(lines) != 4 {
 		t.Fatalf("lines = %q", lines)
 	}
 	for i, tail := range []string{
 		"a connection was ended by the backend or the network at 12m5s of age (close status 1001; planned 25m0s): before the planned age, counts toward lowering it",
 		"a connection was ended by the backend or the network at 2m0s of age (no close frame; planned 25m0s): too young to say anything about a limit",
 		"a connection was ended by the backend or the network at 25m0s of age (close status 1006; planned 25m0s): at or after the planned age",
+		"a connection was ended by the backend or the network at 5m36s of age (no close frame; planned 20m0s): before the planned age, but right after another such break: one event, not counted again",
 	} {
 		if !strings.HasSuffix(lines[i], tail) {
 			t.Errorf("line %d = %q, want it to end with %q", i, lines[i], tail)
