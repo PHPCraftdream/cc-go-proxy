@@ -1,5 +1,10 @@
 package codex
 
+import (
+	"encoding/json"
+	"hash/fnv"
+)
+
 // Claude Code sends background requests (a suggestion of what to type next, for
 // one) that carry the conversation's history, with the same system prompt and
 // tools, plus a short fixed user message. Answered on the conversation's
@@ -14,15 +19,30 @@ const (
 	wsSideMaxSize = 8 << 10
 	// wsSideMax bounds the messages remembered.
 	wsSideMax = 64
+	// wsSideHead is how much of a message's encoding tells it apart: the template
+	// is fixed and a part of it varies from request to request (the middle of
+	// 700 bytes), so the whole message would be learned again every time.
+	wsSideHead = 128
 )
 
-// lastItemHash is the hash ItemHashes gives the last input item, false without one.
-func lastItemHash(req *Request) (uint64, bool) {
+// sideKey identifies a side message by the start of its encoding.
+func sideKey(encoded []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(encoded[:min(len(encoded), wsSideHead)])
+	return h.Sum64()
+}
+
+// lastItemSideKey is the key of the last input item and the size of its
+// encoding, false without a cache key, without items or without an encoding.
+func lastItemSideKey(req *Request) (key uint64, size int, ok bool) {
 	if req == nil || req.PromptCacheKey == "" || len(req.Input) == 0 {
-		return 0, false
+		return 0, 0, false
 	}
-	hashes := ItemHashes(&Request{PromptCacheKey: req.PromptCacheKey, Input: req.Input[len(req.Input)-1:]})
-	return hashes[0], true
+	encoded, err := json.Marshal(req.Input[len(req.Input)-1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return sideKey(encoded), len(encoded), true
 }
 
 // WSSide describes a message learned as a side request's.
@@ -35,10 +55,10 @@ type WSSide struct {
 // and the reply to it is not in the request that follows. Called without the lock.
 func (m *WSManager) learnSide(chain *WSChain, d *WSDivergence) {
 	if chain == nil || d == nil || !d.Reply || d.ReplyAt != -1 || d.At != d.Had-1 || d.At >= len(chain.hashes) ||
-		d.Was.Kind != "user message" || d.Was.Size > wsSideMaxSize {
+		len(chain.last) == 0 || d.Was.Kind != "user message" || d.Was.Size > wsSideMaxSize {
 		return
 	}
-	hash := chain.hashes[d.At]
+	hash := sideKey(chain.last)
 	m.mu.Lock()
 	if _, known := m.side[hash]; known {
 		m.mu.Unlock()
@@ -59,8 +79,8 @@ func (m *WSManager) learnSide(chain *WSChain, d *WSDivergence) {
 // which should go over HTTP so that it does not replace the websocket's chain.
 // A true answer is counted.
 func (m *WSManager) SideRequest(req *Request) bool {
-	hash, ok := lastItemHash(req)
-	if !ok {
+	hash, size, ok := lastItemSideKey(req)
+	if !ok || size > wsSideMaxSize {
 		return false
 	}
 	m.mu.Lock()

@@ -182,7 +182,8 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   than planned twice (see [API behavior](api.md#codex-websocket-transport)).
 - `upstream websocket [codex]: a connection was ended by the backend or the network at 12m5s of age (close status 1001;
   planned 20m0s): before the planned age, counts toward lowering it`: for every such connection (`no close frame` when
-  there was none; `too young to say anything about a limit` under 5 minutes, `at or after the planned age`).
+  there was none; `too young to say anything about a limit` under 5 minutes, `at or after the planned age`, `one event,
+  not counted again` for a break right after another one: a network failure ends every connection at once).
 - The conversation tag in the connection part of a request, `conv 3fa2c1.1a2b`: the thread (key, system prompt, tools) and
   the agent (its first user message). A request that went over HTTP though the websocket was in play (`fallback to HTTP
   (connection busy)` or `transport http (side request)`) ends with `| conv 3fa2c1.1a2b | request 2.1 MiB`: whose request it

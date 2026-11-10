@@ -226,6 +226,28 @@ func sameJSON(a, b string) bool {
 	return errA == nil && errB == nil && string(ab) == string(bb)
 }
 
+// onlyFalseKeysAdded says that got is want's object plus keys whose value is
+// false: Claude Code stores an Edit call with "replace_all":false that the
+// model did not write. A false flag the model left out means the same, so the
+// backend's version of the call is still the client's.
+func onlyFalseKeysAdded(got, want string) bool {
+	var g, w map[string]json.RawMessage
+	if json.Unmarshal([]byte(got), &g) != nil || json.Unmarshal([]byte(want), &w) != nil || len(g) <= len(w) {
+		return false
+	}
+	for key, value := range w {
+		if !sameJSON(string(g[key]), string(value)) || g[key] == nil {
+			return false
+		}
+	}
+	for key, value := range g {
+		if _, in := w[key]; !in && string(value) != "false" {
+			return false
+		}
+	}
+	return true
+}
+
 func decodeInputItem(item any, target any) bool {
 	b, err := json.Marshal(item)
 	return err == nil && json.Unmarshal(b, target) == nil
@@ -312,7 +334,7 @@ func toolCallDifference(got, want functionCallItem) string {
 		return "id"
 	case got.Name != want.Name:
 		return "name"
-	case !sameJSON(got.Arguments, want.Arguments):
+	case !sameJSON(got.Arguments, want.Arguments) && !onlyFalseKeysAdded(got.Arguments, want.Arguments):
 		return "arguments"
 	}
 	return ""

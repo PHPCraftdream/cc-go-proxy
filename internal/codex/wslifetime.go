@@ -17,6 +17,9 @@ const (
 	wsLowerAfter = 2
 	// wsLowerWindow: early breaks further apart than this do not add up.
 	wsLowerWindow = time.Hour
+	// wsLowerBurst: early breaks closer together than this are one event (a
+	// network failure ends every connection at once; it says nothing of an age limit).
+	wsLowerBurst = time.Minute
 	// wsLowerStep is how much the age drops each time.
 	wsLowerStep = 5 * time.Minute
 	// wsLimitFloor is the lowest planned age.
@@ -60,6 +63,9 @@ func (l *wsLifetime) observe(def, age time.Duration, now time.Time) (limit time.
 	if age < wsLearnMinAge || age >= cur {
 		return cur, false
 	}
+	if l.inBurst(now) {
+		return cur, false
+	}
 	if now.Sub(l.lastEarly) > wsLowerWindow {
 		l.early = 0
 	}
@@ -86,4 +92,13 @@ type WSLost struct {
 	// connection was old enough to say something about the backend's limit
 	// and was ended before the planned age.
 	Counts bool
+	// Burst: it would count, but follows another early break by under a
+	// minute: the same event, counted once.
+	Burst bool
+}
+
+// inBurst says that an early break at now follows the last counted one so
+// closely that it belongs to the same event.
+func (l *wsLifetime) inBurst(now time.Time) bool {
+	return !l.lastEarly.IsZero() && now.Sub(l.lastEarly) < wsLowerBurst
 }

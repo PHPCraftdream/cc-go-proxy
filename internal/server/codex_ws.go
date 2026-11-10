@@ -98,6 +98,8 @@ func logWSLost(l codex.WSLost) {
 	switch {
 	case l.Counts:
 		verdict = "before the planned age, counts toward lowering it"
+	case l.Burst:
+		verdict = "before the planned age, but right after another such break: one event, not counted again"
 	case l.Age >= l.Planned:
 		verdict = "at or after the planned age"
 	}
