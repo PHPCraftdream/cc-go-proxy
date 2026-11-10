@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,8 +78,9 @@ func Dialer(u *url.URL, forward DialFunc) DialFunc {
 			return nil, fmt.Errorf("proxy %s: %w", proxyAddr, err)
 		}
 		handshakeDeadline := time.Now().Add(handshakeTimeout)
+		byContext := false // the context's deadline is the earlier one
 		if dl, ok := ctx.Deadline(); ok && dl.Before(handshakeDeadline) {
-			handshakeDeadline = dl
+			handshakeDeadline, byContext = dl, true
 		}
 		_ = c.SetDeadline(handshakeDeadline)
 		stop := context.AfterFunc(ctx, func() { _ = c.SetDeadline(time.Unix(1, 0)) })
@@ -94,8 +96,14 @@ func Dialer(u *url.URL, forward DialFunc) DialFunc {
 		}
 		if err != nil {
 			_ = c.Close()
-			if ctx.Err() != nil {
-				err = fmt.Errorf("%w (%w)", ctx.Err(), err)
+			ctxErr := ctx.Err()
+			// The socket's deadline is the context's and can fire a moment before
+			// the context's own timer: still the context's deadline that ended it.
+			if ctxErr == nil && byContext && errors.Is(err, os.ErrDeadlineExceeded) {
+				ctxErr = context.DeadlineExceeded
+			}
+			if ctxErr != nil {
+				err = fmt.Errorf("%w (%w)", ctxErr, err)
 			}
 			return nil, fmt.Errorf("proxy %s: %w", proxyAddr, err)
 		}
