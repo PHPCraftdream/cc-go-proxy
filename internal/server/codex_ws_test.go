@@ -48,7 +48,7 @@ func newCodexWSTestHarness(t *testing.T, backend http.Handler, transport string)
 	t.Cleanup(server.Close)
 
 	oldManager, oldFallbacks := codexWSManager, codexWSFallbacks.Load()
-	manager := codex.NewWSManager()
+	manager := newCodexWSManager()
 	codexWSManagerMu.Lock()
 	codexWSManager = manager
 	codexWSManagerMu.Unlock()
