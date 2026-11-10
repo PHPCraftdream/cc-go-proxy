@@ -268,6 +268,12 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	promptStats.Add(tr.Usage, gapGroup(trace.prev, trace.start), edgeGroup(trace.prev.edge, trace.edge), turnStateGroup(trace.routing != nil && trace.routing.Sent()))
 	ids := upstreamIDs(up.Header)
 	linkHealth.Reply(trace.linkSample())
+	if tr.Failed == "" && ctx.Err() == nil && !tr.FirstDelta.IsZero() {
+		trace.mu.Lock()
+		kind := speedKind(trace.transport)
+		trace.mu.Unlock()
+		replySpeed.Add(kind, tr.FirstDelta.Sub(trace.start), end.Sub(trace.start))
+	}
 	if tr.Failed != "" && ctx.Err() == nil {
 		noteBreak(tr.Failed, trace.pingClosed(end), false)
 	}

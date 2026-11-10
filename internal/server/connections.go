@@ -85,6 +85,7 @@ func logUpstreamStats(w io.Writer) {
 		writeUpstreamStats(w, now, ts)
 		writeCodexWebsocketStats(w, now)
 		writeLinkStats(w, now)
+		writeSpeedStats(w, now)
 		writeCacheStats(w, now)
 	}
 }
