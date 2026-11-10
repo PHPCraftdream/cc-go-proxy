@@ -180,7 +180,7 @@ func TestLogWSLostSaysWhetherTheBreakCountsTowardTheLimit(t *testing.T) {
 		"a connection was ended by the backend or the network at 12m5s of age (close status 1001; planned 25m0s): before the planned age, counts toward lowering it",
 		"a connection was ended by the backend or the network at 2m0s of age (no close frame; planned 25m0s): too young to say anything about a limit",
 		"a connection was ended by the backend or the network at 25m0s of age (close status 1006; planned 25m0s): at or after the planned age",
-		"a connection was ended by the backend or the network at 5m36s of age (no close frame; planned 20m0s): before the planned age, but right after another such break: one event, not counted again",
+		"a connection was ended by the backend or the network at 5m35s of age (no close frame; planned 20m0s): before the planned age, but right after another such break: one event, not counted again",
 	} {
 		if !strings.HasSuffix(lines[i], tail) {
 			t.Errorf("line %d = %q, want it to end with %q", i, lines[i], tail)
