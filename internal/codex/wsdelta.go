@@ -3,6 +3,7 @@ package codex
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // WSChain is what the backend holds after a completed response on one websocket
@@ -85,9 +86,9 @@ func (c *WSChain) Delta(next *Request) (items []any, ok bool, reason string) {
 	if len(next.Input) < c.inputLen {
 		return nil, false, fmt.Sprintf("history diverged at item %d", len(next.Input))
 	}
-	cursor, matched := c.matchOutput(next.Input, c.inputLen)
-	if !matched {
-		return nil, false, "output mismatch"
+	cursor, why := c.matchOutput(next.Input, c.inputLen)
+	if why != "" {
+		return nil, false, why
 	}
 	if cursor == len(next.Input) {
 		return nil, false, "nothing new"
@@ -104,64 +105,103 @@ func (c *WSChain) Delta(next *Request) (items []any, ok bool, reason string) {
 	return delta, true, ""
 }
 
-func (c *WSChain) matchOutput(input []any, cursor int) (int, bool) {
+// matchOutput checks that input, from cursor on, holds exactly the output the
+// backend produced, by content: the same assistant text, the same tool calls
+// (id, name, arguments as JSON values) and the same reasoning (encrypted
+// content). Anything else would let the backend continue from a context the
+// client no longer has, so it returns the reason to send the request in full.
+func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 	for _, raw := range c.output {
 		var head struct {
 			Type string `json:"type"`
 		}
 		if json.Unmarshal(raw, &head) != nil {
-			return cursor, false
+			return cursor, "output mismatch"
+		}
+		if cursor >= len(input) {
+			return cursor, "output missing"
 		}
 		switch head.Type {
 		case "message":
-			var output struct {
-				Type string `json:"type"`
-				Role string `json:"role"`
-			}
-			if json.Unmarshal(raw, &output) != nil || output.Type != "message" || output.Role != "assistant" || cursor >= len(input) {
-				return cursor, false
-			}
-			var converted struct {
-				Type string `json:"type"`
-				Role string `json:"role"`
+			var output, converted wsMessage
+			if json.Unmarshal(raw, &output) != nil || output.Role != "assistant" {
+				return cursor, "output mismatch"
 			}
 			if !decodeInputItem(input[cursor], &converted) || converted.Type != "message" || converted.Role != "assistant" {
-				return cursor, false
+				return cursor, "output mismatch"
 			}
-			cursor++
+			if output.text() != converted.text() {
+				return cursor, "assistant text changed"
+			}
 		case "reasoning":
-			var output reasoningItem
-			if json.Unmarshal(raw, &output) != nil || output.Type != "reasoning" {
-				return cursor, false
+			var output, converted reasoningItem
+			if json.Unmarshal(raw, &output) != nil || output.EncryptedContent == "" {
+				return cursor, "output mismatch"
 			}
-			if cursor < len(input) && inputKind(input[cursor]) == "reasoning" {
-				var converted reasoningItem
-				if !decodeInputItem(input[cursor], &converted) || output.EncryptedContent == "" || converted.EncryptedContent != output.EncryptedContent {
-					return cursor, false
-				}
-				cursor++
+			if !decodeInputItem(input[cursor], &converted) || converted.Type != "reasoning" {
+				return cursor, "reasoning dropped"
+			}
+			if converted.EncryptedContent != output.EncryptedContent {
+				return cursor, "reasoning differs"
 			}
 		case "function_call":
-			var output struct {
-				Type   string `json:"type"`
-				CallID string `json:"call_id"`
+			var output, converted functionCallItem
+			if json.Unmarshal(raw, &output) != nil || output.CallID == "" {
+				return cursor, "output mismatch"
 			}
-			if json.Unmarshal(raw, &output) != nil || output.Type != "function_call" || output.CallID == "" || cursor >= len(input) {
-				return cursor, false
+			if !decodeInputItem(input[cursor], &converted) || converted.Type != "function_call" {
+				return cursor, "output mismatch"
 			}
-			var converted struct {
-				Type   string `json:"type"`
-				CallID string `json:"call_id"`
+			if converted.CallID != output.CallID || converted.Name != output.Name || !sameJSON(converted.Arguments, output.Arguments) {
+				return cursor, "tool call changed"
 			}
-			if !decodeInputItem(input[cursor], &converted) || converted.Type != "function_call" || converted.CallID != output.CallID {
-				return cursor, false
-			}
-			cursor++
 		default:
-			return cursor, false
+			return cursor, "output mismatch"
 		}
+		cursor++
 	}
-	return cursor, true
+	return cursor, ""
+}
+
+// wsMessage is a message item as the backend sends it and as the converter
+// writes it back (output_text parts).
+type wsMessage struct {
+	Type    string `json:"type"`
+	Role    string `json:"role"`
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+func (m wsMessage) text() string {
+	var b strings.Builder
+	for _, part := range m.Content {
+		b.WriteString(part.Text)
+	}
+	return b.String()
+}
+
+// sameJSON compares two JSON texts as values: key order and spacing do not
+// matter (the client stores tool arguments as an object, the converter writes
+// them out again). Empty and "{}" are the same (no arguments).
+func sameJSON(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == "" {
+		a = "{}"
+	}
+	if b == "" {
+		b = "{}"
+	}
+	var av, bv any
+	if json.Unmarshal([]byte(a), &av) != nil || json.Unmarshal([]byte(b), &bv) != nil {
+		return false
+	}
+	ab, errA := json.Marshal(av)
+	bb, errB := json.Marshal(bv)
+	return errA == nil && errB == nil && string(ab) == string(bb)
 }
 
 func decodeInputItem(item any, target any) bool {
