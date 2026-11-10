@@ -229,6 +229,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- `install.ps1` found the newest release through the GitHub API, whose anonymous limit is shared by every runner behind
+  one address (the installer check failed with "rate limit exceeded"); it follows the `/releases/latest` redirect now,
+  as `install.sh` does. The CI installer step too.
 - A profile directory that is a symlink or a Windows junction to the real Claude Code directory passed the "is this the
   user's own directory" check (it compared path spellings), and launching the profile then deleted the user's real
   `.credentials.json`. The directories are now compared by identity (`os.SameFile`, also after resolving symlinks)

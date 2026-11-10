@@ -27,9 +27,14 @@ function Install-Ccgp {
     $version = $env:CCGP_VERSION
     if ($version) { $version = $version.TrimStart('v') }
     if (-not $version) {
-        $latest = Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'ccgp-install' }
-        $version = ([string]$latest.tag_name).TrimStart('v')
-        if (-not $version) { throw 'cannot find the latest release' }
+        # /releases/latest redirects to /releases/tag/vX.Y.Z; no API rate limit applies.
+        $req = [Net.HttpWebRequest]::Create("$base/latest")
+        $req.Method = 'HEAD'; $req.AllowAutoRedirect = $false; $req.UserAgent = 'ccgp-install'
+        $res = $req.GetResponse()
+        try { $location = [string]$res.Headers['Location'] } finally { $res.Close() }
+        $tag = ($location -split '/')[-1]
+        if ($tag -notmatch '^v\d') { throw "cannot find the latest release (got '$location')" }
+        $version = $tag.TrimStart('v')
     }
 
     $dir = $env:CCGP_INSTALL_DIR

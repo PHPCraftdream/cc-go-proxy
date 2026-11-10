@@ -261,14 +261,16 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         # The newest published release, asked for by its version.
-        try {
-          $latest = Invoke-RestMethod -UseBasicParsing -Uri 'https://api.github.com/repos/PHPCraftdream/cc-go-proxy/releases/latest' -Headers @{ 'User-Agent' = 'ccgp-ci' }
-        } catch {
-          if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+        # /releases/latest redirects to /releases/tag/vX.Y.Z (to /releases without one); no API rate limit applies.
+        $req = [Net.HttpWebRequest]::Create('https://github.com/PHPCraftdream/cc-go-proxy/releases/latest')
+        $req.Method = 'HEAD'; $req.AllowAutoRedirect = $false; $req.UserAgent = 'ccgp-ci'
+        $res = $req.GetResponse()
+        try { $location = [string]$res.Headers['Location'] } finally { $res.Close() }
+        if ($location -notmatch '/releases/tag/v') {
           Write-Host '::notice::no release is published yet: nothing to install'
           exit 0
         }
-        $ver = ([string]$latest.tag_name).TrimStart('v')
+        $ver = ($location -split '/')[-1].TrimStart('v')
         $env:CCGP_VERSION = $ver
         ./install.ps1
         $v = & "$env:CCGP_INSTALL_DIR\ccgp.exe" --version
