@@ -57,9 +57,14 @@ func (c *Config) MaxBodyBytes() int {
 // IsEnvMode reports env-only mode (no config.ktav).
 func (c *Config) IsEnvMode() bool { return c.ConfigFile == "" }
 
-// CodexWebsocket reports that Codex requests go over the websocket transport
-// (CODEX_TRANSPORT=websocket); the default is HTTP.
-func (c *Config) CodexWebsocket() bool { return c.CodexTransport == "websocket" }
+// CodexWebsocket reports that Codex requests try the websocket transport
+// first (CODEX_TRANSPORT auto, the default, or websocket), with HTTP as the
+// fallback; CODEX_TRANSPORT=http turns it off. Only the Responses protocol
+// (provider type codex) has a websocket; Chat Completions and Anthropic
+// Messages providers always use HTTP.
+func (c *Config) CodexWebsocket() bool {
+	return c.CodexTransport == "auto" || c.CodexTransport == "websocket"
+}
 
 // CacheKey uniquely identifies a (provider, model) combination for capability caching
 // Using a struct as map key provides type safety and zero collision risk
@@ -244,12 +249,16 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+// normalizeCodexTransport reads CODEX_TRANSPORT: http, websocket (ws) or auto;
+// anything else, unset included, is auto.
 func normalizeCodexTransport(value string) string {
 	switch strings.ToLower(value) {
+	case "http":
+		return "http"
 	case "websocket", "ws":
 		return "websocket"
 	default:
-		return "http"
+		return "auto"
 	}
 }
 
