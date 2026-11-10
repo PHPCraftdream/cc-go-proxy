@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // WSChain is what the backend holds after a completed response on one websocket
@@ -14,6 +15,11 @@ type WSChain struct {
 	inputLen    int // items of the full input the backend holds (hashes cover their content)
 	hashes      []uint64
 	output      []json.RawMessage
+	// For the log when a later request diverges: the kind and size of every
+	// input item, the encoding of the last one, when the response completed.
+	shapes []ItemShape
+	last   []byte
+	done   time.Time
 }
 
 // NewChain records req (the full request just sent) and the output items of its
@@ -22,12 +28,19 @@ func NewChain(req *Request, responseID string, outputItems []json.RawMessage) *W
 	if req == nil || req.PromptCacheKey == "" {
 		return nil
 	}
+	hashes, sizes, last := itemDigests(req, true)
 	chain := &WSChain{
 		responseID:  responseID,
 		fingerprint: NewFingerprint(req),
 		inputLen:    len(req.Input),
-		hashes:      append([]uint64(nil), ItemHashes(req)...),
+		hashes:      hashes,
 		output:      make([]json.RawMessage, len(outputItems)),
+		shapes:      make([]ItemShape, len(req.Input)),
+		last:        last,
+	}
+	for i, item := range req.Input {
+		chain.shapes[i] = itemShape(item)
+		chain.shapes[i].Size = sizes[i]
 	}
 	for i := range outputItems {
 		chain.output[i] = append(json.RawMessage(nil), outputItems[i]...)
@@ -46,63 +59,72 @@ func (c *WSChain) ResponseID() string {
 // Delta returns the items of next that the backend does not hold yet, or
 // ok=false and a short reason when next must be sent in full.
 func (c *WSChain) Delta(next *Request) (items []any, ok bool, reason string) {
+	items, ok, reason, _ = c.delta(next)
+	return items, ok, reason
+}
+
+// delta is Delta plus, when the history diverged, a description of where.
+func (c *WSChain) delta(next *Request) (items []any, ok bool, reason string, div *WSDivergence) {
 	if next == nil || next.PromptCacheKey == "" {
-		return nil, false, "no cache key"
+		return nil, false, "no cache key", nil
 	}
 	if c == nil {
-		return nil, false, "no chain"
+		return nil, false, "no chain", nil
 	}
 	if c.responseID == "" {
-		return nil, false, "no response id"
+		return nil, false, "no response id", nil
 	}
 	current := NewFingerprint(next)
 	if current.Key != c.fingerprint.Key {
-		return nil, false, "cache key changed"
+		return nil, false, "cache key changed", nil
 	}
 	if current.Model != c.fingerprint.Model {
-		return nil, false, "model changed"
+		return nil, false, "model changed", nil
 	}
 	if current.Tools != c.fingerprint.Tools || current.NTools != c.fingerprint.NTools {
-		return nil, false, "tools changed"
+		return nil, false, "tools changed", nil
 	}
 	if current.System != c.fingerprint.System {
-		return nil, false, "system changed"
+		return nil, false, "system changed", nil
 	}
 	if current.Reasoning != c.fingerprint.Reasoning {
-		return nil, false, "reasoning changed"
+		return nil, false, "reasoning changed", nil
 	}
 	if current.ToolChoice != c.fingerprint.ToolChoice {
-		return nil, false, "tool choice changed"
+		return nil, false, "tool choice changed", nil
 	}
 	hashes := ItemHashes(next)
+	diverged := func(at int) ([]any, bool, string, *WSDivergence) {
+		return nil, false, fmt.Sprintf("history diverged at item %d of %d", at, len(c.hashes)), c.divergence(next, at)
+	}
 	for i := 0; i < min(len(hashes), len(c.hashes)); i++ {
 		if hashes[i] != c.hashes[i] {
-			return nil, false, fmt.Sprintf("history diverged at item %d of %d", i, len(c.hashes))
+			return diverged(i)
 		}
 	}
 	if len(hashes) < len(c.hashes) {
-		return nil, false, fmt.Sprintf("history diverged at item %d of %d", len(hashes), len(c.hashes))
+		return diverged(len(hashes))
 	}
 	if len(next.Input) < c.inputLen {
-		return nil, false, fmt.Sprintf("history diverged at item %d of %d", len(next.Input), len(c.hashes))
+		return diverged(len(next.Input))
 	}
 	cursor, why := c.matchOutput(next.Input, c.inputLen)
 	if why != "" {
-		return nil, false, why
+		return nil, false, why, nil
 	}
 	if cursor == len(next.Input) {
-		return nil, false, "nothing new"
+		return nil, false, "nothing new", nil
 	}
 	for _, item := range next.Input[cursor:] {
 		if !validDeltaItem(item) {
-			return nil, false, "output mismatch"
+			return nil, false, "new item not sendable (" + itemShape(item).Kind + ")", nil
 		}
 	}
 	delta, err := cloneAnySlice(next.Input[cursor:])
 	if err != nil {
-		return nil, false, "output mismatch"
+		return nil, false, "delta copy failed", nil
 	}
-	return delta, true, ""
+	return delta, true, "", nil
 }
 
 // matchOutput checks that input, from cursor on, holds exactly the output the
@@ -116,7 +138,7 @@ func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 			Type string `json:"type"`
 		}
 		if json.Unmarshal(raw, &head) != nil {
-			return cursor, "output mismatch"
+			return cursor, "output unreadable"
 		}
 		if cursor >= len(input) {
 			return cursor, "output missing"
@@ -125,10 +147,10 @@ func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 		case "message":
 			var output, converted wsMessage
 			if json.Unmarshal(raw, &output) != nil || output.Role != "assistant" {
-				return cursor, "output mismatch"
+				return cursor, "output not an assistant message"
 			}
 			if !decodeInputItem(input[cursor], &converted) || converted.Type != "message" || converted.Role != "assistant" {
-				return cursor, "output mismatch"
+				return cursor, "assistant message missing (found " + itemShape(input[cursor]).Kind + ")"
 			}
 			if output.text() != converted.text() {
 				return cursor, "assistant text changed"
@@ -136,7 +158,7 @@ func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 		case "reasoning":
 			var output, converted reasoningItem
 			if json.Unmarshal(raw, &output) != nil || output.EncryptedContent == "" {
-				return cursor, "output mismatch"
+				return cursor, "output reasoning without content"
 			}
 			if !decodeInputItem(input[cursor], &converted) || converted.Type != "reasoning" {
 				return cursor, "reasoning dropped"
@@ -147,16 +169,16 @@ func (c *WSChain) matchOutput(input []any, cursor int) (int, string) {
 		case "function_call":
 			var output, converted functionCallItem
 			if json.Unmarshal(raw, &output) != nil || output.CallID == "" {
-				return cursor, "output mismatch"
+				return cursor, "output tool call without id"
 			}
 			if !decodeInputItem(input[cursor], &converted) || converted.Type != "function_call" {
-				return cursor, "output mismatch"
+				return cursor, "tool call missing (found " + itemShape(input[cursor]).Kind + ")"
 			}
 			if field := toolCallDifference(converted, output); field != "" {
 				return cursor, "tool call changed (" + field + ", " + safeToolName(output.Name) + ")"
 			}
 		default:
-			return cursor, "output mismatch"
+			return cursor, "output item not compared (" + safeItemType(head.Type) + ")"
 		}
 		cursor++
 	}

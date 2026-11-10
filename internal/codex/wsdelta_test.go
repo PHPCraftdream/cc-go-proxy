@@ -162,8 +162,6 @@ func TestWSChainOutputSequenceCountAndMalformed(t *testing.T) {
 	call2 := func(name, args string) functionCallItem {
 		return functionCallItem{Type: "function_call", CallID: "call-1", Name: name, Arguments: args}
 	}
-	const mismatch = "output mismatch"
-
 	cases := []struct {
 		name   string
 		output []json.RawMessage
@@ -176,22 +174,22 @@ func TestWSChainOutputSequenceCountAndMalformed(t *testing.T) {
 			json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"part one"}]}`),
 			json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"part two"}]}`),
 		}, []any{assistantMessage("merged"), userNext}, "assistant text changed"},
-		{"message must be assistant role", []json.RawMessage{messageOutput}, []any{messageItem{Type: "message", Role: "user"}, userNext}, mismatch},
-		{"reasoning cannot be reordered ahead of message", []json.RawMessage{messageOutput, reasoningOutput, messageOutput}, []any{reasoning, assistantMessage("one"), assistantMessage("two"), userNext}, mismatch},
+		{"message must be assistant role", []json.RawMessage{messageOutput}, []any{messageItem{Type: "message", Role: "user"}, userNext}, "assistant message missing (found user message)"},
+		{"reasoning cannot be reordered ahead of message", []json.RawMessage{messageOutput, reasoningOutput, messageOutput}, []any{reasoning, assistantMessage("one"), assistantMessage("two"), userNext}, "assistant message missing (found reasoning)"},
 		{"kept reasoning matches", []json.RawMessage{reasoningOutput, messageOutput}, []any{reasoning, assistantMessage("after"), userNext}, ""},
 		{"reasoning must not be dropped", []json.RawMessage{reasoningOutput, messageOutput}, []any{assistantMessage("after"), userNext}, "reasoning dropped"},
 		{"present reasoning encrypted content must match", []json.RawMessage{reasoningOutput}, []any{reasoningItem{Type: "reasoning", EncryptedContent: "different"}, userNext}, "reasoning differs"},
-		{"reasoning cannot skip input reasoning before message", []json.RawMessage{messageOutput}, []any{reasoning, assistantMessage("after"), userNext}, mismatch},
+		{"reasoning cannot skip input reasoning before message", []json.RawMessage{messageOutput}, []any{reasoning, assistantMessage("after"), userNext}, "assistant message missing (found reasoning)"},
 		{"function arguments whitespace and key order may vary", []json.RawMessage{json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"lookup","arguments":"{\"y\":2,\"x\":1}"}`)}, []any{call2("lookup", `{ "x" : 1, "y": 2 }`), userNext}, ""},
 		{"function arguments must match", []json.RawMessage{callOutput}, []any{call2("lookup", `{"x":2}`), userNext}, "tool call changed (arguments, lookup)"},
 		{"function name must match", []json.RawMessage{callOutput}, []any{call2("other", `{"x":1}`), userNext}, "tool call changed (name, lookup)"},
 		{"empty arguments equal an empty object", []json.RawMessage{json.RawMessage(`{"type":"function_call","call_id":"call-1","name":"lookup","arguments":""}`)}, []any{call2("lookup", `{}`), userNext}, ""},
-		{"function call cannot reorder input reasoning", []json.RawMessage{callOutput, reasoningOutput}, []any{reasoning, call, userNext}, mismatch},
-		{"message and call type order must match", []json.RawMessage{messageOutput, callOutput}, []any{call, assistantMessage("after"), userNext}, mismatch},
+		{"function call cannot reorder input reasoning", []json.RawMessage{callOutput, reasoningOutput}, []any{reasoning, call, userNext}, "tool call missing (found reasoning)"},
+		{"message and call type order must match", []json.RawMessage{messageOutput, callOutput}, []any{call, assistantMessage("after"), userNext}, "assistant message missing (found function_call)"},
 		{"output the client does not send back", []json.RawMessage{messageOutput, callOutput}, []any{assistantMessage("after")}, "output missing"},
-		{"function call output is unsupported", []json.RawMessage{json.RawMessage(`{"type":"function_call_output","call_id":"call-1","output":"result"}`)}, []any{userNext}, mismatch},
-		{"malformed output is rejected", []json.RawMessage{json.RawMessage(`{"type":"message"`)}, []any{userNext}, mismatch},
-		{"unknown output type is rejected", []json.RawMessage{json.RawMessage(`{"type":"image"}`)}, []any{userNext}, mismatch},
+		{"function call output is unsupported", []json.RawMessage{json.RawMessage(`{"type":"function_call_output","call_id":"call-1","output":"result"}`)}, []any{userNext}, "output item not compared (function_call_output)"},
+		{"malformed output is rejected", []json.RawMessage{json.RawMessage(`{"type":"message"`)}, []any{userNext}, "output unreadable"},
+		{"unknown output type is rejected", []json.RawMessage{json.RawMessage(`{"type":"image"}`)}, []any{userNext}, "output item not compared (image)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -390,8 +388,8 @@ func TestWSChainDoesNotSkipAssistantTurnWithoutMatchingOutput(t *testing.T) {
 	base := wsRequest(t, wsBody(wsUser("question"), ""))
 	chain := NewChain(base, "resp", nil)
 	next := wsRequest(t, wsBody(wsUser("question")+`,{"role":"assistant","content":"not verified"},`+wsUser("next"), ""))
-	if _, ok, reason := chain.Delta(next); ok || reason != "output mismatch" {
-		t.Fatalf("unverified assistant turn Delta() = %v, %q; want output mismatch", ok, reason)
+	if _, ok, reason := chain.Delta(next); ok || reason != "new item not sendable (assistant message)" {
+		t.Fatalf("unverified assistant turn Delta() = %v, %q; want new item not sendable", ok, reason)
 	}
 }
 

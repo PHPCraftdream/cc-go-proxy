@@ -65,7 +65,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   to 25 after 6 hours without such a break; so no request meets the cut. The log says
   `transport websocket (delta: sent 3 KiB of 4.7 MiB)` / `(full: <reason>)` / `fallback to HTTP (<reason>)` per request,
   with the reason in detail (`history diverged at item 412 of 1079`, `tool call changed (arguments, Read)`,
-  `replaced at the lowered age of 20m`), one line when the age is lowered, the broken connections in the
+  `assistant message missing (found user message)`, `replaced at the lowered age of 20m`) and the conversation
+  (`conv 3fa2c1`), a line per diverged history (the item's kind, size and parts before and now, the bytes that stayed
+  equal, whether the reply chained on is in the new request, the prompt comparison; never content), one line when the
+  age is lowered, the broken connections in the
   `upstream link` line (cause `websocket ended by the backend`, also for streams ccgp sent again),
   `upstream websocket [codex]` and `upstream speed [codex]` (median time to the first token and to the end of the reply,
   for HTTP, websocket full and websocket delta) every 10 minutes. Adds the dependency `github.com/coder/websocket` (ISC).

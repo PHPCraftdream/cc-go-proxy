@@ -40,10 +40,11 @@ func codexWSStatsManager() *codex.WSManager {
 func safeWSReason(reason string) string {
 	switch reason {
 	case "new connection", "connection broken", "connection too old", "lowered age limit", "no chain", "no response id", "cache key changed", "model changed", "tools changed", "system changed", "reasoning changed", "tool choice changed", "nothing new", "output mismatch",
-		"output missing", "assistant text changed", "reasoning dropped", "reasoning differs", "tool call changed":
+		"output missing", "assistant text changed", "reasoning dropped", "reasoning differs", "tool call changed",
+		"output unreadable", "output not an assistant message", "output reasoning without content", "output tool call without id", "delta copy failed":
 		return reason
 	}
-	if wsDivergence.MatchString(reason) || wsToolChange.MatchString(reason) {
+	if wsDivergence.MatchString(reason) || wsToolChange.MatchString(reason) || wsItemKind.MatchString(reason) {
 		return reason
 	}
 	if strings.HasPrefix(reason, "history diverged at item ") {
@@ -57,7 +58,78 @@ func safeWSReason(reason string) string {
 var (
 	wsDivergence = regexp.MustCompile(`^history diverged at item \d+( of \d+)?$`)
 	wsToolChange = regexp.MustCompile(`^tool call changed \((id|name|arguments)(, ([A-Za-z0-9_.:-]{1,40}|\?))?\)$`)
+	wsItemKind   = regexp.MustCompile(`^((assistant message|tool call) missing \(found [a-z_]{1,32}( message)?\)|new item not sendable \([a-z_]{1,32}( message)?\)|output item not compared \([a-z_]{1,32}\))$`)
 )
+
+// wsConvTag names a websocket conversation (one connection and its chain) in
+// the log: the start of its thread id, which is a hash.
+func wsConvTag(threadID string) string {
+	if len(threadID) < 6 {
+		return threadID
+	}
+	return threadID[:6]
+}
+
+func (u *upstreamTrace) convText() string {
+	if u.conv == "" {
+		return ""
+	}
+	return ", conv " + u.conv
+}
+
+func (u *upstreamTrace) convPrefix() string {
+	if u.conv == "" {
+		return ""
+	}
+	return " conv " + u.conv
+}
+
+// wsDivergenceText says where a request's history left the chain it would have
+// continued: the item, what it was and is now (kind and size, never content),
+// where the chain's reply is in the new history, and the prompt comparison.
+func wsDivergenceText(d codex.WSDivergence, prompt string) string {
+	text := fmt.Sprintf("history diverged at item %d of %d (this request has %d): was %s, ", d.At, d.Had, d.Has, shapeText(d.Was))
+	if d.Now.Kind == "" {
+		text += "now the request ends there"
+	} else {
+		text += "now " + shapeText(d.Now)
+		if diff := d.Now.Size - d.Was.Size; diff > 0 {
+			text += " (+" + sizeString(diff) + ")"
+		} else if diff < 0 {
+			text += " (-" + sizeString(-diff) + ")"
+		}
+	}
+	if d.SameHead >= 0 {
+		text += fmt.Sprintf("; first %s and last %s equal, between them %s -> %s", sizeString(d.SameHead), sizeString(d.SameTail),
+			sizeString(d.Was.Size-d.SameHead-d.SameTail), sizeString(d.Now.Size-d.SameHead-d.SameTail))
+	}
+	switch {
+	case !d.Reply:
+		text += "; the chain has no reply"
+	case d.ReplyAt >= 0:
+		text += fmt.Sprintf("; the reply chained on is at item %d", d.ReplyAt)
+	default:
+		text += "; the reply chained on is not in this request"
+	}
+	if d.Since > 0 {
+		text += "; the chained reply ended " + roundDur(d.Since) + " ago"
+	}
+	if prompt != "" {
+		text += " | " + prompt
+	}
+	return text
+}
+
+func shapeText(s codex.ItemShape) string {
+	if s.Kind == "" {
+		return "nothing"
+	}
+	text := s.Kind + " " + sizeString(s.Size)
+	if s.Parts > 0 {
+		text += " in " + count(s.Parts, "part", "parts")
+	}
+	return text
+}
 
 // logWSLimit tells that the planned age of connections was lowered because the
 // backend ended them early, again and again.
@@ -124,7 +196,7 @@ func (u *upstreamTrace) startWSAttempt() {
 func (u *upstreamTrace) noteWSFailure(info codex.WSInfo, err error) {
 	u.mu.Lock()
 	u.transport = "transport websocket (full: " + safeWSFallbackReason(err) + ")"
-	u.wsConn = "conn new (dial " + roundDur(info.DialTime) + ")"
+	u.wsConn = "conn new (dial " + roundDur(info.DialTime) + u.convText() + ")"
 	u.wire.Raw = 0
 	u.wire.Sent = 0
 	u.wire.Encoding = ""
@@ -139,9 +211,13 @@ func (u *upstreamTrace) noteWebsocket(info codex.WSInfo, bodyBytes int) {
 	} else {
 		transport = fmt.Sprintf("transport websocket (full: %s, sent %s)", wsReasonText(info), frameSize)
 	}
-	conn := "conn new (dial " + roundDur(info.DialTime) + ")"
+	conn := "conn new (dial " + roundDur(info.DialTime) + u.convText() + ")"
 	if info.Reused {
-		conn = "conn reused (age " + roundDur(info.ConnAge) + ")"
+		conn = "conn reused (age " + roundDur(info.ConnAge) + u.convText() + ")"
+	}
+	if info.Divergence != nil {
+		_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]%s: %s\n", time.Now().Format("15:04:05"),
+			u.convPrefix(), wsDivergenceText(*info.Divergence, u.prompt))
 	}
 	u.mu.Lock()
 	u.transport = transport
@@ -239,18 +315,24 @@ func writeCodexWebsocketStats(w io.Writer, now time.Time) {
 		return
 	}
 	stats := manager.TakeStats()
-	fallbacks := int64(stats.Fallbacks) + codexWSFallbacks.Swap(0)
-	if stats.Delta+stats.Full+stats.Busy+int(fallbacks)+stats.Dials+stats.Lost+stats.Early == 0 && stats.SentBytes == 0 {
+	fallbacks := codexWSFallbacks.Swap(0)
+	if stats.Delta+stats.Full+stats.Busy+stats.Fallbacks+int(fallbacks)+stats.Dials+stats.Lost+stats.Early == 0 && stats.SentBytes == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "[%s] upstream websocket [codex]: %s\n", now.Format("15:04:05"), wsStatsText(stats, int(fallbacks)))
 }
 
-// wsStatsText is the body of the periodic websocket line.
+// wsStatsText is the body of the periodic websocket line; fallbacks counts the
+// requests that went over HTTP, stats.Fallbacks the full ones a delta could not
+// continue.
 func wsStatsText(stats codex.WSStats, fallbacks int) string {
+	full := count(stats.Full, "full", "full")
+	if stats.Fallbacks > 0 {
+		full += fmt.Sprintf(" (%d where a delta could not continue)", stats.Fallbacks)
+	}
 	text := fmt.Sprintf("%s, %s, %s, %s, %s; sent %s",
-		count(stats.Delta, "delta", "delta"), count(stats.Full, "full", "full"),
-		count(stats.Busy, "busy", "busy"), count(fallbacks, "fallback", "fallbacks"), count(stats.Dials, "dial", "dials"),
+		count(stats.Delta, "delta", "delta"), full,
+		count(stats.Busy, "busy", "busy"), count(fallbacks, "HTTP fallback", "HTTP fallbacks"), count(stats.Dials, "dial", "dials"),
 		sizeString(int(stats.SentBytes)))
 	if stats.Lost > 0 {
 		text += "; " + count(stats.Lost, "connection", "connections") + " ended by the backend or the network"
