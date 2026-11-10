@@ -21,7 +21,8 @@ var (
 )
 
 var (
-	wsManagerMaxConnections = 8
+	// wsManagerMaxConnections: a conversation and its parallel subagents each hold one.
+	wsManagerMaxConnections = 16
 	// wsManagerMaxAge is the planned age of a connection: the backend ends them
 	// after a fixed age (30 minutes seen), so they are replaced before it.
 	wsManagerMaxAge       = 25 * time.Minute
@@ -120,7 +121,10 @@ type WSManager struct {
 	OnLimit func(WSLimit)
 	// OnSide is called (without the lock) when a message is learned as a side
 	// request's (wsside.go); side holds the hashes of those messages.
-	OnSide       func(WSSide)
+	OnSide func(WSSide)
+	// OnLost is called (without the lock) for every connection the backend or the
+	// network ended.
+	OnLost       func(WSLost)
 	side         map[uint64]struct{}
 	now          func() time.Time
 	maxEntries   int
@@ -153,7 +157,7 @@ func (m *WSManager) initLocked() {
 		m.maxEntries = wsManagerMaxConnections
 	}
 	if m.maxEntries < 1 {
-		m.maxEntries = 8
+		m.maxEntries = wsManagerMaxConnections
 	}
 	if m.maxAge <= 0 {
 		m.maxAge = wsManagerMaxAge
@@ -815,8 +819,11 @@ func (m *WSManager) observeLost(owner string, age time.Duration, status int) {
 	}
 	was := l.current(m.maxAge, m.now())
 	limit, lowered := l.observe(m.maxAge, age, m.now())
-	notify := m.OnLimit
+	notify, notifyLost := m.OnLimit, m.OnLost
 	m.mu.Unlock()
+	if notifyLost != nil {
+		notifyLost(WSLost{Age: age, Status: status, Planned: was, Counts: age >= wsLearnMinAge && age < was})
+	}
 	if lowered && notify != nil {
 		notify(WSLimit{Age: limit, Was: was, Broke: age, Status: status})
 	}

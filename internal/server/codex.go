@@ -412,9 +412,13 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if useWS {
 		retry.request = req
 		retry.websocket = true
-		trace.conv = wsConvTag(turnRegistration.threadID)
+		// One websocket per agent: the subagents of a conversation share its
+		// thread (key, system prompt, tools) and would replace each other's chain.
+		agent := codex.AgentKey(req)
+		bucket := turnRegistration.threadID + ":" + agent
+		trace.conv = wsConvTag(turnRegistration.threadID) + wsAgentTag(agent)
 		retry.callWS = func(request *codex.Request) (*http.Response, codex.WSInfo, error) {
-			return currentCodexWSManager().Call(wsCtx, baseURL, s, turnRegistration.threadID, request)
+			return currentCodexWSManager().Call(wsCtx, baseURL, s, bucket, request)
 		}
 		resp, err = retry.requestCall(ctx, trace, requestBytes)
 	} else {

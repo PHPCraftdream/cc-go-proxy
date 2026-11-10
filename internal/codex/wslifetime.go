@@ -76,3 +76,14 @@ func (l *wsLifetime) observe(def, age time.Duration, now time.Time) (limit time.
 	l.limit = next
 	return next, true
 }
+
+// WSLost describes a connection the backend or the network ended.
+type WSLost struct {
+	Age     time.Duration
+	Status  int // the close status, -1 without a close frame
+	Planned time.Duration
+	// Counts is whether the break counts toward lowering the planned age: the
+	// connection was old enough to say something about the backend's limit
+	// and was ended before the planned age.
+	Counts bool
+}

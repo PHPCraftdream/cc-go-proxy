@@ -723,7 +723,8 @@ func TestCodexWebsocketRoutingStateSurvivesReuseAndReconnect(t *testing.T) {
 	if status != fiber.StatusOK || !strings.Contains(response, "message_stop") {
 		t.Fatalf("first request status=%d body=%q", status, response)
 	}
-	continuation := turnStateContinuationBody("routing-reconnect")
+	// The conversation's first user message is the agent's key: the continuation keeps it.
+	continuation := strings.Replace(turnStateContinuationBody("routing-reconnect"), `"messages":[`, `"messages":[{"role":"user","content":"hello"},`, 1)
 	post := func() {
 		t.Helper()
 		status, response := h.post(t, continuation)
@@ -881,7 +882,8 @@ func TestCodexWebsocketThreadBucketsIncludeCacheKeySystemAndTools(t *testing.T) 
 	})
 	h := newCodexWSTestHarness(t, backend, "websocket")
 	request := func(userID, system, tool, text string) {
-		body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"` + userID + `"},"system":"` + system + `","tools":[{"name":"` + tool + `","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"` + text + `"}]}`
+		// Every request starts with the same user message (the agent's key); text follows it.
+		body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"` + userID + `"},"system":"` + system + `","tools":[{"name":"` + tool + `","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"start"},{"role":"user","content":"` + text + `"}]}`
 		if status, response := h.post(t, body); status != fiber.StatusOK || !strings.Contains(response, "message_stop") {
 			t.Fatalf("bucket request %q status=%d body=%q", text, status, response)
 		}
@@ -899,10 +901,10 @@ func TestCodexWebsocketThreadBucketsIncludeCacheKeySystemAndTools(t *testing.T) 
 		t.Fatalf("handshakes = %+v, want initial plus three distinct buckets (same tuple reuses)", got)
 	}
 	requestBodies := []string{
-		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"same-user"},"system":"system-one","tools":[{"name":"ToolOne","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"one"}]}`,
-		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"same-user"},"system":"system-two","tools":[{"name":"ToolOne","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"three"}]}`,
-		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"same-user"},"system":"system-one","tools":[{"name":"ToolTwo","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"four"}]}`,
-		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"different-user"},"system":"system-one","tools":[{"name":"ToolOne","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"five"}]}`,
+		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"same-user"},"system":"system-one","tools":[{"name":"ToolOne","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"start"},{"role":"user","content":"one"}]}`,
+		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"same-user"},"system":"system-two","tools":[{"name":"ToolOne","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"start"},{"role":"user","content":"three"}]}`,
+		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"same-user"},"system":"system-one","tools":[{"name":"ToolTwo","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"start"},{"role":"user","content":"four"}]}`,
+		`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"different-user"},"system":"system-one","tools":[{"name":"ToolOne","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"start"},{"role":"user","content":"five"}]}`,
 	}
 	for i, raw := range requestBodies {
 		parsed, err := codex.ParseRequest([]byte(raw))

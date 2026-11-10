@@ -35,6 +35,7 @@ func newCodexWSManager() *codex.WSManager {
 	m := codex.NewWSManager()
 	m.OnLimit = logWSLimit
 	m.OnSide = logWSSide
+	m.OnLost = logWSLost
 	return m
 }
 
@@ -75,6 +76,33 @@ func wsConvTag(threadID string) string {
 		return threadID
 	}
 	return threadID[:6]
+}
+
+// wsAgentTag is the agent's part of a conversation tag: ".1a2b" (empty without one).
+func wsAgentTag(agent string) string {
+	if len(agent) < 4 {
+		return ""
+	}
+	return "." + agent[:4]
+}
+
+// logWSLost tells that a connection was ended by the backend or the network:
+// when, with which close status, and whether it counts toward lowering the
+// planned age (a connection younger than 5 minutes says nothing of a limit).
+func logWSLost(l codex.WSLost) {
+	closeText := "no close frame"
+	if l.Status >= 0 {
+		closeText = fmt.Sprintf("close status %d", l.Status)
+	}
+	verdict := "too young to say anything about a limit"
+	switch {
+	case l.Counts:
+		verdict = "before the planned age, counts toward lowering it"
+	case l.Age >= l.Planned:
+		verdict = "at or after the planned age"
+	}
+	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: a connection was ended by the backend or the network at %s of age (%s; planned %s): %s\n",
+		time.Now().Format("15:04:05"), roundDur(l.Age), closeText, roundDur(l.Planned), verdict)
 }
 
 func (u *upstreamTrace) convText() string {

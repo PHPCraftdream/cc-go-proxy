@@ -108,6 +108,12 @@ response, and the conversation's next request, which holds neither the message n
 and its reply is not in the new request; an edited message whose reply is still there is not learned) and from then on
 sends requests that end in it over HTTP (zstd-compressed), so the websocket chain only holds the conversation.
 
+A connection also belongs to one agent: the subagents of a conversation share its cache key, system prompt and tools, so
+the connection is told apart by the first user message too (the agent's task, which does not change while it runs). Each
+subagent keeps its own chain instead of replacing the others', and a request no longer finds a shared connection busy.
+After a compaction the first message changes and the conversation gets a new connection, which its full request needs
+anyway.
+
 A connection belongs to one endpoint, one account and one way out (proxy): two accounts never share one, the login is
 checked on every request exactly as for HTTP (a refresh only when the token is due), and after a logout or an account
 switch the old connections are closed. HTTP is the fallback. A request that finds its conversation's connection busy
@@ -118,7 +124,7 @@ the same rule as for an HTTP request broken before its reply; once content reach
 error and is never asked again. An endpoint that answers the upgrade with 400, 404, 405, 410, 426 or 501 (no websocket
 there) gets none for 10 minutes; any other failed dial (401 or 403 after the token refresh, network, TLS, timeout) for 30
 seconds; a 429 or a 5xx not at all (that request still goes over HTTP); the windows are per endpoint and account. A
-connection is replaced after 25 minutes or 10 idle minutes; at most 8 are open. The backend ends a connection at a
+connection is replaced after 25 minutes or 10 idle minutes; at most 16 are open (a conversation and its parallel subagents). The backend ends a connection at a
 fixed age (30 minutes seen, 60 documented), and replacing first keeps a request from meeting the cut: the next request
 goes out in full on a fresh connection. If the backend ends connections earlier than planned (a break of a connection
 5 minutes old or older, twice within an hour, per endpoint and account), the planned age is lowered by 5 minutes, down

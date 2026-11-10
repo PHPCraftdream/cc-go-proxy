@@ -159,3 +159,35 @@ func TestWebsocketLineNamesTheConversationAndLogsTheDivergence(t *testing.T) {
 		t.Errorf("without a conversation: conn %q, log %q", plain.wsConn, buf.String())
 	}
 }
+
+func TestLogWSLostSaysWhetherTheBreakCountsTowardTheLimit(t *testing.T) {
+	old := logOut
+	var buf bytes.Buffer
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+	logWSLost(codex.WSLost{Age: 12*time.Minute + 5*time.Second, Status: 1001, Planned: 25 * time.Minute, Counts: true})
+	logWSLost(codex.WSLost{Age: 2 * time.Minute, Status: -1, Planned: 25 * time.Minute})
+	logWSLost(codex.WSLost{Age: 25 * time.Minute, Status: 1006, Planned: 25 * time.Minute})
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("lines = %q", lines)
+	}
+	for i, tail := range []string{
+		"a connection was ended by the backend or the network at 12m5s of age (close status 1001; planned 25m0s): before the planned age, counts toward lowering it",
+		"a connection was ended by the backend or the network at 2m0s of age (no close frame; planned 25m0s): too young to say anything about a limit",
+		"a connection was ended by the backend or the network at 25m0s of age (close status 1006; planned 25m0s): at or after the planned age",
+	} {
+		if !strings.HasSuffix(lines[i], tail) {
+			t.Errorf("line %d = %q, want it to end with %q", i, lines[i], tail)
+		}
+	}
+}
+
+func TestWSAgentTagIsShortAndOptional(t *testing.T) {
+	if got := wsAgentTag("1a2b3c4d"); got != ".1a2b" {
+		t.Errorf("wsAgentTag = %q", got)
+	}
+	if wsAgentTag("") != "" || wsAgentTag("abc") != "" {
+		t.Error("a missing or short agent key must give no tag")
+	}
+}

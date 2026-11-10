@@ -180,6 +180,11 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
 - `upstream websocket [codex]: the backend ended connections before the planned 25m0s (the last at 12m5s, close
   status 1001); replacing them after 20m0s from now on`: once per step, when the backend ended connections earlier
   than planned twice (see [API behavior](api.md#codex-websocket-transport)).
+- `upstream websocket [codex]: a connection was ended by the backend or the network at 12m5s of age (close status 1001;
+  planned 25m0s): before the planned age, counts toward lowering it`: for every such connection (`no close frame` when
+  there was none; `too young to say anything about a limit` under 5 minutes, `at or after the planned age`).
+- The conversation tag in the connection part of a request, `conv 3fa2c1.1a2b`: the thread (key, system prompt, tools) and
+  the agent (its first user message).
 - `upstream websocket [codex]: a user message of 329 B was answered on a conversation's websocket and its reply was left
   out of the next request (a background request of the client); requests ending in it go over HTTP from now on, so they
   do not replace the websocket chain`: once per such message, when ccgp learns it (see
