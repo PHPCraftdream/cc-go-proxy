@@ -22,9 +22,11 @@ var (
 
 var (
 	wsManagerMaxConnections = 8
-	wsManagerMaxAge         = 55 * time.Minute
-	wsManagerMaxIdle        = 10 * time.Minute
-	wsManagerJanitorEvery   = time.Minute
+	// wsManagerMaxAge is the planned age of a connection: the backend ends them
+	// after a fixed age (30 minutes seen), so they are replaced before it.
+	wsManagerMaxAge       = 25 * time.Minute
+	wsManagerMaxIdle      = 10 * time.Minute
+	wsManagerJanitorEvery = time.Minute
 	// wsManagerDisabledFor: the endpoint said it has no websocket (400, 404, 405, 410, 426, 501).
 	wsManagerDisabledFor = 10 * time.Minute
 	// wsManagerBackoffFor: any other failed dial (401, 403, network, TLS, timeout):
@@ -67,8 +69,8 @@ type WSInfo struct {
 	Reason    string
 	ConnAge   time.Duration
 	DialTime  time.Duration
-	// Limit is the backend's connection age the manager learned (0: not known),
-	// set when Reason says a connection was replaced ahead of it.
+	// Limit is the lowered planned age (0: the default), set when Reason says
+	// a connection was replaced at it.
 	Limit time.Duration
 }
 
@@ -148,7 +150,7 @@ func (m *WSManager) initLocked() {
 		m.maxAge = wsManagerMaxAge
 	}
 	if m.maxAge <= 0 {
-		m.maxAge = 55 * time.Minute
+		m.maxAge = 25 * time.Minute
 	}
 	if m.maxIdle <= 0 {
 		m.maxIdle = wsManagerMaxIdle
@@ -305,16 +307,16 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 		return nil, WSInfo{}, ErrWSBusy
 	}
 	if entry != nil && entry.conn != nil {
-		limit, learned := m.ageLimitLocked(owner, now)
+		limit, lowered := m.ageLimitLocked(owner, now)
 		switch {
 		case entry.conn.Err() != nil:
 			reason = "connection broken"
 			lost = entry.conn
 		case now.Sub(entry.dialedAt) > limit:
 			reason = "connection too old"
-			if learned {
-				reason = "ahead of backend limit"
-				learnedLimit = m.lifetimes[owner].limit
+			if lowered {
+				reason = "lowered age limit"
+				learnedLimit = limit
 				m.stats.Early++
 			}
 		case now.Sub(entry.lastUse) > m.maxIdle:
@@ -762,21 +764,18 @@ func (b *wsManagerBody) Close() error {
 var _ io.ReadCloser = (*wsManagerBody)(nil)
 
 // ageLimitLocked is the age a connection of owner is replaced at: the default,
-// or ahead of the backend's limit when one was learned (learned = true then).
-func (m *WSManager) ageLimitLocked(owner string, now time.Time) (limit time.Duration, learned bool) {
-	limit = m.maxAge
+// or the lowered one (lowered = true then).
+func (m *WSManager) ageLimitLocked(owner string, now time.Time) (limit time.Duration, lowered bool) {
 	if l := m.lifetimes[owner]; l != nil {
-		if backend := l.current(now); backend > 0 {
-			if after := wsReplaceAfter(backend); after < limit {
-				return after, true
-			}
+		if cur := l.current(m.maxAge, now); cur < m.maxAge {
+			return cur, true
 		}
 	}
-	return limit, false
+	return m.maxAge, false
 }
 
-// noteLost counts a connection the peer ended (once per connection) and learns
-// the backend's age limit from it.
+// noteLost counts a connection the peer ended (once per connection) and lowers
+// the planned age when they end early, again and again.
 func (m *WSManager) noteLost(owner string, conn *WSConn) {
 	age, status, ok := conn.TakePeerLost()
 	if !ok {
@@ -795,10 +794,11 @@ func (m *WSManager) observeLost(owner string, age time.Duration, status int) {
 		l = &wsLifetime{}
 		m.lifetimes[owner] = l
 	}
-	limit, samples, changed := l.observe(age, m.now())
+	was := l.current(m.maxAge, m.now())
+	limit, lowered := l.observe(m.maxAge, age, m.now())
 	notify := m.OnLimit
 	m.mu.Unlock()
-	if changed && notify != nil {
-		notify(WSLimit{Limit: limit, ReplaceAfter: wsReplaceAfter(limit), Samples: samples, Status: status})
+	if lowered && notify != nil {
+		notify(WSLimit{Age: limit, Was: was, Broke: age, Status: status})
 	}
 }

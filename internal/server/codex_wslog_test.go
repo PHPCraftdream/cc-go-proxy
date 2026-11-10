@@ -11,7 +11,7 @@ import (
 
 func TestSafeWSReasonKeepsNumbersAndToolNamesOnly(t *testing.T) {
 	for reason, want := range map[string]string{
-		"ahead of backend limit":                        "ahead of backend limit",
+		"lowered age limit":                             "lowered age limit",
 		"history diverged at item 412 of 1079":          "history diverged at item 412 of 1079",
 		"history diverged at item 0":                    "history diverged at item 0",
 		"history diverged at item x of y":               "history diverged",
@@ -29,13 +29,13 @@ func TestSafeWSReasonKeepsNumbersAndToolNamesOnly(t *testing.T) {
 	}
 }
 
-func TestWSReasonTextNamesTheLimit(t *testing.T) {
-	info := codex.WSInfo{Reason: "ahead of backend limit", Limit: 30*time.Minute + time.Second}
-	if got, want := wsReasonText(info), "replaced ahead of the backend's 30m1s limit"; got != want {
+func TestWSReasonTextNamesTheLoweredAge(t *testing.T) {
+	info := codex.WSInfo{Reason: "lowered age limit", Limit: 20 * time.Minute}
+	if got, want := wsReasonText(info), "replaced at the lowered age of 20m0s"; got != want {
 		t.Errorf("wsReasonText = %q, want %q", got, want)
 	}
-	if got := wsReasonText(codex.WSInfo{Reason: "ahead of backend limit"}); got != "ahead of backend limit" {
-		t.Errorf("without a known limit: %q", got)
+	if got := wsReasonText(codex.WSInfo{Reason: "lowered age limit"}); got != "lowered age limit" {
+		t.Errorf("without a known age: %q", got)
 	}
 	if got := wsReasonText(codex.WSInfo{Reason: "connection broken"}); got != "connection broken" {
 		t.Errorf("other reasons are unchanged: %q", got)
@@ -47,15 +47,15 @@ func TestLogWSLimitLine(t *testing.T) {
 	var buf bytes.Buffer
 	logOut = &buf
 	t.Cleanup(func() { logOut = old })
-	logWSLimit(codex.WSLimit{Limit: 30*time.Minute + time.Second, ReplaceAfter: 27*time.Minute + time.Second, Samples: 2, Status: 1001})
-	logWSLimit(codex.WSLimit{Limit: 30 * time.Minute, ReplaceAfter: 27 * time.Minute, Samples: 3, Status: -1})
+	logWSLimit(codex.WSLimit{Age: 20 * time.Minute, Was: 25 * time.Minute, Broke: 12*time.Minute + 5*time.Second, Status: 1001})
+	logWSLimit(codex.WSLimit{Age: 15 * time.Minute, Was: 20 * time.Minute, Broke: 11 * time.Minute, Status: -1})
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("lines = %q", lines)
 	}
 	for i, tail := range []string{
-		"upstream websocket [codex]: the backend ends connections after about 30m1s (2 breaks agree, close status 1001); replacing them after 27m1s",
-		"upstream websocket [codex]: the backend ends connections after about 30m0s (3 breaks agree, no close frame); replacing them after 27m0s",
+		"upstream websocket [codex]: the backend ended connections before the planned 25m0s (the last at 12m5s, close status 1001); replacing them after 20m0s from now on",
+		"upstream websocket [codex]: the backend ended connections before the planned 20m0s (the last at 11m0s, no close frame); replacing them after 15m0s from now on",
 	} {
 		if !strings.HasSuffix(lines[i], tail) || !strings.HasPrefix(lines[i], "[") {
 			t.Errorf("line %d = %q, want it to end with %q", i, lines[i], tail)
@@ -69,7 +69,7 @@ func TestWSStatsTextCountsBreaksAndEarlyReplacements(t *testing.T) {
 		t.Errorf("plain = %q, want %q", plain, want)
 	}
 	full := wsStatsText(codex.WSStats{Delta: 1, Full: 1, Dials: 1, SentBytes: 2048, Lost: 1, Early: 2}, 1)
-	for _, want := range []string{"1 fallback,", "; 1 connection ended by the backend or the network", "; 2 connections replaced ahead of the backend's limit"} {
+	for _, want := range []string{"1 fallback,", "; 1 connection ended by the backend or the network", "; 2 connections replaced at the lowered age"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("%q lacks %q", full, want)
 		}
