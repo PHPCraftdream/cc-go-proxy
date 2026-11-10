@@ -435,3 +435,18 @@ func TestWSChainUsesDistinctControlFailureReasons(t *testing.T) {
 		})
 	}
 }
+
+// inputKind is the type of an input item.
+func inputKind(item any) string {
+	b, err := json.Marshal(item)
+	if err != nil {
+		return ""
+	}
+	var head struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(b, &head) != nil {
+		return ""
+	}
+	return head.Type
+}

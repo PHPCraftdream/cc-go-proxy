@@ -231,20 +231,6 @@ func validDeltaItem(item any) bool {
 	}
 }
 
-func inputKind(item any) string {
-	b, err := json.Marshal(item)
-	if err != nil {
-		return ""
-	}
-	var head struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(b, &head) != nil {
-		return ""
-	}
-	return head.Type
-}
-
 func cloneAnySlice(input []any) ([]any, error) {
 	if input == nil {
 		return nil, nil
