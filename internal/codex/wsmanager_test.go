@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -16,6 +18,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
 type wsManagerTestClock struct{ n atomic.Int64 }
@@ -37,6 +41,17 @@ type wsManagerTestConfig struct {
 	janitorEvery   time.Duration
 	disabledFor    time.Duration
 	useDefaults    bool
+}
+
+// testEntry finds the entry of a conversation bucket; the caller holds m.mu or
+// knows no call runs.
+func (m *WSManager) testEntry(bucket string) *wsManagerEntry {
+	for _, entry := range m.entries {
+		if entry.bucket == bucket {
+			return entry
+		}
+	}
+	return nil
 }
 
 func newWSManagerForTest(t *testing.T, cfg wsManagerTestConfig) (*WSManager, *wsManagerTestClock) {
@@ -403,7 +418,7 @@ func TestWSManagerDroppedConnectionUsesFull(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	firstConn := m.entries["drop"].conn
+	firstConn := m.testEntry("drop").conn
 	m.mu.Unlock()
 	if err := first.abort(); err != nil {
 		t.Fatal(err)
@@ -683,65 +698,40 @@ func TestWSManagerLRUEvictionAndAllBusy(t *testing.T) {
 	})
 }
 
-func TestWSManagerForbiddenDisablesWindowButTransientRetries(t *testing.T) {
-	t.Run("403 disables for ten minutes", func(t *testing.T) {
-		m, clock := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 2, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: 10 * time.Minute})
-		var handshakes atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if handshakes.Add(1) == 1 {
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			ws := wsAccept(t, w, r)
-			if ws == nil {
-				return
-			}
-			defer ws.Close(websocket.StatusNormalClosure, "")
-			request := readWSRequest(t, ws)
-			_ = request
-			writeWSEvent(t, ws, `{"type":"response.completed","response":{"id":"after-window"}}`)
-		}))
-		defer server.Close()
-		_, _, err := m.Call(context.Background(), server.URL, testSession(t), "forbidden", makeWSManagerTestRequest("forbidden", wsManagerUser("one")))
-		if !errors.Is(err, ErrWSUnavailable) {
-			t.Fatalf("403 error = %v, want ErrWSUnavailable", err)
-		}
-		if got := handshakes.Load(); got != 1 {
-			t.Fatalf("handshakes after 403 = %d", got)
-		}
-		m.mu.Lock()
-		disabledTil := m.disabledTil
-		m.mu.Unlock()
-		if want := clock.Now().Add(10 * time.Minute); !disabledTil.Equal(want) {
-			t.Fatalf("disabled until %s, want %s", disabledTil, want)
-		}
-		if _, _, err := m.Call(context.Background(), server.URL, testSession(t), "forbidden", makeWSManagerTestRequest("forbidden", wsManagerUser("still disabled"))); !errors.Is(err, ErrWSUnavailable) {
-			t.Fatalf("disabled-window call error = %v", err)
-		}
-		if got := handshakes.Load(); got != 1 {
-			t.Fatalf("disabled-window call dialed; handshakes=%d", got)
-		}
-		clock.Add(10 * time.Minute)
-		resp, _, err := m.Call(context.Background(), server.URL, testSession(t), "forbidden", makeWSManagerTestRequest("forbidden", wsManagerUser("retry")))
-		if err != nil {
-			t.Fatalf("call after disable window: %v", err)
-		}
-		if got := handshakes.Load(); got != 2 {
-			t.Fatalf("handshakes after expiry = %d", got)
-		}
-		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-	})
+// wsDisabledUntil is the no-websocket window of the only owner a test used.
+func wsDisabledUntil(t *testing.T, m *WSManager) time.Time {
+	t.Helper()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.disabled) > 1 {
+		t.Fatalf("%d owners disabled, want at most 1", len(m.disabled))
+	}
+	for _, until := range m.disabled {
+		return until
+	}
+	return time.Time{}
+}
 
-	for _, status := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
-			m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 2, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: 10 * time.Minute})
+func TestWSManagerDialFailureWindows(t *testing.T) {
+	cases := []struct {
+		status int
+		pause  time.Duration // 0: no window, the next request dials again
+	}{
+		{http.StatusNotFound, 10 * time.Minute},
+		{http.StatusMethodNotAllowed, 10 * time.Minute},
+		{http.StatusUpgradeRequired, 10 * time.Minute},
+		{http.StatusNotImplemented, 10 * time.Minute},
+		{http.StatusForbidden, 30 * time.Second},
+		{http.StatusTooManyRequests, 0},
+		{http.StatusServiceUnavailable, 0},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			m, clock := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 2, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: 10 * time.Minute})
 			var handshakes atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if handshakes.Add(1) == 1 {
-					w.WriteHeader(status)
+					w.WriteHeader(tc.status)
 					return
 				}
 				ws := wsAccept(t, w, r)
@@ -750,33 +740,77 @@ func TestWSManagerForbiddenDisablesWindowButTransientRetries(t *testing.T) {
 				}
 				defer ws.Close(websocket.StatusNormalClosure, "")
 				_ = readWSRequest(t, ws)
-				writeWSEvent(t, ws, `{"type":"response.completed","response":{"id":"retry"}}`)
+				writeWSEvent(t, ws, `{"type":"response.completed","response":{"id":"after"}}`)
 			}))
 			defer server.Close()
-			_, _, err := m.Call(context.Background(), server.URL, testSession(t), "retry", makeWSManagerTestRequest("retry", wsManagerUser("first")))
+			_, _, err := m.Call(context.Background(), server.URL, testSession(t), "b", makeWSManagerTestRequest("b", wsManagerUser("one")))
 			var handshake *WSHandshakeError
-			if !errors.As(err, &handshake) || handshake.Status != status {
-				t.Fatalf("first error = %v, want handshake %d", err, status)
+			if !errors.As(err, &handshake) || handshake.Status != tc.status {
+				t.Fatalf("first error = %v, want handshake %d", err, tc.status)
 			}
-			m.mu.Lock()
-			disabled := m.disabledTil
-			m.mu.Unlock()
-			if !disabled.IsZero() {
-				t.Fatalf("transient %d disabled websocket until %s", status, disabled)
+			until := wsDisabledUntil(t, m)
+			if tc.pause == 0 {
+				if !until.IsZero() {
+					t.Fatalf("%d opened a no-websocket window until %s", tc.status, until)
+				}
+			} else {
+				if !errors.Is(err, ErrWSUnavailable) {
+					t.Fatalf("error = %v, want ErrWSUnavailable", err)
+				}
+				if want := clock.Now().Add(tc.pause); !until.Equal(want) {
+					t.Fatalf("disabled until %s, want %s", until, want)
+				}
+				if _, _, err := m.Call(context.Background(), server.URL, testSession(t), "b", makeWSManagerTestRequest("b", wsManagerUser("in window"))); !errors.Is(err, ErrWSUnavailable) {
+					t.Fatalf("call in the window = %v", err)
+				}
+				if got := handshakes.Load(); got != 1 {
+					t.Fatalf("call in the window dialed; handshakes=%d", got)
+				}
+				clock.Add(tc.pause)
 			}
-			resp, _, err := m.Call(context.Background(), server.URL, testSession(t), "retry", makeWSManagerTestRequest("retry", wsManagerUser("again")))
+			resp, _, err := m.Call(context.Background(), server.URL, testSession(t), "b", makeWSManagerTestRequest("b", wsManagerUser("again")))
 			if err != nil {
-				t.Fatalf("transient %d was not retried: %v", status, err)
+				t.Fatalf("call after the window: %v", err)
 			}
 			if got := handshakes.Load(); got != 2 {
 				t.Fatalf("handshakes = %d, want 2", got)
 			}
-			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-				t.Fatal(err)
-			}
-			_ = resp.Body.Close()
+			wsManagerRead(t, resp)
 		})
 	}
+}
+
+func TestWSManagerNetworkFailureBacksOffBriefly(t *testing.T) {
+	m, clock := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 2, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: 10 * time.Minute})
+	server := httptest.NewServer(http.NotFoundHandler())
+	dead := server.URL
+	server.Close()
+	_, _, err := m.Call(context.Background(), dead, testSession(t), "net", makeWSManagerTestRequest("net", wsManagerUser("one")))
+	if !errors.Is(err, ErrWSUnavailable) {
+		t.Fatalf("error = %v, want ErrWSUnavailable", err)
+	}
+	if until, want := wsDisabledUntil(t, m), clock.Now().Add(30*time.Second); !until.Equal(want) {
+		t.Fatalf("network failure window until %s, want %s (short backoff, not the unsupported window)", until, want)
+	}
+}
+
+func TestWSManagerWindowIsPerOwner(t *testing.T) {
+	m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 4, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: 10 * time.Minute})
+	refusing := httptest.NewServer(http.NotFoundHandler())
+	defer refusing.Close()
+	if _, _, err := m.Call(context.Background(), refusing.URL, testSession(t), "b", makeWSManagerTestRequest("b", wsManagerUser("one"))); !errors.Is(err, ErrWSUnavailable) {
+		t.Fatalf("refusing endpoint error = %v", err)
+	}
+	backend := newWSManagerTestBackend(t)
+	resp, _, err := backend.call(t, m, "b", makeWSManagerTestRequest("b", wsManagerUser("other endpoint")))
+	if err != nil {
+		t.Fatalf("another endpoint is not disabled by the first one's refusal: %v", err)
+	}
+	request := backend.next(t)
+	if err := request.complete(); err != nil {
+		t.Fatal(err)
+	}
+	wsManagerRead(t, resp)
 }
 
 func TestWSManagerCanceledDialDoesNotDisable(t *testing.T) {
@@ -824,10 +858,7 @@ func TestWSManagerCanceledDialDoesNotDisable(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("canceled handshake did not return")
 	}
-	m.mu.Lock()
-	disabled := m.disabledTil
-	m.mu.Unlock()
-	if !disabled.IsZero() {
+	if disabled := wsDisabledUntil(t, m); !disabled.IsZero() {
 		t.Fatalf("canceled handshake disabled manager until %s", disabled)
 	}
 	resp, _, err := m.Call(context.Background(), server.URL, testSession(t), "during", makeWSManagerTestRequest("during", wsManagerUser("retry")))
@@ -852,7 +883,7 @@ func TestWSManagerMidstreamBreakPreservesReadErrorAndFreshConnection(t *testing.
 	}
 	first := backend.next(t)
 	m.mu.Lock()
-	firstConn := m.entries["broken"].conn
+	firstConn := m.testEntry("broken").conn
 	m.mu.Unlock()
 	if err := first.respond(`{"type":"response.output_text.delta","delta":"partial"}`); err != nil {
 		t.Fatal(err)
@@ -955,7 +986,7 @@ func TestWSManagerEarlyBodyCloseDropsEvenBufferedCompleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	firstConn := m.entries["early-close"].conn
+	firstConn := m.testEntry("early-close").conn
 	m.mu.Unlock()
 	wsManagerWait(t, func() bool { return firstConn.Result().Completed }, "completed backend response")
 	if err := resp.Body.Close(); err != nil {
@@ -1061,7 +1092,7 @@ func TestWSManagerJanitorReclaimsCanceledUnreadBody(t *testing.T) {
 	}
 	staleRequest := backend.next(t)
 	m.mu.Lock()
-	staleEntry := m.entries["canceled-unread"]
+	staleEntry := m.testEntry("canceled-unread")
 	staleConn := staleEntry.conn
 	m.mu.Unlock()
 	cancel()
@@ -1069,7 +1100,7 @@ func TestWSManagerJanitorReclaimsCanceledUnreadBody(t *testing.T) {
 	wsManagerWait(t, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return m.entries["canceled-unread"] == nil
+		return m.testEntry("canceled-unread") == nil
 	}, "janitor removal of busy dead connection")
 
 	freshResp, info, err := backend.call(t, m, "canceled-unread", makeWSManagerTestRequest("canceled-unread", wsManagerUser("two")))
@@ -1081,14 +1112,14 @@ func TestWSManagerJanitorReclaimsCanceledUnreadBody(t *testing.T) {
 		t.Fatalf("replacement info=%+v old/new connections=%d/%d", info, staleRequest.connection, freshRequest.connection)
 	}
 	m.mu.Lock()
-	freshEntry := m.entries["canceled-unread"]
+	freshEntry := m.testEntry("canceled-unread")
 	freshGeneration := freshEntry.generation
 	m.mu.Unlock()
 	if err := staleResp.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	stillFresh := m.entries["canceled-unread"] == freshEntry && freshEntry.conn != staleConn && freshEntry.busy && freshEntry.generation == freshGeneration
+	stillFresh := m.testEntry("canceled-unread") == freshEntry && freshEntry.conn != staleConn && freshEntry.busy && freshEntry.generation == freshGeneration
 	m.mu.Unlock()
 	if !stillFresh {
 		t.Fatal("closing stale body corrupted the active replacement lease")
@@ -1148,8 +1179,8 @@ func TestWSManagerJanitorIdleDeadAndShutdown(t *testing.T) {
 		}
 	}
 	m.mu.Lock()
-	idleConn := m.entries["janitor-0"].conn
-	deadConn := m.entries["janitor-1"].conn
+	idleConn := m.testEntry("janitor-0").conn
+	deadConn := m.testEntry("janitor-1").conn
 	m.mu.Unlock()
 	if err := deadConn.Close(); err != nil {
 		t.Fatal(err)
@@ -1157,11 +1188,11 @@ func TestWSManagerJanitorIdleDeadAndShutdown(t *testing.T) {
 	wsManagerWait(t, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		_, exists := m.entries["janitor-1"]
+		exists := m.testEntry("janitor-1") != nil
 		return !exists
 	}, "janitor dead-connection eviction")
 	m.mu.Lock()
-	_, healthyRemains := m.entries["janitor-0"]
+	healthyRemains := m.testEntry("janitor-0") != nil
 	m.mu.Unlock()
 	if !healthyRemains {
 		t.Fatal("janitor removed healthy entry before it became idle")
@@ -1389,4 +1420,92 @@ func TestWSManagerZeroValueUsesDefaultCapacity(t *testing.T) {
 		t.Fatalf("zero-value manager entry count = %d, want default 8", count)
 	}
 	m.Close()
+}
+
+func testSessionAccount(t *testing.T, account string) *oauth.Session {
+	t.Helper()
+	store := oauth.Store{Path: filepath.Join(t.TempDir(), "o.json")}
+	if err := store.Save(&oauth.Tokens{AccessToken: "tok-" + account, RefreshToken: "rt", AccountID: account, LastRefresh: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return &oauth.Session{Store: store, Client: &oauth.Client{}}
+}
+
+// wsManagerRoundTrip sends one request and completes it; it returns the backend connection id.
+func wsManagerRoundTrip(t *testing.T, m *WSManager, backend *wsManagerTestBackend, s *oauth.Session, bucket, text string) (int, WSInfo) {
+	t.Helper()
+	resp, info, err := m.Call(context.Background(), backend.server.URL, s, bucket, makeWSManagerTestRequest(bucket, wsManagerUser(text)))
+	if err != nil {
+		t.Fatalf("%s: %v", text, err)
+	}
+	request := backend.next(t)
+	if err := request.complete(); err != nil {
+		t.Fatal(err)
+	}
+	wsManagerRead(t, resp)
+	return request.connection, info
+}
+
+func TestWSManagerConnectionsBelongToTheirAccount(t *testing.T) {
+	m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 4, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: time.Minute})
+	backend := newWSManagerTestBackend(t)
+	alice, bob := testSessionAccount(t, "alice"), testSessionAccount(t, "bob")
+	first, _ := wsManagerRoundTrip(t, m, backend, alice, "same", "alice one")
+	second, info := wsManagerRoundTrip(t, m, backend, bob, "same", "bob one")
+	if second == first || info.Reused {
+		t.Fatalf("bob got alice's connection (conn %d, info %+v)", second, info)
+	}
+	again, info := wsManagerRoundTrip(t, m, backend, alice, "same", "alice two")
+	if again != first || !info.Reused {
+		t.Fatalf("alice's connection was not kept for her (conn %d, want %d, info %+v)", again, first, info)
+	}
+}
+
+func TestWSManagerLogoutClosesConnections(t *testing.T) {
+	m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 4, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: time.Minute})
+	backend := newWSManagerTestBackend(t)
+	s := testSessionAccount(t, "alice")
+	wsManagerRoundTrip(t, m, backend, s, "conv", "before logout")
+	m.mu.Lock()
+	conn := m.testEntry("conv").conn
+	m.mu.Unlock()
+	if err := os.Remove(s.Store.Path); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := m.Call(context.Background(), backend.server.URL, s, "conv", makeWSManagerTestRequest("conv", wsManagerUser("after logout")))
+	if !errors.Is(err, ErrWSToken) || !errors.Is(err, ErrWSUnavailable) {
+		t.Fatalf("call after logout = %v, want ErrWSUnavailable wrapping ErrWSToken", err)
+	}
+	m.mu.Lock()
+	left := m.testEntry("conv")
+	m.mu.Unlock()
+	if left != nil {
+		t.Fatal("the logged-out session's connection is still kept")
+	}
+	if conn.Err() == nil {
+		t.Fatal("the logged-out session's connection is still open")
+	}
+	if got := wsDisabledUntil(t, m); !got.IsZero() {
+		t.Fatalf("a missing login opened a no-websocket window until %s", got)
+	}
+}
+
+func TestWSManagerAccountSwitchClosesOldConnection(t *testing.T) {
+	m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 4, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: time.Minute})
+	backend := newWSManagerTestBackend(t)
+	s := testSessionAccount(t, "alice")
+	first, _ := wsManagerRoundTrip(t, m, backend, s, "conv", "alice")
+	m.mu.Lock()
+	old := m.testEntry("conv").conn
+	m.mu.Unlock()
+	if err := s.Store.Save(&oauth.Tokens{AccessToken: "tok-bob", RefreshToken: "rt", AccountID: "bob", LastRefresh: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	second, info := wsManagerRoundTrip(t, m, backend, s, "conv", "bob")
+	if second == first || info.Reused {
+		t.Fatalf("the new account reused the old account's connection (conn %d, info %+v)", second, info)
+	}
+	if old.Err() == nil {
+		t.Fatal("the old account's connection is still open")
+	}
 }
