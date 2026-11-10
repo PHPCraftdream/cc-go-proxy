@@ -25,11 +25,17 @@ func currentCodexWSManager() *codex.WSManager {
 	codexWSManagerMu.Lock()
 	defer codexWSManagerMu.Unlock()
 	if codexWSManager == nil {
-		codexWSManager = codex.NewWSManager()
-		codexWSManager.OnLimit = logWSLimit
-		codexWSManager.OnSide = logWSSide
+		codexWSManager = newCodexWSManager()
 	}
 	return codexWSManager
+}
+
+// newCodexWSManager is a manager whose learned limits and side messages are logged.
+func newCodexWSManager() *codex.WSManager {
+	m := codex.NewWSManager()
+	m.OnLimit = logWSLimit
+	m.OnSide = logWSSide
+	return m
 }
 
 func codexWSStatsManager() *codex.WSManager {
