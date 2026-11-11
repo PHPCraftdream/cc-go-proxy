@@ -45,7 +45,7 @@ const maxLogDetail = 1000
 // logStreamFailure prints the line for a stream that broke after its reply
 // started; detail is the raw upstream event that ended it, extra the request
 // ids and timing, either may be empty.
-func logStreamFailure(w io.Writer, started time.Time, profile, model, msg, detail, extra string) {
+func logStreamFailure(w io.Writer, started time.Time, what, profile, model, msg, detail, extra string) {
 	line := oneLine(msg, maxLogErr)
 	if detail != "" {
 		line += " | upstream event: " + oneLine(detail, maxLogDetail)
@@ -174,13 +174,13 @@ func (u *upstreamTrace) reconnectHook(profile, model string) func(n int, err err
 }
 
 // logStreamCanceled prints the line for a stream the client left.
-func logStreamCanceled(w io.Writer, started time.Time, profile, model, extra string) {
+func logStreamCanceled(w io.Writer, started time.Time, what, profile, model, extra string) {
 	_, _ = fmt.Fprintf(w, "[%s] stream canceled by client after %s [%s] %s: %s\n", started.Format("15:04:05"),
 		time.Since(started).Round(time.Millisecond), profile, model, extra)
 }
 
 // logSlowStream prints the timing line of a stream that completed slowly.
-func logSlowStream(w io.Writer, started time.Time, profile, model, summary string) {
+func logSlowStream(w io.Writer, started time.Time, what, profile, model, summary string) {
 	_, _ = fmt.Fprintf(w, "[%s] slow stream %s [%s] %s: %s\n", started.Format("15:04:05"),
 		time.Since(started).Round(time.Millisecond), profile, model, summary)
 }
@@ -280,14 +280,20 @@ func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTr
 	if tr.Failed != "" && ctx.Err() == nil {
 		noteBreak(tr.Failed, trace.pingClosed(end), false)
 	}
+	what := "stream"
+	trace.mu.Lock()
+	if trace.nonStream {
+		what = "non-stream reply"
+	}
+	trace.mu.Unlock()
 	switch {
 	case tr.Failed != "" && ctx.Err() != nil:
-		logStreamCanceled(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
+		logStreamCanceled(logOut, trace.start, what, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 	case tr.Failed != "":
-		logStreamFailure(logOut, trace.start, profile, mapped, tr.Failed, tr.Detail,
+		logStreamFailure(logOut, trace.start, what, profile, mapped, tr.Failed, tr.Detail,
 			joinNonEmpty(notRetriedNote(tr.Sent()), trace.silenceText(end), ids, trace.summary(tr, end, bodyBytes)))
 	case trace.slow(end):
-		logSlowStream(logOut, trace.start, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
+		logSlowStream(logOut, trace.start, what, profile, mapped, joinNonEmpty(trace.summary(tr, end, bodyBytes), ids))
 	}
 }
 
@@ -379,6 +385,14 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
 	wsCtx := codex.WithRouting(ctx, routing)
 	trace := newUpstreamTrace()
+	trace.nonStream = !wantStream
+	if !wantStream {
+		// Nothing reaches the client before the reply is complete, so its going
+		// away shows on its connection, not in a failed write.
+		stop := watchClientGone(c.Context().Conn(), cancel)
+		defer stop()
+		c.Context().SetConnectionClose()
+	}
 	trace.routing = routing
 	trace.newTurn = turnRegistration.newTurn
 	trace.fp = fingerprint

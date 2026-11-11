@@ -135,6 +135,11 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
   came and shows `Server error mid-response`; ccgp cannot start the request over in either case.
 - `slow stream …`: the reply headers took over 20 s or the answer over 2 minutes. The timing only.
 - `stream canceled by client after …`: Claude Code left the stream (Esc, a newer request); the timing only.
+- A request without streaming (`"stream": false`; Claude Code sends one after a stream failed) gets the same lines
+  with `non-stream reply` in place of `stream` (`slow non-stream reply …`, `non-stream reply canceled by client
+  after …`), and its access line carries `| non-stream`. Nothing reaches the client until such a reply is complete,
+  and Claude Code gives it up after about 5 minutes: then ccgp sees the connection close and stops the backend's
+  work, so the conversation's websocket is free for the request that follows.
 
   These three lines end with `| prompt key a1b2c3d4, system 5e4d3c2b, 63 tools 9f8e7d6c, 214 input items; …`: a
   fingerprint of what the backend caches by prefix. The full cache key is the identity (only its first digits are shown);

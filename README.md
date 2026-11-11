@@ -189,6 +189,10 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 
 The response contains only `kind: "ccgp:model-route:v1"`, `requestedModel`, and `backendModel`, with `Cache-Control: no-store`. It reports the configured route, not the model ultimately selected behind an upstream alias. Clients must fall back to their original labels when the endpoint is unavailable. This also supports `ccgpy`, which uses the same launcher and proxy.
 
+[cah (cc-arch-hands)](https://github.com/PHPCraftdream/cc-arch-hands) supports ccgp's model mappings: its status line,
+chat stamp and context gauge show the model a request is really routed to (`gpt-6.1-sol`, `gpt-6.1-terra`,
+`gpt-6.1-luna`, `gpt-6.1-astra`, `glm-5.3`, …) by ccgp's own mapping rules, not the Claude alias Claude Code sent.
+
 ## How ccgp differs from upstream
 
 | | [claude-code-proxy](https://github.com/nielspeter/claude-code-proxy) (upstream) | ccgp |

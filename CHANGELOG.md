@@ -10,6 +10,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- A Codex request without streaming (Claude Code sends one after a stream failed) is marked: `| non-stream` in its
+  access line, `slow non-stream reply` / `non-stream reply canceled by client` / `non-stream reply failed` in place of
+  the stream lines. Nothing reaches the client before such a reply is complete, and Claude Code gives it up after about
+  5 minutes; ccgp now sees its connection close (the reply is sent with `Connection: close`) and stops the backend's
+  work, so the conversation's websocket is free for the next request instead of busy, which sent it over HTTP in full.
+  Seen live: after a network break, a 5-minute reply was thrown away by the client and the session stood for 9 minutes.
+- README: [cah (cc-arch-hands)](https://github.com/PHPCraftdream/cc-arch-hands) supports ccgp's model mappings and
+  shows the model a request is really routed to (sol, terra, luna, astra, glm).
 - Faster and lighter Codex requests: the 4-5 MiB request body is decoded once instead of three times (5 MiB, 1500 items:
   267 ms -> 124 ms, 55 -> 38 MB allocated; the converted request is byte for byte the same, guarded by a golden corpus),
   it is serialized and compressed once for all retries (5-6 MB instead of 16-28 MB per call with two retries) and is

@@ -222,7 +222,7 @@ func TestNonStreamOverloadRunsOut(t *testing.T) {
 	if status != fiber.StatusBadGateway || !strings.Contains(access, "server_is_overloaded") {
 		t.Fatalf("status %d, access %q: want 502 with the reason", status, access)
 	}
-	if calls.Load() != 2 || !strings.Contains(log, "upstream retry 1/1") || !strings.Contains(log, "stream failed after") {
+	if calls.Load() != 2 || !strings.Contains(log, "upstream retry 1/1") || !strings.Contains(log, "non-stream reply failed after") {
 		t.Errorf("calls %d, log %q", calls.Load(), log)
 	}
 }
