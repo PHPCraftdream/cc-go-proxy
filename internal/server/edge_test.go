@@ -219,8 +219,8 @@ func TestNonStreamOverloadRunsOut(t *testing.T) {
 	nonStreamBody(t)
 	var calls atomic.Int32
 	status, _, access, log := codexCall(t, overloadBackend(&calls, 10), time.Minute)
-	if status != fiber.StatusBadGateway || !strings.Contains(access, "server_is_overloaded") {
-		t.Fatalf("status %d, access %q: want 502 with the reason", status, access)
+	if status != fiber.StatusBadGateway || !strings.Contains(access, "server_is_overloaded") || !strings.Contains(access, "| non-stream") {
+		t.Fatalf("status %d, access %q: want 502 with the reason and the non-stream note", status, access)
 	}
 	if calls.Load() != 2 || !strings.Contains(log, "upstream retry 1/1") || !strings.Contains(log, "non-stream reply failed after") {
 		t.Errorf("calls %d, log %q", calls.Load(), log)
