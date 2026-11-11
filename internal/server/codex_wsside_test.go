@@ -28,7 +28,7 @@ func codexWSSideAssistant(text string) string { return `{"role":"assistant","con
 // chain survives them.
 func TestCodexWebsocketBackgroundRequestsGoOverHTTPOnceLearned(t *testing.T) {
 	var frames, posts atomic.Int32
-	answers := []string{"a1", "s1", "a2"}
+	answers := []string{"a1", "s1", "a2", "a3"}
 	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			posts.Add(1)
@@ -83,6 +83,21 @@ func TestCodexWebsocketBackgroundRequestsGoOverHTTPOnceLearned(t *testing.T) {
 	var stats strings.Builder
 	writeCodexWebsocketStats(&stats, time.Now())
 	if !strings.Contains(stats.String(), "1 background request sent over HTTP") {
+		t.Errorf("periodic line = %q", stats.String())
+	}
+
+	// The next request keeps the message, with a reply: it was an ordinary turn,
+	// so it is forgotten and the request goes on the websocket.
+	post(strings.Join([]string{main, a1, codexWSSideUser("real next"), codexWSSideAssistant("a2"), side, codexWSSideAssistant("r"), codexWSSideUser("go on")}, ","))
+	if frames.Load() != 4 || posts.Load() != 1 {
+		t.Fatalf("after the ordinary turn: %d websocket frames and %d HTTP posts, want 4 and 1", frames.Load(), posts.Load())
+	}
+	if !regexp.MustCompile(`upstream websocket \[codex\] conv [0-9a-f]{6}\.[0-9a-f]{4}: a user message of \d+ B taken for a background request's stayed in the next request, with its reply \(an ordinary turn\); it is no longer taken for one \(1 request had gone over HTTP for it\)`).MatchString(h.stream.String()) {
+		t.Errorf("the forgotten message was not announced: %q", h.stream.String())
+	}
+	stats.Reset()
+	writeCodexWebsocketStats(&stats, time.Now())
+	if !strings.Contains(stats.String(), "1 message taken for a background request's found to be an ordinary turn's") {
 		t.Errorf("periodic line = %q", stats.String())
 	}
 }

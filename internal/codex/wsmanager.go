@@ -92,8 +92,10 @@ type WSStats struct {
 	// them); Early those replaced ahead of the learned limit.
 	Lost  int
 	Early int
-	// Side counts requests that ended in a learned side message and were left to HTTP.
-	Side int
+	// Side counts requests that ended in a learned side message and were left to
+	// HTTP; SideWrong the learned messages found to be ordinary turns.
+	Side      int
+	SideWrong int
 }
 
 type wsManagerEntry struct {
@@ -122,12 +124,15 @@ type WSManager struct {
 	// is learned or changes.
 	OnLimit func(WSLimit)
 	// OnSide is called (without the lock) when a message is learned as a side
-	// request's (wsside.go); side holds the hashes of those messages.
+	// request's (wsside.go); side holds those messages by key, notSide the keys
+	// found to be ordinary turns', sideSent each bucket's side request to check.
 	OnSide func(WSSide)
 	// OnLost is called (without the lock) for every connection the backend or the
 	// network ended.
 	OnLost       func(WSLost)
-	side         map[uint64]struct{}
+	side         map[uint64]*wsSideTemplate
+	notSide      map[uint64]struct{}
+	sideSent     map[string]wsSideCheck
 	now          func() time.Time
 	maxEntries   int
 	maxAge       time.Duration

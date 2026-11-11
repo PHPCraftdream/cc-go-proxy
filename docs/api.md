@@ -106,8 +106,10 @@ conversation's history, with the same system prompt and tools); answered on the 
 response, and the conversation's next request, which holds neither the message nor its reply, would go out in full
 (2-4 MiB). ccgp learns the message from that one divergence (the chain's last item is a user message of at most 8 KiB
 and its reply is not in the new request; an edited message whose reply is still there is not learned; the message is
-recognised by its first 128 bytes, since the template changes a little from request to request) and from then on
-sends requests that end in it over HTTP (zstd-compressed), so the websocket chain only holds the conversation.
+recognised by the first and last 64 bytes of its text, since the template changes a little in the middle) and from then on
+sends requests that end in it over HTTP (zstd-compressed), so the websocket chain only holds the conversation. A message
+taken for a background one by mistake shows itself in the agent's next request, which still holds it, followed by its
+reply: it was an ordinary turn, so ccgp forgets it and never learns it again.
 
 A connection also belongs to one agent: the subagents of a conversation share its cache key, system prompt and tools, so
 the connection is told apart by the first user message too (the agent's task, which does not change while it runs). Each

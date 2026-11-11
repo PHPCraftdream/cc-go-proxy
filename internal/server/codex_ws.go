@@ -186,6 +186,13 @@ func logWSSide(s codex.WSSide) {
 		time.Now().Format("15:04:05"), sizeString(s.Size))
 }
 
+// logWSSideWrong tells that a message learned as a background request's was an
+// ordinary turn's: the conversation's next request kept it, with its reply.
+func logWSSideWrong(conv string, w codex.WSSideWrong) {
+	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex] conv %s: a user message of %s taken for a background request's stayed in the next request, with its reply (an ordinary turn); it is no longer taken for one (%s had gone over HTTP for it)\n",
+		time.Now().Format("15:04:05"), conv, sizeString(w.Size), count(w.Matches, "request", "requests"))
+}
+
 // noteSideRequest marks a request that skips the websocket because it is a
 // background one.
 func (u *upstreamTrace) noteSideRequest(bodyBytes int) {
@@ -384,7 +391,7 @@ func writeCodexWebsocketStats(w io.Writer, now time.Time) {
 	}
 	stats := manager.TakeStats()
 	fallbacks := codexWSFallbacks.Swap(0)
-	if stats.Delta+stats.Full+stats.Busy+stats.Fallbacks+int(fallbacks)+stats.Dials+stats.Lost+stats.Early+stats.Side == 0 && stats.SentBytes == 0 {
+	if stats.Delta+stats.Full+stats.Busy+stats.Fallbacks+int(fallbacks)+stats.Dials+stats.Lost+stats.Early+stats.Side+stats.SideWrong == 0 && stats.SentBytes == 0 {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "[%s] upstream websocket [codex]: %s\n", now.Format("15:04:05"), wsStatsText(stats, int(fallbacks)))
@@ -410,6 +417,9 @@ func wsStatsText(stats codex.WSStats, fallbacks int) string {
 	}
 	if stats.Side > 0 {
 		text += "; " + count(stats.Side, "background request", "background requests") + " sent over HTTP"
+	}
+	if stats.SideWrong > 0 {
+		text += "; " + count(stats.SideWrong, "message", "messages") + " taken for a background request's found to be an ordinary turn's"
 	}
 	return text
 }

@@ -230,6 +230,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ### Fixed
 
+- Codex websocket: the first 128 bytes of a message's encoding, by which a learned background message was recognised,
+  hold only 57 bytes of its text, and ordinary turns that start the same way (a system reminder after a tool's result)
+  were taken for background requests: 566 requests in ten hours went over HTTP, and 361 of them were real turns whose
+  reply the next request then held, so it went out in full. A message is recognised by the first and last 64 bytes of
+  its text now, and one that the agent's next request still holds, followed by its reply, is forgotten for good with a
+  log line (`... stayed in the next request, with its reply (an ordinary turn) ...`), counted in the periodic line.
 - Codex websocket, three finds of two hours of real logs: (1) one network failure ended six connections within 22
   seconds and the age rule took them for four independent early breaks, lowering the planned age from 20 to 10 minutes
   for six hours (50 needless full resends); breaks less than a minute apart count once now. (2) Claude Code stores an
