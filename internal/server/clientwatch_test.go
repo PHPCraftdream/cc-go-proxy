@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -185,5 +187,49 @@ func TestNonStreamReplyClosesTheConnection(t *testing.T) {
 	}
 	if got := lastCodexReply.Get("Connection"); !strings.EqualFold(got, "close") {
 		t.Errorf("Connection = %q, want close", got)
+	}
+}
+
+// Data from the client is not a close: the watch ends without a word, and a
+// close after it is not taken for the client going away.
+func TestWatchClientGoneEndsOnData(t *testing.T) {
+	server, client := tcpPair(t)
+	var calls atomic.Int32
+	stop := watchClientGone(server, func() { calls.Add(1) })
+	if _, err := client.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * clientWatchTick)
+	_ = client.Close()
+	time.Sleep(2 * clientWatchTick)
+	started := time.Now()
+	stop()
+	if took := time.Since(started); took > clientWatchTick {
+		t.Errorf("stop after the watch ended took %s", took)
+	}
+	if calls.Load() != 0 {
+		t.Error("a client that sent data was taken for gone")
+	}
+}
+
+// The end lines of a reply without streaming say so.
+func TestUpstreamEndNamesANonStreamReply(t *testing.T) {
+	var buf bytes.Buffer
+	old := logOut
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+	for _, nonStream := range []bool{false, true} {
+		buf.Reset()
+		trace := newUpstreamTrace()
+		trace.nonStream = nonStream
+		trace.start = time.Now().Add(-slowTotal - time.Second)
+		logUpstreamEnd(context.Background(), &codex.Translator{}, trace, &http.Response{Header: http.Header{}}, "codex", "a -> b", 10)
+		want := "] slow stream "
+		if nonStream {
+			want = "] slow non-stream reply "
+		}
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("nonStream %v: line %q, want %q", nonStream, buf.String(), want)
+		}
 	}
 }
