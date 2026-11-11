@@ -53,7 +53,7 @@ func logStreamFailure(w io.Writer, started time.Time, what, profile, model, msg,
 	if extra != "" {
 		line += " | " + extra
 	}
-	_, _ = fmt.Fprintf(w, "[%s] stream failed after %s [%s] %s: %s\n", started.Format("15:04:05"),
+	_, _ = fmt.Fprintf(w, "[%s] %s failed after %s [%s] %s: %s\n", started.Format("15:04:05"), what,
 		time.Since(started).Round(time.Millisecond), profile, model, line)
 }
 
@@ -175,13 +175,13 @@ func (u *upstreamTrace) reconnectHook(profile, model string) func(n int, err err
 
 // logStreamCanceled prints the line for a stream the client left.
 func logStreamCanceled(w io.Writer, started time.Time, what, profile, model, extra string) {
-	_, _ = fmt.Fprintf(w, "[%s] stream canceled by client after %s [%s] %s: %s\n", started.Format("15:04:05"),
+	_, _ = fmt.Fprintf(w, "[%s] %s canceled by client after %s [%s] %s: %s\n", started.Format("15:04:05"), what,
 		time.Since(started).Round(time.Millisecond), profile, model, extra)
 }
 
 // logSlowStream prints the timing line of a stream that completed slowly.
 func logSlowStream(w io.Writer, started time.Time, what, profile, model, summary string) {
-	_, _ = fmt.Fprintf(w, "[%s] slow stream %s [%s] %s: %s\n", started.Format("15:04:05"),
+	_, _ = fmt.Fprintf(w, "[%s] slow %s %s [%s] %s: %s\n", started.Format("15:04:05"), what,
 		time.Since(started).Round(time.Millisecond), profile, model, summary)
 }
 

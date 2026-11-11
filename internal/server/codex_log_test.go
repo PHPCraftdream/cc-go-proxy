@@ -98,7 +98,7 @@ func codexCallWith(t *testing.T, backend http.Handler, client *http.Client, twea
 	if err != nil {
 		t.Fatal(err)
 	}
-	lastCodexReply = resp.Header.Clone()
+	lastCodexReply, lastCodexClose = resp.Header.Clone(), resp.Close
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b), al.String(), sl.String()
@@ -486,6 +486,9 @@ func TestUpstreamCtxCarriesTheProfileChoice(t *testing.T) {
 
 // lastCodexReply is the header of the reply codexCallWith got, for tests that read it.
 var lastCodexReply http.Header
+
+// lastCodexClose is whether that reply closed its connection (the client drops the header).
+var lastCodexClose bool
 
 func rateLimitBackend(calls *atomic.Int32, retryAfter string, limited int32) http.Handler {
 	ok := overloadBackend(calls, 0)
