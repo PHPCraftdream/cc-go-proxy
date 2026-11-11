@@ -47,7 +47,7 @@ func TestWSManagerLearnsABackgroundRequestFromTheDivergenceItCauses(t *testing.T
 	if info := wsSideExchange(t, m, backend, makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), side), "s1"); info.Mode != "delta" {
 		t.Fatalf("background request went %q, want delta", info.Mode)
 	}
-	if len(*learned) != 0 || m.SideRequest(makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), side)) {
+	if len(*learned) != 0 || isSide(m, makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), side)) {
 		t.Fatal("learned a side message before any divergence")
 	}
 	// The conversation goes on without that message and its reply: the chain is lost.
@@ -59,13 +59,13 @@ func TestWSManagerLearnsABackgroundRequestFromTheDivergenceItCauses(t *testing.T
 		t.Fatalf("learned = %+v, want the side message once", *learned)
 	}
 
-	if !m.SideRequest(makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), wsSideAssistant("a2"), wsManagerUser("more"), side)) {
+	if !isSide(m, makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), wsSideAssistant("a2"), wsManagerUser("more"), side)) {
 		t.Error("a request ending in the learned message was not recognised, whatever its history")
 	}
-	if m.SideRequest(makeWSManagerTestRequest("k", main, wsManagerUser("real next"))) {
+	if isSide(m, makeWSManagerTestRequest("k", main, wsManagerUser("real next"))) {
 		t.Error("a request with another last message was taken for a side one")
 	}
-	if m.SideRequest(makeWSManagerTestRequest("", side)) || m.SideRequest(makeWSManagerTestRequest("k")) || m.SideRequest(nil) {
+	if isSide(m, makeWSManagerTestRequest("", side)) || isSide(m, makeWSManagerTestRequest("k")) || isSide(m, nil) {
 		t.Error("a request without a cache key, without items or nil was taken for a side one")
 	}
 	if got := m.TakeStats().Side; got != 1 {
@@ -98,7 +98,7 @@ func TestWSManagerDoesNotLearnAnEditedMessageOrALargeOne(t *testing.T) {
 	large := wsManagerUser(strings.Repeat("x", wsSideMaxSize+1))
 	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k2", main, large), "l1")
 	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k2", main, wsManagerUser("other")), "l2")
-	if len(*learned) != 0 || m.SideRequest(makeWSManagerTestRequest("k2", main, large)) {
+	if len(*learned) != 0 || isSide(m, makeWSManagerTestRequest("k2", main, large)) {
 		t.Fatalf("learned a message over %d bytes: %+v", wsSideMaxSize, *learned)
 	}
 }
@@ -106,9 +106,9 @@ func TestWSManagerDoesNotLearnAnEditedMessageOrALargeOne(t *testing.T) {
 func TestWSManagerRemembersAtMostWSSideMaxMessages(t *testing.T) {
 	m, _, _ := newWSSideManager(t)
 	m.mu.Lock()
-	m.side = map[uint64]struct{}{}
+	m.side = map[uint64]*wsSideTemplate{}
 	for i := uint64(0); i < wsSideMax; i++ {
-		m.side[i] = struct{}{}
+		m.side[i] = &wsSideTemplate{}
 	}
 	m.mu.Unlock()
 	chain := NewChain(makeWSManagerTestRequest("k", wsManagerUser("m"), wsManagerUser("template")), "id", []json.RawMessage{json.RawMessage(wsSideOutput("r"))})
@@ -122,29 +122,130 @@ func TestWSManagerRemembersAtMostWSSideMaxMessages(t *testing.T) {
 	}
 }
 
-func TestLastItemSideKeyUsesTheStartOfTheEncoding(t *testing.T) {
-	long := strings.Repeat("a", 300)
-	key := func(text string) (uint64, int, bool) {
-		return lastItemSideKey(makeWSManagerTestRequest("k", wsManagerUser("x"), wsManagerUser(text)))
+func isSide(m *WSManager, req *Request) bool {
+	side, _ := m.SideRequest("probe", req)
+	return side
+}
+
+func TestLastItemSideUsesBothEndsOfTheText(t *testing.T) {
+	head, tail := strings.Repeat("h", wsSideEnd), strings.Repeat("t", wsSideEnd)
+	side := func(item any) (uint64, int, bool) {
+		key, _, size, ok := lastItemSide(makeWSManagerTestRequest("k", wsManagerUser("x"), item))
+		return key, size, ok
 	}
-	a, size, ok := key(long + "1")
-	if !ok || size < 300 {
-		t.Fatalf("key of a long message: %d bytes, ok %v", size, ok)
+	key := func(text string) uint64 {
+		k, _, ok := side(wsManagerUser(text))
+		if !ok {
+			t.Fatalf("no key for a user message of %d bytes", len(text))
+		}
+		return k
 	}
-	if b, _, _ := key(long + "2"); b != a {
-		t.Error("messages that differ only after the start have different keys")
+	a := key(head + " middle one " + tail)
+	if key(head+" another, longer middle "+tail) != a {
+		t.Error("messages that differ only in the middle have different keys")
 	}
-	if c, _, _ := key("b" + long); c == a {
-		t.Error("messages that differ at the start have the same key")
+	if key("H"+head[1:]+" middle one "+tail) == a || key(head+" middle one "+tail[1:]+"T") == a {
+		t.Error("messages that differ at an end have the same key")
 	}
-	if short1, _, _ := key("short"); short1 == a {
-		t.Error("a short message has the key of a long one")
+	// The same start, longer than the old 57-byte window, and another end: the
+	// system reminder after a tool's result was taken for the template.
+	reminder := "<system-reminder>\n" + strings.Repeat("r", 100)
+	if key(reminder+" the template's end "+tail) == key(reminder+" an ordinary turn's end, quite another one") {
+		t.Error("messages with another end have the same key")
 	}
-	if _, _, ok := lastItemSideKey(makeWSManagerTestRequest("")); ok {
+	if key("short") == key("short!") || key("short") == a {
+		t.Error("a short message is not keyed by the whole of it")
+	}
+	// The key is the text's, not the encoding's: parts are joined.
+	two := messageItem{Type: "message", Role: "user", Content: []contentPart{{Type: "input_text", Text: head + " middle "}, {Type: "input_text", Text: tail}}}
+	if k, size, ok := side(two); !ok || k != key(head+" middle "+tail) || size <= 2*wsSideEnd {
+		t.Errorf("a message in two parts: key %x ok %v size %d", k, ok, size)
+	}
+	for name, item := range map[string]any{
+		"assistant message": wsSideAssistant("x"),
+		"tool output":       functionOutputItem{Type: "function_call_output", CallID: "c", Output: "x"},
+		"long message":      wsManagerUser(strings.Repeat("x", wsSideMaxSize)),
+	} {
+		if _, _, ok := side(item); ok {
+			t.Errorf("%s has a side key", name)
+		}
+	}
+	if _, _, _, ok := lastItemSide(makeWSManagerTestRequest("")); ok {
 		t.Error("a request without a cache key has no side key")
 	}
-	if _, _, ok := lastItemSideKey(nil); ok {
+	if _, _, _, ok := lastItemSide(nil); ok {
 		t.Error("nil has no side key")
+	}
+}
+
+// learnWSSide makes m learn side after main and its reply a1, on bucket "conv".
+func learnWSSide(t *testing.T, m *WSManager, backend *wsManagerTestBackend, main, side messageItem) {
+	t.Helper()
+	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k", main), "a1")
+	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), side), "s1")
+	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), wsManagerUser("real next")), "a2")
+}
+
+// A message taken for a side one by mistake stays in the bucket's next request,
+// followed by its reply: it was an ordinary turn, so it is forgotten for good.
+func TestWSManagerForgetsASideMessageThatWasAnOrdinaryTurn(t *testing.T) {
+	m, backend, learned := newWSSideManager(t)
+	main, turn := wsManagerUser("main question"), wsManagerUser("<system-reminder>a turn's text</system-reminder>")
+	learnWSSide(t, m, backend, main, turn)
+	if len(*learned) != 1 {
+		t.Fatalf("learned %d times, want once", len(*learned))
+	}
+
+	history := []any{main, wsSideAssistant("a1"), wsManagerUser("real next"), wsSideAssistant("a2")}
+	sent := makeWSManagerTestRequest("k", append(history, turn)...)
+	for i := 0; i < 2; i++ {
+		// A repeat of the request ends in the message as well: no verdict yet.
+		if side, wrong := m.SideRequest("conv", sent); !side || wrong != nil {
+			t.Fatalf("request %d: side %v, wrong %+v; want a side request", i, side, wrong)
+		}
+	}
+	// Another bucket's request says nothing about this one's.
+	if _, wrong := m.SideRequest("other", makeWSManagerTestRequest("k", append(history, turn, wsSideAssistant("r"), wsManagerUser("go on"))...)); wrong != nil {
+		t.Fatalf("another bucket's request found the message wrong: %+v", wrong)
+	}
+	next := makeWSManagerTestRequest("k", append(history, turn, wsSideAssistant("r"), wsManagerUser("go on"))...)
+	side, wrong := m.SideRequest("conv", next)
+	if side || wrong == nil || wrong.Matches != 2 || wrong.Size != (*learned)[0].Size {
+		t.Fatalf("next request: side %v, wrong %+v; want the message found wrong after 2 matches", side, wrong)
+	}
+	if isSide(m, sent) {
+		t.Error("the forgotten message is still taken for a side one")
+	}
+	if stats := m.TakeStats(); stats.SideWrong != 1 {
+		t.Errorf("SideWrong = %d, want 1", stats.SideWrong)
+	}
+	// The same divergence later does not learn it again.
+	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k", append(history, wsManagerUser("x"), wsSideAssistant("a3"), turn)...), "s2")
+	wsSideExchange(t, m, backend, makeWSManagerTestRequest("k", append(history, wsManagerUser("x"), wsSideAssistant("a3"), wsManagerUser("y"))...), "a4")
+	if len(*learned) != 1 {
+		t.Errorf("learned %d times, want the message never learned again", len(*learned))
+	}
+}
+
+// A real side request is left out of the next request: the message stays learned.
+func TestWSManagerKeepsASideMessageLeftOutOfTheNextRequest(t *testing.T) {
+	m, backend, _ := newWSSideManager(t)
+	main, side := wsManagerUser("main question"), wsManagerUser("[background template]")
+	learnWSSide(t, m, backend, main, side)
+
+	history := []any{main, wsSideAssistant("a1"), wsManagerUser("real next"), wsSideAssistant("a2")}
+	if s, _ := m.SideRequest("conv", makeWSManagerTestRequest("k", append(history, side)...)); !s {
+		t.Fatal("the side request was not recognised")
+	}
+	next := makeWSManagerTestRequest("k", append(history, wsManagerUser("user's next"), wsSideAssistant("a3"), wsManagerUser("more"))...)
+	if s, wrong := m.SideRequest("conv", next); s || wrong != nil {
+		t.Fatalf("next request: side %v, wrong %+v", s, wrong)
+	}
+	if !isSide(m, makeWSManagerTestRequest("k", append(history, side)...)) {
+		t.Error("the side message was forgotten")
+	}
+	if stats := m.TakeStats(); stats.SideWrong != 0 || stats.Side != 2 {
+		t.Errorf("stats = %+v, want 2 side requests and none wrong", stats)
 	}
 }
 
@@ -166,15 +267,15 @@ func TestWSManagerLearnsATemplateWhoseMiddleVaries(t *testing.T) {
 		t.Fatalf("learned %d times, want once", len(*learned))
 	}
 	// Another instance of the template is recognised without a divergence of its own.
-	if !m.SideRequest(makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), wsManagerUser("real next"), wsSideAssistant("a2"), side2)) {
+	if !isSide(m, makeWSManagerTestRequest("k", main, wsSideAssistant("a1"), wsManagerUser("real next"), wsSideAssistant("a2"), side2)) {
 		t.Error("another instance of the template was not recognised")
 	}
-	if m.SideRequest(makeWSManagerTestRequest("k", main, wsManagerUser(strings.Repeat("U", 200)+" variable one "+strings.Repeat("E", 200)))) {
+	if isSide(m, makeWSManagerTestRequest("k", main, wsManagerUser(strings.Repeat("U", 200)+" variable one "+strings.Repeat("E", 200)))) {
 		t.Error("a message with another start was taken for the template")
 	}
 	// A message over the size bound is never a side request, whatever its start.
 	huge := wsManagerUser(strings.Repeat("T", 200) + strings.Repeat("x", wsSideMaxSize))
-	if m.SideRequest(makeWSManagerTestRequest("k", main, huge)) {
+	if isSide(m, makeWSManagerTestRequest("k", main, huge)) {
 		t.Error("a message over the size bound was taken for a side request")
 	}
 }
