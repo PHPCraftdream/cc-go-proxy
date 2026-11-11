@@ -284,7 +284,7 @@ func TestSlowStreamPastHeaderTimeoutSurvives(t *testing.T) {
 
 func TestLogStreamFailureLine(t *testing.T) {
 	var b bytes.Buffer
-	logStreamFailure(&b, time.Now().Add(-2*time.Second), "codex", "claude-opus-5-5 -> gpt-6.1-sol", "stream read error:\n unexpected EOF", "", "")
+	logStreamFailure(&b, time.Now().Add(-2*time.Second), "stream", "codex", "claude-opus-5-5 -> gpt-6.1-sol", "stream read error:\n unexpected EOF", "", "")
 	got := b.String()
 	for _, want := range []string{"stream failed after 2", "[codex] claude-opus-5-5 -> gpt-6.1-sol: stream read error: unexpected EOF\n"} {
 		if !strings.Contains(got, want) {
@@ -372,7 +372,7 @@ func TestOverloadRetriesRunOut(t *testing.T) {
 
 func TestLogStreamCanceledLine(t *testing.T) {
 	var b bytes.Buffer
-	logStreamCanceled(&b, time.Now().Add(-3*time.Second), "codex", "a -> b", "conn reused (idle 1s)")
+	logStreamCanceled(&b, time.Now().Add(-3*time.Second), "stream", "codex", "a -> b", "conn reused (idle 1s)")
 	if got := b.String(); !strings.Contains(got, "stream canceled by client after 3") || !strings.HasSuffix(got, "[codex] a -> b: conn reused (idle 1s)\n") {
 		t.Errorf("line %q", got)
 	}

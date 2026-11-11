@@ -40,6 +40,7 @@ type upstreamTrace struct {
 	tls              time.Duration
 	headers          time.Time
 	warm             bool          // the connection was opened ahead (connpool)
+	nonStream        bool          // the client asked for the reply in one piece
 	warmAge          time.Duration // how long before
 	retry            string        // why the first attempt was sent again
 	first            string        // the first attempt's connection: new, warm or reused (idle for)
@@ -174,7 +175,7 @@ func (u *upstreamTrace) observer() *connpool.Observer {
 func (u *upstreamTrace) newConnText() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return joinNonEmpty(u.connTextLocked(), u.httpNote)
+	return joinNonEmpty(u.nonStreamNote(), u.connTextLocked(), u.httpNote)
 }
 
 func (u *upstreamTrace) connTextLocked() string {
@@ -347,7 +348,7 @@ func (u *upstreamTrace) connText() string {
 	if u.calls == 0 {
 		return ""
 	}
-	return joinNonEmpty(u.transport, u.connLocked())
+	return joinNonEmpty(u.nonStreamNote(), u.transport, u.connLocked())
 }
 
 // summary describes the call: the connection, the waits from the start of the
@@ -572,4 +573,13 @@ func preTryName(calls int) string {
 		return "before the last try"
 	}
 	return "prepare"
+}
+
+// nonStreamNote marks a request whose reply goes to the client in one piece,
+// at its end: nothing reaches the client while the model works.
+func (u *upstreamTrace) nonStreamNote() string {
+	if u.nonStream {
+		return "non-stream"
+	}
+	return ""
 }

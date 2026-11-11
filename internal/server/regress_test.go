@@ -151,13 +151,13 @@ func TestLogLineShapes(t *testing.T) {
 		name, got, want string
 	}{
 		{"failure", line(func(w io.Writer) {
-			logStreamFailure(w, start, "codex", "a -> b", "boom", `{"type":"error"}`, "x-request-id=r1 | conn new")
+			logStreamFailure(w, start, "stream", "codex", "a -> b", "boom", `{"type":"error"}`, "x-request-id=r1 | conn new")
 		}), `^` + hms + `stream failed after \S+ \[codex\] a -> b: boom \| upstream event: \{"type":"error"\} \| x-request-id=r1 \| conn new\n$`},
-		{"failure without details", line(func(w io.Writer) { logStreamFailure(w, start, "codex", "a -> b", "boom", "", "") }),
+		{"failure without details", line(func(w io.Writer) { logStreamFailure(w, start, "stream", "codex", "a -> b", "boom", "", "") }),
 			`^` + hms + `stream failed after \S+ \[codex\] a -> b: boom\n$`},
-		{"slow", line(func(w io.Writer) { logSlowStream(w, start, "codex", "a -> b", "conn reused | total 3m") }),
+		{"slow", line(func(w io.Writer) { logSlowStream(w, start, "stream", "codex", "a -> b", "conn reused | total 3m") }),
 			`^` + hms + `slow stream \S+ \[codex\] a -> b: conn reused \| total 3m\n$`},
-		{"canceled", line(func(w io.Writer) { logStreamCanceled(w, start, "codex", "a -> b", "conn new") }),
+		{"canceled", line(func(w io.Writer) { logStreamCanceled(w, start, "stream", "codex", "a -> b", "conn new") }),
 			`^` + hms + `stream canceled by client after \S+ \[codex\] a -> b: conn new\n$`},
 		{"overload retry", line(func(w io.Writer) {
 			logUpstreamRetry(w, "codex", "a -> b", 1, 2, 2*time.Second, "overloaded", `{"x":1}`, "cf-ray=1")
