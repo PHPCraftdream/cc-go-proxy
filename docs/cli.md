@@ -129,7 +129,8 @@ line, so it can stand far below that line; its timing ends with `total 15m1.327s
 
 - `stream failed after …`: the stream broke after it started (`after` is the time since the start of the call, the
   same as `total`). The reason, then the raw backend event that ended it
-  (`upstream event: {…}`, for `error` / `response.failed`), the backend's `x-request-id` / `cf-ray` and the timing.
+  (`upstream event: {…}`, for `error` / `response.failed`; a `message` the reason already holds reads
+  `"(shown before)"` there, and the reason is then written whole, up to 1000 bytes), the backend's `x-request-id` / `cf-ray` and the timing.
   `not retried: content already sent (thinking)` names the kinds of block the client had got (`thinking`, `text`,
   `tool_use`): after thinking alone Claude Code asks again by itself (twice), after text or a tool call it keeps what
   came and shows `Server error mid-response`; ccgp cannot start the request over in either case.

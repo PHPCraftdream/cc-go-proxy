@@ -293,7 +293,8 @@ func TestLogStreamFailureLine(t *testing.T) {
 	}
 }
 
-// An error event from the backend is logged raw, with the request ids. (Not
+// An error event from the backend is logged raw (but for the message the line
+// already shows), with the request ids. (Not
 // an overload: that one is retried, see TestOverloadedBackendIsAskedAgain.)
 func TestUpstreamErrorEventIsLoggedRaw(t *testing.T) {
 	ev := `{"type":"error","error":{"type":"invalid_request_error","code":"context_length_exceeded","message":"too long"},"sequence_number":3}`
@@ -306,7 +307,8 @@ func TestUpstreamErrorEventIsLoggedRaw(t *testing.T) {
 	if !strings.Contains(body, "codex: context_length_exceeded: too long") {
 		t.Errorf("client error lacks the upstream message: %q", body)
 	}
-	for _, want := range []string{"context_length_exceeded: too long | upstream event: " + ev, "| x-request-id=req_123 cf-ray=ray-ams | conn new", "| request "} {
+	logged := strings.Replace(ev, `"too long"`, shownMessage, 1)
+	for _, want := range []string{"context_length_exceeded: too long | upstream event: " + logged, "| x-request-id=req_123 cf-ray=ray-ams | conn new", "| request "} {
 		if !strings.Contains(stream, want) {
 			t.Errorf("stream log %q lacks %q", stream, want)
 		}
