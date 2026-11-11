@@ -46,15 +46,71 @@ const maxLogDetail = 1000
 // started; detail is the raw upstream event that ended it, extra the request
 // ids and timing, either may be empty.
 func logStreamFailure(w io.Writer, started time.Time, what, profile, model, msg, detail, extra string) {
-	line := oneLine(msg, maxLogErr)
-	if detail != "" {
-		line += " | upstream event: " + oneLine(detail, maxLogDetail)
-	}
+	line := eventText(msg, detail)
 	if extra != "" {
 		line += " | " + extra
 	}
 	_, _ = fmt.Fprintf(w, "[%s] %s failed after %s [%s] %s: %s\n", started.Format("15:04:05"), what,
 		time.Since(started).Round(time.Millisecond), profile, model, line)
+}
+
+// eventText is the reason of a failure or retry line, then the raw upstream
+// event without the message text the reason already holds. The reason is then
+// the only copy of that text, so it is cut at maxLogDetail, not maxLogErr.
+func eventText(msg, detail string) string {
+	detail, dropped := dropShownMessage(detail, msg)
+	n := maxLogErr
+	if dropped {
+		n = maxLogDetail
+	}
+	line := oneLine(msg, n)
+	if detail != "" {
+		line += " | upstream event: " + oneLine(detail, maxLogDetail)
+	}
+	return line
+}
+
+// shownMessage stands in the raw event for a message the line already shows.
+const shownMessage = `"(shown before)"`
+
+// dropShownMessage replaces each non-empty "message" string of the raw JSON
+// event that msg contains with shownMessage; dropped tells whether any was.
+func dropShownMessage(detail, msg string) (string, bool) {
+	const key = `"message"`
+	var b strings.Builder
+	dropped := false
+	rest := detail
+	for {
+		i := strings.Index(rest, key)
+		if i < 0 {
+			break
+		}
+		k := i + len(key)
+		k += len(rest[k:]) - len(strings.TrimLeft(rest[k:], " \t\r\n"))
+		if k >= len(rest) || rest[k] != ':' { // a value, not a key
+			b.WriteString(rest[:k])
+			rest = rest[k:]
+			continue
+		}
+		k++
+		k += len(rest[k:]) - len(strings.TrimLeft(rest[k:], " \t\r\n"))
+		var s string
+		dec := json.NewDecoder(strings.NewReader(rest[k:]))
+		if k >= len(rest) || rest[k] != '"' || dec.Decode(&s) != nil || s == "" || !strings.Contains(msg, s) {
+			b.WriteString(rest[:k])
+			rest = rest[k:]
+			continue
+		}
+		b.WriteString(rest[:k])
+		b.WriteString(shownMessage)
+		rest = rest[k+int(dec.InputOffset()):]
+		dropped = true
+	}
+	if !dropped {
+		return detail, false
+	}
+	b.WriteString(rest)
+	return b.String(), true
 }
 
 // notRetriedNote explains a failed stream that ccgp did not ask for again: the
@@ -146,10 +202,7 @@ func callAfter(ctx context.Context, wait time.Duration, call func() (*http.Respo
 // logUpstreamRetry prints the line for a stream sent again after an overload or
 // a broken connection; attempt counts of max.
 func logUpstreamRetry(w io.Writer, profile, model string, attempt, max int, wait time.Duration, reason, detail, ids string) {
-	line := oneLine(reason, maxLogErr)
-	if detail != "" {
-		line += " | upstream event: " + oneLine(detail, maxLogDetail)
-	}
+	line := eventText(reason, detail)
 	_, _ = fmt.Fprintf(w, "[%s] upstream retry %d/%d in %s [%s] %s: %s\n", time.Now().Format("15:04:05"),
 		attempt, max, wait, profile, model, joinNonEmpty(line, ids))
 }

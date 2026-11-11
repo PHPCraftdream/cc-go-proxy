@@ -10,6 +10,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- The `stream failed` and `upstream retry` lines write the backend's error message once: in the raw event it reads
+  `"(shown before)"`, and the reason is no longer cut at 300 bytes (a `cyber_policy` refusal was written twice, the
+  first copy cut).
 - A Codex request without streaming (Claude Code sends one after a stream failed) is marked: `| non-stream` in its
   access line, `slow non-stream reply` / `non-stream reply canceled by client` / `non-stream reply failed` in place of
   the stream lines. Nothing reaches the client before such a reply is complete, and Claude Code gives it up after about
