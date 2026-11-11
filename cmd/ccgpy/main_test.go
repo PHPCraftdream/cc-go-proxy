@@ -50,21 +50,40 @@ func TestCCGPArgsPassTheHomeFlagsOn(t *testing.T) {
 		{[]string{"--home", "some dir", "codex"}, "--home|some dir|codex|--dangerously-skip-permissions"},
 		{[]string{"--home=x", "codex"}, "--home|x|codex|--dangerously-skip-permissions"},
 		{[]string{"codex", "--local"}, "codex|--dangerously-skip-permissions|--local"}, // after the profile it is claude's
+		{[]string{"--local"}, "--local|.|--dangerously-skip-permissions"},              // no profile: chosen from a list
 	} {
 		got, err := ccgpArgs(c.in)
 		if err != nil || strings.Join(got, "|") != c.want {
 			t.Errorf("ccgpArgs(%q) = %q, %v, want %q", c.in, got, err, c.want)
 		}
 	}
-	for _, in := range [][]string{{"--local"}, {"--home"}, {"--local", "--home", "x", "codex"}} {
+	for _, in := range [][]string{{"--home"}, {"--local", "--home", "x", "codex"}} {
 		if _, err := ccgpArgs(in); err == nil {
 			t.Errorf("ccgpArgs(%q) must fail", in)
 		}
 	}
 }
 
-func TestCCGPArgsRejectsMissingProfile(t *testing.T) {
-	for _, in := range [][]string{nil, {""}, {"--model", "x"}, {"-c"}} {
+// No profile, or ".", makes ccgp ask for one from a list; the arguments after
+// "." are claude's.
+func TestCCGPArgsWithoutAProfileChooseFromAList(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+	}{
+		{nil, ".|--dangerously-skip-permissions"},
+		{[]string{"."}, ".|--dangerously-skip-permissions"},
+		{[]string{".", "-c", "fix it"}, ".|--dangerously-skip-permissions|-c|fix it"},
+	} {
+		got, err := ccgpArgs(c.in)
+		if err != nil || strings.Join(got, "|") != c.want {
+			t.Errorf("ccgpArgs(%q) = %q, %v, want %q", c.in, got, err, c.want)
+		}
+	}
+}
+
+func TestCCGPArgsRejectsAFlagInPlaceOfTheProfile(t *testing.T) {
+	for _, in := range [][]string{{""}, {"--model", "x"}, {"-c"}} {
 		if _, err := ccgpArgs(in); err == nil || !strings.Contains(err.Error(), "usage: ccgpy ") {
 			t.Errorf("ccgpArgs(%q) = %v, want the usage error", in, err)
 		}
@@ -134,6 +153,11 @@ func TestRunPassesArgumentsAndExitCodeThrough(t *testing.T) {
 		t.Errorf("ccgp was started with %q", got)
 	}
 
+	out.Reset()
+	if code := run(nil, dir, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != ".|--dangerously-skip-permissions" {
+		t.Errorf("no args: exit %d, ccgp was started with %q", code, out.String())
+	}
+
 	t.Setenv("FAKE_CCGP_EXIT", "7")
 	out.Reset()
 	if code := run([]string{"zai"}, dir, &out, &errOut); code != 7 {
@@ -146,8 +170,8 @@ func TestRunUsageAndMissingCCGP(t *testing.T) {
 	if code := run([]string{"help"}, "", &out, &errOut); code != 0 || !strings.Contains(out.String(), "usage: ccgpy ") {
 		t.Errorf("help: exit %d, out %q", code, out.String())
 	}
-	if code := run(nil, "", &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage:") {
-		t.Errorf("no args: exit %d, stderr %q", code, errOut.String())
+	if code := run([]string{"-c"}, "", &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "usage:") {
+		t.Errorf("a flag first: exit %d, stderr %q", code, errOut.String())
 	}
 
 	// No sibling and an empty PATH: ccgp cannot be found.

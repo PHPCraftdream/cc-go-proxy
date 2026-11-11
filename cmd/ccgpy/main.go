@@ -6,6 +6,9 @@
 //
 //	ccgp [--local | --home <dir>] <profile> --dangerously-skip-permissions [claude args...]
 //
+// Without a profile it passes ".", which makes ccgp ask for one from a list;
+// "ccgpy . [claude args...]" does the same with arguments for claude.
+//
 // It starts the ccgp binary that sits next to it (or the one in PATH), passes
 // the terminal and the exit code through, and does nothing else.
 package main
@@ -26,14 +29,18 @@ import (
 // skipPermissions is Claude Code's flag that disables every permission prompt.
 const skipPermissions = "--dangerously-skip-permissions"
 
-const usage = "usage: ccgpy [--local | --home <dir>] <profile> [claude args...]   (runs: ccgp [--local | --home <dir>] <profile> " + skipPermissions + " [claude args...])"
+// pickArg in place of a profile makes ccgp ask for one from a list.
+const pickArg = "."
+
+const usage = "usage: ccgpy [--local | --home <dir>] [<profile> | .] [claude args...]   (runs: ccgp [--local | --home <dir>] <profile> " + skipPermissions + " [claude args...]; no profile or \".\": choose it from a list)"
 
 func main() {
 	self, _ := os.Executable()
 	os.Exit(run(os.Args[1:], filepath.Dir(self), os.Stdout, os.Stderr))
 }
 
-// run launches ccgp for the profile in args[0] and returns the exit code.
+// run launches ccgp for the profile in args[0] (none: chosen from a list) and
+// returns the exit code.
 // selfDir is where a sibling ccgp binary is looked for before PATH.
 func run(args []string, selfDir string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
@@ -71,14 +78,15 @@ func run(args []string, selfDir string, stdout, stderr io.Writer) int {
 }
 
 // ccgpArgs puts the permission-skipping flag right after the profile. The home
-// flags (--local, --home <dir>) before the profile go to ccgp as they are.
+// flags (--local, --home <dir>) before the profile go to ccgp as they are. No
+// profile at all is pickArg.
 func ccgpArgs(args []string) ([]string, error) {
 	opt, args, err := home.Parse(args)
 	if err != nil {
 		return nil, err
 	}
 	if len(args) == 0 {
-		return nil, errors.New(usage)
+		args = []string{pickArg}
 	}
 	if args[0] == "" || args[0][0] == '-' {
 		return nil, fmt.Errorf("the first argument must be a profile, got %q\n%s", args[0], usage)

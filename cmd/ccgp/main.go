@@ -2,6 +2,7 @@
 //
 //	ccgp [--local|--home <dir>] ...   keep all files in ./.ccgp or in <dir> (also CCGP_HOME, or a .ccgp dir in the current directory)
 //	ccgp <profile> [claude args...]   start server if needed, ensure creds, run claude
+//	ccgp . [claude args...]           choose the profile (or your own claude) from a list
 //	ccgp --serve [-d] [-s]            run server in foreground
 //	ccgp --start|--stop|--status      manage background server
 //	ccgp --login <provider> [--device] (re)authenticate a provider
@@ -66,6 +67,9 @@ func run(args []string) error {
 		}
 		if err := ensureConfig(); err != nil {
 			return err
+		}
+		if inv.profile == pickArg {
+			return launchPicked(inv.args)
 		}
 		return launch(inv.profile, inv.args)
 	}

@@ -186,8 +186,9 @@ Usage:
   ccgp <profile> [claude args...]  Ensure server + credentials, then run claude
                                    (a word without dashes is always a profile: ccgp codex runs profile codex;
                                    commands start with --)
+  ccgp . [claude args...]          Choose the profile from a list (or claude: your own Claude Code, plain)
   ccgpy <profile> [claude args...] Same as ccgp <profile> --dangerously-skip-permissions ...
-                                   (Claude Code without permission prompts)
+                                   (Claude Code without permission prompts; ccgpy alone = ccgpy .)
 `)
 	for _, c := range commands() {
 		if c.hidden {

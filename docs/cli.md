@@ -11,7 +11,8 @@ starts with a dash is an error (`unknown command "--stauts", see: ccgp --help`),
 the profile goes to `claude` untouched: `ccgp codex --help` is Claude Code's help.
 
 `ccgp --<command> --help` prints the help of that command, `ccgp --help` lists them all, `ccgp --version` prints the
-version. `ccgpy <profile> …` is `ccgp <profile> --dangerously-skip-permissions …`.
+version. `ccgpy <profile> …` is `ccgp <profile> --dangerously-skip-permissions …`. A profile of `.` opens a list to
+choose the profile from (below).
 
 ## Running a profile
 
@@ -22,6 +23,8 @@ ccgp codex -p "explain this repo"  # headless
 ccgp zai --model opus              # a Claude model name; the profile maps it to a backend model
 ccgp work                          # a profile of type claude: the real Claude Code, no proxy (see below)
 ccgpy codex                        # same as: ccgp codex --dangerously-skip-permissions
+ccgp . -c                          # choose the profile from a list, then run it with -c
+ccgpy                              # same as: ccgpy . (the list, then no permission prompts)
 ```
 
 For a proxy profile (`codex`, `codex_api`, `anthropic_compat`) `ccgp <profile>`, in order: loads the config, signs in if
@@ -43,6 +46,13 @@ runs `claude` with it as `ANTHROPIC_API_KEY`, against the official server unless
 `ccgpy <profile> …` finds the `ccgp` next to it (else in `PATH`) and runs `ccgp <profile>
 --dangerously-skip-permissions …`; it takes the home flags too (`ccgpy --local work`) and passes the terminal and the
 exit code through. It is for places where running Claude Code without permission prompts is acceptable.
+
+`.` in place of the profile (`ccgp . [claude args…]`, `ccgpy . [claude args…]`, or `ccgpy` with no profile at all)
+opens a list of the profiles with their provider, type and login state; ↑/↓ or the number picks one, `esc` / `q` /
+`ctrl+c` leaves without running anything (exit code 1). The last entry, `claude` (key `c`), is your own Claude Code:
+plain `claude` with the arguments and the environment as they are, nothing of ccgp. The arguments after `.` go to the
+chosen one, after `--dangerously-skip-permissions` for `ccgpy`. No profile can be named `.`; without a terminal the
+list cannot be drawn and ccgp says so.
 
 ## Own home: a setup that shares nothing
 

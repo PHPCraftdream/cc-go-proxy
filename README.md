@@ -19,6 +19,7 @@ ccgp codex                     # Claude Code on your ChatGPT subscription (Codex
 ccgp zai                       # Claude Code on z.ai GLM
 ccgp codex -p "explain this"   # headless: everything after the profile goes to claude
 ccgpy codex                    # same, with every permission prompt off (--dangerously-skip-permissions)
+ccgpy                          # choose the profile from a list (ccgpy . -c: the same, with claude's arguments)
 ```
 
 ## Features
@@ -160,7 +161,8 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | --- | --- |
 | `ccgp <profile> [claude args…]` | Ensure server and credentials, run `claude` through the profile |
 | `ccgp --local` / `--home <dir>` `…` | First flags of any command or profile run: keep config, logins, tokens and log in `./.ccgp` or in `<dir>` instead of the default places; a `.ccgp` directory in the current directory is picked up by itself ([own home](docs/cli.md#own-home-a-setup-that-shares-nothing)) |
-| `ccgpy <profile> [claude args…]` | Same as `ccgp <profile> --dangerously-skip-permissions …`: Claude Code without permission prompts, so use it only where that is acceptable |
+| `ccgp . [claude args…]` | Choose the profile from a list, then run it with the arguments; the last entry, `claude`, is your own Claude Code run as plain `claude` |
+| `ccgpy <profile> [claude args…]` | Same as `ccgp <profile> --dangerously-skip-permissions …`: Claude Code without permission prompts, so use it only where that is acceptable. `ccgpy` alone is `ccgpy .` |
 | `ccgp --login <provider> [--device]` | (Re)authenticate. Codex: browser OAuth, or `--device` for a device code. Others: API key |
 | `ccgp --logout <provider> [--yes]` | Remove the stored login (OAuth tokens or API key) of a provider; the config is not touched |
 | `ccgp --models [apply] [-v] [--json] [profile]` | Show, or write into the config, the newest models per Claude tier |
