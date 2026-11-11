@@ -185,8 +185,8 @@ func TestNonStreamReplyClosesTheConnection(t *testing.T) {
 	if !strings.Contains(access, "| non-stream") {
 		t.Errorf("access line lacks the non-stream note: %q", access)
 	}
-	if got := lastCodexReply.Get("Connection"); !strings.EqualFold(got, "close") {
-		t.Errorf("Connection = %q, want close", got)
+	if !lastCodexClose {
+		t.Error("the reply did not close its connection")
 	}
 }
 
