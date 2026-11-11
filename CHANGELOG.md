@@ -55,6 +55,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   the answer ends and could not be placed in time before.
 
 ### Added
+- `ccgp . [claude args…]` and `ccgpy` without a profile (or `ccgpy . [claude args…]`): a list of the profiles to choose
+  the one to run, with your own Claude Code (`claude`, run as plain `claude`) as the last entry. The arguments go to
+  the chosen one.
 - Codex over a websocket (`CODEX_TRANSPORT=auto`, the default; `http` turns it off): one websocket per conversation, as
   the official Codex client does. Only the Responses protocol has a websocket, so only `codex` providers use it; Chat
   Completions (`codex_api`) and Anthropic Messages (`anthropic_compat`) providers are not affected. After the first
