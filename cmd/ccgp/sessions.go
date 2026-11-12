@@ -191,7 +191,7 @@ func stripThinkingBetween(from, to endpoint) bool {
 // copySessions copies and reports as it goes (transcripts can be gigabytes);
 // it is the testable core of send. label opens the first output line.
 func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt sessions.Options) error {
-	var done, same, skipped, diverged, failed, stripped int
+	var done, same, skipped, diverged, elsewhere, failed, stripped int
 	var forks []string
 	opened := false
 	open := func() {
@@ -240,10 +240,13 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 			}
 		default:
 			skipped++
-			if r.Status == sessions.Diverged {
+			switch r.Status {
+			case sessions.Diverged:
 				diverged++
+			case sessions.Elsewhere:
+				elsewhere++
 			}
-			line += "  (" + skipReason(r.Status) + ")"
+			line += "  (" + skipReason(r) + ")"
 			if r.Fork != "" {
 				line += "; the fork " + r.Fork + " went its own way too and was left alone"
 			}
@@ -274,8 +277,14 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 	if dst.provider != "" && len(forks) > 0 {
 		_, _ = fmt.Fprintf(w, "open a fork with: ccgp %s --resume %s\n", dst.label, forks[0])
 	}
+	if dst.provider == "" && len(forks) > 0 {
+		_, _ = fmt.Fprintf(w, "open it with: claude --resume %s (in the directory it was written for)\n", forks[0])
+	}
 	if diverged > 0 && !opt.Fork && !opt.Force {
 		_, _ = fmt.Fprintln(w, "diverged sessions: --fork writes them as new sessions next to the old ones, --force replaces the old ones (kept as .bak-<time>)")
+	}
+	if elsewhere > 0 && !opt.Fork {
+		_, _ = fmt.Fprintln(w, "a session id that is another session there: --fork writes it under a new id")
 	}
 	if failed > 0 {
 		return exitError(1)
@@ -283,9 +292,12 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 	return nil
 }
 
-func skipReason(s sessions.Status) string {
-	if s == sessions.Ahead {
+func skipReason(r sessions.Result) string {
+	switch r.Status {
+	case sessions.Ahead:
 		return "the destination already has more of it"
+	case sessions.Elsewhere:
+		return "the destination has a session of this id in " + r.Other + ", for another directory; not written next to it"
 	}
 	return "both sides changed; the destination was not overwritten"
 }

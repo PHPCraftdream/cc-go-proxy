@@ -40,14 +40,15 @@ const (
 	Diverged                // both sides changed; destination left alone
 	Forked                  // diverged; the source was written under a new id (Options.Fork)
 	Replaced                // diverged or ahead; the old destination was kept as a backup and replaced (Options.Force)
+	Elsewhere               // the destination has this id in another project folder (Result.Other); left alone
 )
 
 func (s Status) String() string {
-	return [...]string{"copied", "updated", "unchanged", "ahead", "diverged", "forked", "replaced"}[s]
+	return [...]string{"copied", "updated", "unchanged", "ahead", "diverged", "forked", "replaced", "elsewhere"}[s]
 }
 
 // Skipped reports statuses where the destination was deliberately not written.
-func (s Status) Skipped() bool { return s == Ahead || s == Diverged }
+func (s Status) Skipped() bool { return s == Ahead || s == Diverged || s == Elsewhere }
 
 // Options tune a copy.
 type Options struct {
@@ -89,6 +90,7 @@ type Result struct {
 	Removed int    // thinking blocks removed
 	Fork    string // id of the fork the session was written as (Options.Fork)
 	Backup  string // path the replaced destination was kept at (Options.Force)
+	Other   string // project folder of the destination that holds the id (Elsewhere)
 	Err     error  // set when the session could not be copied
 }
 
@@ -195,8 +197,20 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	if opt.OnProgress != nil {
 		prog = func(done, total int64) { opt.OnProgress(s, done, total) }
 	}
-	st, removed, backup, err := place(s.Path, dst, true, opt, prog)
-	if err == nil && st == Diverged && opt.Fork {
+	// A session id is one session for Claude Code: the same id in another
+	// project folder is another session, never written over or next to.
+	var (
+		st      Status
+		removed int
+		backup  string
+		err     error
+	)
+	if other := idElsewhere(dstDir, s.Project, s.ID); other != "" {
+		st, res.Other = Elsewhere, other
+	} else {
+		st, removed, backup, err = place(s.Path, dst, true, opt, prog)
+	}
+	if err == nil && (st == Diverged || st == Elsewhere) && opt.Fork {
 		id := forkID(s.ID)
 		dst = dstFile(id)
 		opt.rewrite = &idSwap{old: s.ID, new: id}
@@ -243,6 +257,28 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	})
 	res.Err = err
 	return res
+}
+
+// idElsewhere names the project folder of configDir, other than project, that
+// holds the transcript of id, when project itself does not; "" otherwise.
+func idElsewhere(configDir, project, id string) string {
+	root := filepath.Join(configDir, projectsDir)
+	if _, err := os.Lstat(filepath.Join(root, project, id+".jsonl")); err == nil {
+		return ""
+	}
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, d := range dirs {
+		if !d.IsDir() || strings.EqualFold(d.Name(), project) {
+			continue
+		}
+		if info, err := os.Lstat(filepath.Join(root, d.Name(), id+".jsonl")); err == nil && info.Mode().IsRegular() {
+			return d.Name()
+		}
+	}
+	return ""
 }
 
 func sameDir(a, b string) bool {

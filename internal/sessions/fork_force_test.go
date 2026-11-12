@@ -399,3 +399,75 @@ func TestSwapReaderReportsTheSourceError(t *testing.T) {
 		t.Errorf("got %q, %v; want the data read before the error, then the error", got, err)
 	}
 }
+
+// ---- the id in another project folder ----
+
+// elsewhere has the session in folder b of the source, and another session of
+// the same id in folder a of the destination (Claude Code moved it to a
+// worktree's folder on one side only).
+func elsewhere(t *testing.T) (p pair, other string) {
+	t.Helper()
+	p = pair{src: t.TempDir(), dst: t.TempDir()}
+	p.s = filepath.Join(p.src, "projects", "b", sid+".jsonl")
+	p.d = filepath.Join(p.dst, "projects", "b", sid+".jsonl")
+	other = filepath.Join(p.dst, "projects", "a", sid+".jsonl")
+	put(t, p.s, entry(sid, "one")+entry(sid, "in-the-worktree"), t0)
+	put(t, other, entry(sid, "one")+entry(sid, "at-home"), t0.Add(time.Hour))
+	return p, other
+}
+
+func TestAnIdInAnotherFolderIsNotWrittenNextToIt(t *testing.T) {
+	for _, opt := range []Options{{}, {Force: true}} {
+		p, other := elsewhere(t)
+		r := copyOne(t, p, opt)
+		if r.Status != Elsewhere || r.Other != "a" || r.Fork != "" || !r.Status.Skipped() {
+			t.Errorf("force=%v: result = %+v, want elsewhere in a", opt.Force, r)
+		}
+		if exists(filepath.Dir(p.d)) {
+			t.Errorf("force=%v: folder b was made at the destination", opt.Force)
+		}
+		if got := read(t, other); got != entry(sid, "one")+entry(sid, "at-home") {
+			t.Errorf("force=%v: the other session was touched: %q", opt.Force, got)
+		}
+		if len(backups(t, filepath.Dir(other))) != 0 {
+			t.Errorf("force=%v: a backup was made", opt.Force)
+		}
+	}
+}
+
+func TestForkWritesAnIdOfAnotherFolderUnderANewOne(t *testing.T) {
+	p, other := elsewhere(t)
+	put(t, filepath.Join(p.src, "projects", "b", sid, "subagents", "agent-1.jsonl"), entry(sid, "sub"), t0)
+	fid := forkID(sid)
+	r := copyOne(t, p, Options{Fork: true})
+	if r.Status != Forked || r.Fork != fid || r.Other != "a" || r.Files != 1 {
+		t.Fatalf("result = %+v, want forked as %s", r, fid)
+	}
+	fork := filepath.Join(p.dst, "projects", "b", fid+".jsonl")
+	if got, want := read(t, fork), entry(fid, "one")+entry(fid, "in-the-worktree"); got != want {
+		t.Errorf("fork = %q, want %q", got, want)
+	}
+	if got := read(t, filepath.Join(p.dst, "projects", "b", fid, "subagents", "agent-1.jsonl")); got != entry(fid, "sub") {
+		t.Errorf("subagent transcript = %q", got)
+	}
+	if exists(p.d) || read(t, other) != entry(sid, "one")+entry(sid, "at-home") {
+		t.Error("the old id was written, or the other session touched")
+	}
+	// Again: the fork is there, and grows with the source.
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Unchanged || r.Fork != fid {
+		t.Errorf("rerun = %+v", r)
+	}
+	put(t, p.s, entry(sid, "one")+entry(sid, "in-the-worktree")+entry(sid, "more"), t0.Add(2*time.Hour))
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked || !strings.HasSuffix(read(t, fork), entry(fid, "more")) {
+		t.Errorf("after growth = %+v", r)
+	}
+}
+
+// The id in its own folder too: that file is the destination, as always.
+func TestAnIdInItsOwnFolderIsSyncedThere(t *testing.T) {
+	p, _ := elsewhere(t)
+	put(t, p.d, entry(sid, "one"), t0)
+	if r := copyOne(t, p, Options{}); r.Status != Updated || r.Other != "" {
+		t.Errorf("result = %+v, want updated in its own folder", r)
+	}
+}
