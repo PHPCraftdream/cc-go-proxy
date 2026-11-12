@@ -10,6 +10,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `ccgp --send` / `--import` / `--export` bring what Claude Code keeps of a session outside its transcript: the task
+  list (`tasks/<id>/`), the file versions of `/rewind` (`file-history/<id>/`) and the plan (`plans/<slug>.md`). A copy
+  showed none of the original's tasks before (36 in the live session), could not `/rewind` (3655 versions) and had no
+  plan. A session copied earlier gets them on the next run; one the destination went its own way on keeps its own. A
+  fork has them under its id, and its plan under a slug of its own.
 - `--fork` also replaces the ids of a session run on Codex through ccgp: tool calls `call_<32 hex>` and replies
   `resp_<50 hex>` (11 836 and 15 714 of them in the live session were kept). A background task's id named in text
   before its field (`with ID: b…`, `tasks/b….output`, `<task-id>`; 359 in the live session) is known from that first

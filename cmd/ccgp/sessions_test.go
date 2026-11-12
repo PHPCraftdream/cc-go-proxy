@@ -319,3 +319,44 @@ func TestSeedFirstSessionLeavesOtherCasesAlone(t *testing.T) {
 		}
 	})
 }
+
+func TestArtifactsNoteNamesWhatCameWithTheTranscript(t *testing.T) {
+	if got := artifactsNote(sessions.Result{}); got != "" {
+		t.Errorf("nothing came: %q", got)
+	}
+	got := artifactsNote(sessions.Result{Tasks: 36, History: 3655, Plans: 1})
+	if got != "task list: 36 files, file versions for /rewind: 3655, plan: 1" {
+		t.Errorf("note = %q", got)
+	}
+}
+
+// The report line of a session says what came with it from outside the transcript.
+func TestCopySessionsReportsTheArtifacts(t *testing.T) {
+	src := endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
+	dst := endpoint{dir: t.TempDir(), label: "claude"}
+	writeSession(t, src.dir, "D--proj", "s1", `{"type":"user","sessionId":"s1","slug":"calm-blue-river"}`+"\n")
+	for path, body := range map[string]string{
+		"tasks/s1/1.json": `{"id":"1","status":"pending"}`, "tasks/s1/.highwatermark": "1",
+		"file-history/s1/abc@v1": "x", "plans/calm-blue-river.md": "# plan",
+	} {
+		full := filepath.Join(src.dir, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out bytes.Buffer
+	if err := copySessions(&out, "send codex -> claude", src, dst, 1, sessions.Options{Project: "D--proj"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "(task list: 2 files, file versions for /rewind: 1, plan: 1)") {
+		t.Errorf("output:\n%s", out.String())
+	}
+	for _, path := range []string{"tasks/s1/1.json", "file-history/s1/abc@v1", "plans/calm-blue-river.md"} {
+		if _, err := os.Stat(filepath.Join(dst.dir, filepath.FromSlash(path))); err != nil {
+			t.Errorf("%s was not copied: %v", path, err)
+		}
+	}
+}
