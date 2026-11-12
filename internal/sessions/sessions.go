@@ -85,6 +85,9 @@ type Options struct {
 	Force bool
 	// rewrite gives a fork its own ids, in the files and their names.
 	rewrite *forkIDs
+	// home is Within for a session written into Project from a subdirectory's
+	// folder (Session.Into): its transcript is made to say it lives there.
+	home string
 	// OnStart, when set, is called before each session; i counts from 1 up to n.
 	OnStart func(i, n int, s Session)
 	// OnProgress, when set, reports how much of a transcript is processed while
@@ -294,6 +297,9 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		backup  string
 		err     error
 	)
+	if s.Into != "" {
+		opt.home = opt.Within
+	}
 	if other := idElsewhere(dstDir, s.Folder(), s.ID); other != "" {
 		st, res.Other = Elsewhere, other
 	} else {

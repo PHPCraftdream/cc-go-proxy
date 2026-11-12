@@ -81,7 +81,8 @@ ccgp --send claude codex 1 --force   # take the source's version
   included. Each old id always gets the same new one, so tool calls keep their results, subagents their files, and the
   next run extends the fork; a fork that kept any id of the original would be the same thing to Claude Code in places
   (with the original's message ids `/resume` listed only one of the two). Files that are not text (images) are copied
-  as they are. The old session stays
+  as they are. The `session-owner` lines are left out: they name the account of the source's Claude Code, and Claude
+  Code stamps a transcript without one with the account that opens it. The old session stays
   as it was. The run says `open a fork with: ccgp <profile> --resume <new id>`. If the fork was continued on its own
   too, it diverges in turn: it is reported and left alone (move or delete that file to get a fresh fork).
 - `--force` replaces the destination with the source. The old file is renamed to `<id>.jsonl.bak-<time>` in the same
@@ -93,7 +94,9 @@ ccgp --send claude codex 1 --force   # take the source's version
 the folder of a directory below it (it does so with a session continued in a worktree): a folder whose name starts
 with the directory's and whose transcript starts in the directory or below it (a session begun here and continued in a worktree
 records the directory first). Such a session is written into the
-folder of the directory you run it in, so `/resume` there lists it; the line says
+folder of the directory you run it in, and its `relocated` lines are made to name that directory: Claude Code lists a
+session under the last `relocatedCwd` of its transcript (before the `cwd` of its first lines), so with the worktree the
+source names, `/resume` in the directory would hide it (Ctrl+W there shows the worktrees' sessions). The line says
 `(of a subdirectory, written into <folder>)`.
 
 The same id can also sit in **another project folder** of the destination: Claude Code moves a session into the folder
