@@ -59,7 +59,6 @@ func TestOnlyTheDirectorysSubdirectoriesCount(t *testing.T) {
 	// whose transcript names no directory.
 	put(t, filepath.Join(src, "projects", home+"-other", "a.jsonl"), cwdEntry("a", dir+"-other", "sibling"), t0.Add(2*time.Hour))
 	put(t, filepath.Join(src, "projects", home+"-bare", "b.jsonl"), entry("b", "no cwd"), t0.Add(3*time.Hour))
-	put(t, filepath.Join(src, "projects", home+"-self", "c.jsonl"), cwdEntry("c", dir, "dir itself"), t0.Add(4*time.Hour))
 	res, err := Copy(src, dst, 10, Options{Project: home, Within: dir})
 	if err != nil || len(res) != 2 || res[0].Session.ID != sid2 || res[1].Session.ID != sid {
 		t.Errorf("results = %+v, %v; want the worktree's and the directory's own", res, err)
@@ -116,5 +115,23 @@ func TestTranscriptCwd(t *testing.T) {
 	}
 	if got := transcriptCwd(filepath.Join(dir, "missing.jsonl")); got != "" {
 		t.Errorf("missing file: %q", got)
+	}
+}
+
+// The live case: a session begun in the directory and continued in worktrees
+// records the directory first, the worktrees later; Claude Code moved the file
+// into the last worktree's folder.
+func TestASessionBegunInTheDirectoryAndMovedIntoAWorktreeIsItsOwn(t *testing.T) {
+	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
+	put(t, filepath.Join(src, "projects", home, sid+".jsonl"), cwdEntry(sid, dir, "old"), t0)
+	put(t, filepath.Join(src, "projects", worktree, sid2+".jsonl"),
+		cwdEntry(sid2, dir, "begun here")+cwdEntry(sid2, filepath.Join(dir, "web"), "a subdirectory")+
+			cwdEntry(sid2, filepath.Join(dir, "worktrees", "x"), "then in the worktree"), t0.Add(time.Hour))
+	res, err := Copy(src, dst, 1, Options{Project: home, Within: dir})
+	if err != nil || len(res) != 1 || res[0].Session.ID != sid2 || res[0].Session.Into != home || res[0].Status != Copied {
+		t.Fatalf("results = %+v, %v; want the moved session written into %s", res, err, home)
+	}
+	if !exists(filepath.Join(dst, "projects", home, sid2+".jsonl")) {
+		t.Error("not written into the directory's folder")
 	}
 }

@@ -229,15 +229,16 @@ func inProject(list []Session, project, within string) []Session {
 	return out
 }
 
-// cwdWithin reports whether the transcript records a working directory below
-// dir (not dir itself). Only the first lines are read.
+// cwdWithin reports whether the transcript starts in dir or below it. A session
+// begun in dir and continued in a worktree records dir first: Claude Code moves
+// the whole file into the worktree's folder. Only the first lines are read.
 func cwdWithin(path, dir string) bool {
 	cwd := transcriptCwd(path)
 	if cwd == "" {
 		return false
 	}
 	rel, err := filepath.Rel(dir, cwd)
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // transcriptCwd is the first "cwd" of a transcript, from its first 50 lines.

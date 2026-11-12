@@ -90,7 +90,8 @@ ccgp --send claude codex 1 --force   # take the source's version
 
 **Sessions of a subdirectory.** The sessions of the directory you run `--send` in include those Claude Code moved into
 the folder of a directory below it (it does so with a session continued in a worktree): a folder whose name starts
-with the directory's and whose transcript records a working directory below it. Such a session is written into the
+with the directory's and whose transcript starts in the directory or below it (a session begun here and continued in a worktree
+records the directory first). Such a session is written into the
 folder of the directory you run it in, so `/resume` there lists it; the line says
 `(of a subdirectory, written into <folder>)`.
 
