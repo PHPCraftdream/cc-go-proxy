@@ -90,6 +90,9 @@ type Options struct {
 	// home is Within for a session written into Project from a subdirectory's
 	// folder (Session.Into): its transcript is made to say it lives there.
 	home string
+	// stamp, set with home for a session's own transcript, adds a relocated
+	// line naming home after each last-prompt line (relocatedLine).
+	stamp bool
 	// trimTail leaves out the failed end of the transcript (failedTail): set
 	// for a session's own transcript, not for its subagents'.
 	trimTail bool
@@ -303,10 +306,16 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		backup string
 		err    error
 	)
+	own := opt // the session's own transcript
 	if s.Into != "" {
 		opt.home = opt.Within
+		own.home = opt.home
+	} else if opt.Within != "" && !begunIn(s.Path, opt.Within) {
+		// Begun in another directory and kept in this one's folder (Claude
+		// Code's /cd, an earlier copy): with no relocation in its tail Claude
+		// Code lists it under the first cwd, and /resume here hides it.
+		own.home, own.stamp = opt.Within, true
 	}
-	own := opt // the session's own transcript
 	own.trimTail = true
 	if other := idElsewhere(dstDir, s.Folder(), s.ID); other != "" {
 		st, res.Other = Elsewhere, other

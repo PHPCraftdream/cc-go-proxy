@@ -71,11 +71,12 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
 	}
 	rewrite := lineRewrite(opt, jsonl, src)
+	stamp := lineStamp(opt, jsonl)
 	var strip *thinkingStripper
 	if jsonl && opt.StripThinking {
 		strip = newThinkingStripper()
 	}
-	if rewrite != nil || strip != nil {
+	if rewrite != nil || strip != nil || stamp != nil {
 		// The work without state runs on several goroutines; the strip's links
 		// to dropped lines follow in order.
 		work := func(line []byte) ([]byte, any) {
@@ -91,8 +92,19 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		}
 		s := &swapReader{src: newLines(in, work, size)}
 		defer s.src.close()
-		if strip != nil {
+		switch {
+		case strip != nil && stamp != nil:
+			s.fn = func(line []byte, note any) ([]byte, error) {
+				out, err := strip.finish(line, note)
+				if err != nil || len(out) == 0 {
+					return out, err
+				}
+				return stamp(out), nil
+			}
+		case strip != nil:
 			s.fn = strip.finish
+		case stamp != nil:
+			s.fn = func(line []byte, _ any) ([]byte, error) { return stamp(line), nil }
 		}
 		if cut < size {
 			s.cut, s.mark = cut, p.compareFrom
@@ -182,7 +194,9 @@ func isMarker(line []byte, want string) bool {
 //   - a session written into the folder of opt.home (Session.Into) says it was
 //     relocated there: Claude Code lists a session under the last relocatedCwd
 //     of its transcript, before the cwd of its first lines, and the worktree
-//     the source names would hide it from the directory's /resume;
+//     the source names would hide it from the directory's /resume; one begun
+//     in another directory (opt.stamp) gets a relocated line after each
+//     last-prompt line, a deterministic place, so the copy stays append-only;
 //   - a fork gets its own ids, and no owner: the session-owner lines name the
 //     account of the source's Claude Code, and Claude Code stamps a transcript
 //     that has none with the account that opens it.
@@ -211,6 +225,45 @@ func lineRewrite(opt Options, jsonl bool, src string) func([]byte) []byte {
 		return line
 	}
 }
+
+// lineStamp adds what opt.stamp says after a line in its final form (the
+// thinking strip parses single lines), nil when there is nothing to add.
+func lineStamp(opt Options, jsonl bool) func([]byte) []byte {
+	if !jsonl || !opt.stamp || opt.home == "" {
+		return nil
+	}
+	home, _ := json.Marshal(opt.home)
+	return func(line []byte) []byte {
+		if !isMarker(line, "last-prompt") {
+			return line
+		}
+		return append(line[:len(line):len(line)], relocatedLine(line, home)...)
+	}
+}
+
+// relocatedLine is the relocated line Claude Code writes with a session's
+// metadata, naming home, for the session of the last-prompt line lp; nil when
+// lp names none. Claude Code reads the last one within the transcript's final
+// 64 KiB, and the metadata comes again at every turn's end.
+func relocatedLine(lp, home []byte) []byte {
+	i := bytes.Index(lp, sessionIDKey)
+	if i < 0 {
+		return nil
+	}
+	id := jsonString(lp[i+len(sessionIDKey):])
+	if id == "" {
+		return nil
+	}
+	q, _ := json.Marshal(id)
+	out := append([]byte(`{"type":"relocated","relocatedCwd":`), home...)
+	out = append(append(append(out, `,"sessionId":`...), q...), '}')
+	if bytes.HasSuffix(lp, []byte("\r\n")) {
+		return append(out, '\r', '\n')
+	}
+	return append(out, '\n')
+}
+
+var sessionIDKey = []byte(`"sessionId":`)
 
 // setRelocated puts the JSON string home in place of the line's relocatedCwd.
 func setRelocated(line, home []byte) []byte {

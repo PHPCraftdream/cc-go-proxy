@@ -125,6 +125,15 @@ whatever the order of its fields), so with the worktree the
 source names, `/resume` in the directory would hide it (Ctrl+W there shows the worktrees' sessions). The line says
 `(of a subdirectory, written into <folder>)`.
 
+**Sessions begun in another directory.** A session in the directory's folder whose transcript starts somewhere else
+(Claude Code's `/cd` moved it here, or an earlier copy put it here) is listed by Claude Code under the `cwd` of its first
+lines unless the final 64 KiB of its transcript hold a `relocated` line; on Windows, in a repository with worktrees,
+`/resume` in the directory then shows none of it. The copy names the directory in its `relocated` lines and adds one
+after each `last-prompt` line (Claude Code writes that line with a session's metadata at the end of every turn). The
+place is fixed by the line, not by the end of the file, so a copy of a session that grows is still extended in place.
+A copy written before this change differs from the new one: `--send` reports it `diverged`, and `--force` (or a fork
+removed first) writes it afresh.
+
 The same id can also sit in **another project folder** of the destination: Claude Code moves a session into the folder
 of a worktree it enters, on one side only. Its id is then taken by a different session there, and a copy with that id
 would make two sessions of one id. ccgp reports `elsewhere` (with the folder) and writes nothing, `--force` included;
