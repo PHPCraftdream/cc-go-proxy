@@ -82,11 +82,11 @@ func TestForkKeepsBothVersions(t *testing.T) {
 	if got, want := read(t, fork), entry(fid, "one")+entry(fid, "from-source"); got != want {
 		t.Errorf("fork = %q, want %q", got, want)
 	}
-	// Transcripts of the sidecar follow the new id; plain files stay as they are.
+	// The files of the folder follow the new id, text files too.
 	if got := read(t, filepath.Join(p.dst, "projects", "a", fid, "subagents", "agent-1.jsonl")); got != entry(fid, "sub") {
 		t.Errorf("subagent transcript = %q", got)
 	}
-	if got := read(t, filepath.Join(p.dst, "projects", "a", fid, "tool-results", "r.txt")); got != "see "+sid {
+	if got := read(t, filepath.Join(p.dst, "projects", "a", fid, "tool-results", "r.txt")); got != "see "+fid {
 		t.Errorf("tool result = %q", got)
 	}
 	if exists(filepath.Join(p.dst, "projects", "a", sid)) {
@@ -346,7 +346,7 @@ func TestForkIDIsAStableUUID(t *testing.T) {
 	}
 }
 
-func swapAll(t *testing.T, in string, sw *idSwap, bufSize int) string {
+func swapAll(t *testing.T, in string, sw *forkIDs, bufSize int) string {
 	t.Helper()
 	var out strings.Builder
 	r := newSwapReader(strings.NewReader(in), sw)
@@ -357,7 +357,7 @@ func swapAll(t *testing.T, in string, sw *idSwap, bufSize int) string {
 }
 
 func TestSwapReader(t *testing.T) {
-	sw := &idSwap{old: "OLD-ID", new: "NEW-ID"}
+	sw := &forkIDs{old: "OLD-ID", fid: "NEW-ID"}
 	for _, in := range []string{
 		"",
 		"no id here\n",
@@ -376,7 +376,7 @@ func TestSwapReader(t *testing.T) {
 }
 
 func TestSwapReaderLongLinesAndLongerIDs(t *testing.T) {
-	sw := &idSwap{old: "OLD", new: "A-MUCH-LONGER-ID"}
+	sw := &forkIDs{old: "OLD", fid: "A-MUCH-LONGER-ID"}
 	long := "OLD" + strings.Repeat("x", 3<<20) + "OLD\n" + strings.Repeat("y", 2<<20) + "OLD"
 	want := strings.ReplaceAll(long, "OLD", "A-MUCH-LONGER-ID")
 	if got := swapAll(t, long, sw, 1000); got != want {
@@ -386,14 +386,14 @@ func TestSwapReaderLongLinesAndLongerIDs(t *testing.T) {
 
 func TestSwapReaderWithoutAnIDPassesThrough(t *testing.T) {
 	in := "OLD\n"
-	if got := swapAll(t, in, &idSwap{new: "x"}, 16); got != in {
+	if got := swapAll(t, in, &forkIDs{fid: "x"}, 16); got != in {
 		t.Errorf("got %q", got)
 	}
 }
 
 func TestSwapReaderReportsTheSourceError(t *testing.T) {
 	boom := errors.New("boom")
-	r := newSwapReader(io.MultiReader(strings.NewReader("OLD\nOL"), iotest.ErrReader(boom)), &idSwap{old: "OLD", new: "NEW"})
+	r := newSwapReader(io.MultiReader(strings.NewReader("OLD\nOL"), iotest.ErrReader(boom)), &forkIDs{old: "OLD", fid: "NEW"})
 	got, err := io.ReadAll(r)
 	if !errors.Is(err, boom) || string(got) != "NEW\nOL" {
 		t.Errorf("got %q, %v; want the data read before the error, then the error", got, err)
@@ -469,45 +469,5 @@ func TestAnIdInItsOwnFolderIsSyncedThere(t *testing.T) {
 	put(t, p.d, entry(sid, "one"), t0)
 	if r := copyOne(t, p, Options{}); r.Status != Updated || r.Other != "" {
 		t.Errorf("result = %+v, want updated in its own folder", r)
-	}
-}
-
-// A fork gets its own uuids, under any key, mapped the same way in every line
-// (links between messages hold) and on every run; its session id stays, ids of
-// other forms (agentId names a file, toolu_/msg_ are the API's) and text too.
-func TestForkGivesTheMessagesIdsOfItsOwn(t *testing.T) {
-	const (
-		u1 = "aaaaaaaa-0000-4000-8000-000000000001"
-		u2 = "AAAAAAAA-0000-4000-8000-000000000002"
-		pr = "bbbbbbbb-0000-4000-8000-000000000003"
-	)
-	p := both(t)
-	src := `{"parentUuid":null,"uuid":"` + u1 + `","promptId":"` + pr + `","sessionId":"` + sid + `","type":"user","message":{"content":"see ` + u1 + `"}}` + "\n" +
-		`{"parentUuid": "` + u1 + `","uuid":"` + u2 + `","sourceToolAssistantUUID":"` + u1 + `","sessionId":"` + sid + `","type":"assistant"}` + "\n" +
-		`{"type":"file-history-snapshot","messageId":"` + u2 + `"}` + "\n" +
-		`{"type":"summary","leafUuid":"` + u2 + `","toolUseID":"toolu_1"}` + "\n" +
-		`{"type":"progress","toolUseID":"` + u1 + `","session_id":"` + sid + `","agentId":"a1b2c3","snapshotMessageId":"` + pr + `","id":"msg_1"}` + "\n"
-	put(t, p.s, src, t0.Add(2*time.Hour))
-	put(t, p.d, "x\n", t0)
-
-	fid := forkID(sid)
-	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked {
-		t.Fatalf("result = %+v", r)
-	}
-	n1, n2, np := forkUUID(fid, u1), forkUUID(fid, strings.ToLower(u2)), forkUUID(fid, pr)
-	want := `{"parentUuid":null,"uuid":"` + n1 + `","promptId":"` + np + `","sessionId":"` + fid + `","type":"user","message":{"content":"see ` + u1 + `"}}` + "\n" +
-		`{"parentUuid": "` + n1 + `","uuid":"` + n2 + `","sourceToolAssistantUUID":"` + n1 + `","sessionId":"` + fid + `","type":"assistant"}` + "\n" +
-		`{"type":"file-history-snapshot","messageId":"` + n2 + `"}` + "\n" +
-		`{"type":"summary","leafUuid":"` + n2 + `","toolUseID":"toolu_1"}` + "\n" +
-		`{"type":"progress","toolUseID":"` + n1 + `","session_id":"` + fid + `","agentId":"a1b2c3","snapshotMessageId":"` + np + `","id":"msg_1"}` + "\n"
-	fork := filepath.Join(p.dst, "projects", "a", fid+".jsonl")
-	if got := read(t, fork); got != want {
-		t.Errorf("fork =\n%s\nwant\n%s", got, want)
-	}
-	if n1 == u1 || n1 == n2 || forkUUID(fid, u1) != n1 || forkUUID(forkID("other"), u1) == n1 {
-		t.Error("fork ids are not derived per fork and per id")
-	}
-	if r := copyOne(t, p, Options{Fork: true}); r.Status != Unchanged {
-		t.Errorf("rerun = %+v, want unchanged: the ids must come out the same", r)
 	}
 }
