@@ -19,11 +19,15 @@ import (
 // rerun extends the fork instead of diverging from it. A fork that kept any id
 // of the original would be the same thing to Claude Code in places.
 //
-// Ids: the session id (to the fork id), every uuid (messages, prompts, …), the
+// Ids: the session id (to the fork id), the uuids of the session (messages,
+// prompts, …: every uuid that is the value of a field somewhere in it), the
 // API's toolu_/msg_/req_ ids, and the short ids of subagents (a + hex) and
 // background tasks found in id fields and in the names of the session's files.
+// Each is replaced wherever it stands, text included; a uuid that is only
+// mentioned in text (a link to something else) is not the session's and stays.
 type forkIDs struct {
 	old, fid string
+	uuids    map[string]bool // the session's uuids, lower case
 	short    map[string]bool // short ids, to be replaced wherever they stand alone
 }
 
@@ -35,12 +39,16 @@ var (
 	// shortField is a field holding the short id of a subagent or a task.
 	shortField = regexp.MustCompile(`"(?:agentId|agent_id|[A-Za-z]*[Tt]ask_?[Ii]d|task_id|bash_id|bashId|shell_id|shellId)"\s*:\s*"([A-Za-z0-9]{6,24})"`)
 	shortName  = regexp.MustCompile(`^(?:agent-)?([A-Za-z0-9]{6,24})(?:\.[A-Za-z]+)+$`)
+	// uuidValue is a uuid that is a whole JSON string: a field's value.
+	uuidValue = regexp.MustCompile(`"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"`)
+	// letterTask is a background task id of letters only (b + 8).
+	letterTask = regexp.MustCompile(`^b[a-z]{8}$`)
 )
 
 // newForkIDs collects the short ids of the session: its transcript and the
 // files of its folder side (which may not exist).
 func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
-	m := &forkIDs{old: old, fid: fid, short: map[string]bool{}}
+	m := &forkIDs{old: old, fid: fid, uuids: map[string]bool{}, short: map[string]bool{}}
 	if err := m.scan(transcript); err != nil {
 		return nil, err
 	}
@@ -74,14 +82,13 @@ func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
 	return m, nil
 }
 
-// add keeps a short id. A number (a task list's 100001) is not one, nor a
-// word shorter than a random id of letters (b + 8).
+// add keeps a short id: letters and digits mixed, or a task id of letters
+// (b + 8). A number (a task list's 100001) is not one, nor a word a field may
+// hold ("deployment"), which would be replaced all over the text.
 func (m *forkIDs) add(id string) {
-	if strings.IndexFunc(id, func(r rune) bool { return !isDigit(r) }) < 0 ||
-		strings.IndexFunc(id, isDigit) < 0 && len(id) < 9 {
-		return
-	}
-	if !apiID.MatchString(id) && !anyUUID.MatchString(id) {
+	letters := strings.IndexFunc(id, func(r rune) bool { return !isDigit(r) }) >= 0
+	digits := strings.IndexFunc(id, isDigit) >= 0
+	if letters && digits || letterTask.MatchString(id) {
 		m.short[id] = true
 	}
 }
@@ -102,6 +109,9 @@ func (m *forkIDs) scan(path string) error {
 				m.add(string(sm[1]))
 			}
 		}
+		for _, sm := range uuidValue.FindAllSubmatch(line, -1) {
+			m.uuids[strings.ToLower(string(sm[1]))] = true
+		}
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -118,7 +128,7 @@ func (m *forkIDs) line(b []byte) []byte {
 	}
 	b = anyUUID.ReplaceAllFunc(b, func(u []byte) []byte {
 		s := strings.ToLower(string(u))
-		if s == m.fid {
+		if !m.uuids[s] {
 			return u
 		}
 		return []byte(forkUUID(m.fid, s))

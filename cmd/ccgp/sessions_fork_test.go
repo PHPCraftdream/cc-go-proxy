@@ -278,7 +278,7 @@ func TestCopySessionsTakesASessionOfASubdirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "proj")
 	project := projectDirName(dir)
 	wt := filepath.Join(dir, "worktrees", "x")
-	cwd, _ := json.Marshal(wt)
+	cwd, _ := json.Marshal(dir) // begun in the directory, moved into the worktree's folder
 	src := endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
 	dst := endpoint{dir: t.TempDir(), label: "claude"}
 	writeSession(t, src.dir, projectDirName(wt), forkTestID, `{"type":"user","cwd":`+string(cwd)+`,"sessionId":"`+forkTestID+`"}`+"\n")

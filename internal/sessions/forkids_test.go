@@ -144,3 +144,67 @@ func TestForkIDsDependOnTheFork(t *testing.T) {
 		t.Errorf("a longer token was mapped: %s", got)
 	}
 }
+
+// Only the session's own uuids (a field's value somewhere in it) are
+// replaced; one that is only mentioned in text points elsewhere and stays.
+// A word in an id field is not a short id; a task id of letters is.
+func TestForkIDsKnowWhatIsTheSessions(t *testing.T) {
+	const external = "dddddddd-0000-4000-8000-000000000009"
+	dir := t.TempDir()
+	tr := filepath.Join(dir, "s.jsonl")
+	put(t, tr, `{"uuid":"`+fu1+`","sessionId":"`+sid+`","task_id":"deployment","backgroundTaskId":"`+fword+`"}`+"\n"+
+		`{"message":{"content":"see `+fu1+`, run `+external+`, deployment done, `+fword+` too"}}`+"\n", t0)
+	m, err := newForkIDs(sid, forkID(sid), tr, filepath.Join(dir, "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(m.line([]byte(`see ` + fu1 + `, run ` + external + `, deployment done, ` + fword + ` too`)))
+	want := `see ` + forkUUID(m.fid, fu1) + `, run ` + external + `, deployment done, ` + m.mapShort(fword) + ` too`
+	if got != want {
+		t.Errorf("line = %q, want %q", got, want)
+	}
+	if m.short["deployment"] || !m.short[fword] || m.uuids[external] || !m.uuids[fu1] {
+		t.Errorf("short %v, uuids %v", m.short, m.uuids)
+	}
+	for id, want := range map[string]bool{"a004a671": true, "b01bxagzb": true, "bxagzbcde": true, "123456": false, "abcdefgh": false, "benchmarks": false} {
+		m := &forkIDs{short: map[string]bool{}}
+		if m.add(id); m.short[id] != want {
+			t.Errorf("add(%q) kept %v, want %v", id, m.short[id], want)
+		}
+	}
+}
+
+// The source grows with new messages, tool calls and tasks between runs: the
+// fork is extended, its earlier bytes stay as they were.
+func TestAForkGrowsWithItsSource(t *testing.T) {
+	p := forkSource(t)
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked {
+		t.Fatalf("first = %+v", r)
+	}
+	fork := filepath.Join(p.dst, "projects", "a", forkID(sid)+".jsonl")
+	before := read(t, fork)
+	const (
+		u3    = "eeeeeeee-0000-4000-8000-000000000004"
+		tool2 = "toolu_01ZzZzZzZzZzZzZzZzZzZzZz"
+		task2 = "b9xk3m2q1"
+	)
+	more := `{"parentUuid":"` + fu2 + `","uuid":"` + u3 + `","sessionId":"` + sid + `","message":{"content":[{"type":"tool_use","id":"` + tool2 + `"}]},"toolUseResult":{"backgroundTaskId":"` + task2 + `"}}` + "\n"
+	put(t, p.s, read(t, p.s)+more, t0.Add(3*time.Hour))
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked {
+		t.Fatalf("after growth = %+v, want the fork extended", r)
+	}
+	after := read(t, fork)
+	if !strings.HasPrefix(after, before) || len(after) == len(before) {
+		t.Fatal("the fork was not extended as it was")
+	}
+	tail := after[len(before):]
+	for _, old := range []string{sid, fu2, u3, tool2, task2} {
+		if strings.Contains(tail, old) {
+			t.Errorf("the new line still holds %s: %s", old, tail)
+		}
+	}
+	m := &forkIDs{fid: forkID(sid)}
+	if !strings.Contains(tail, `"parentUuid":"`+forkUUID(m.fid, strings.ToLower(fu2))+`"`) {
+		t.Errorf("the new line does not link to the fork's message: %s", tail)
+	}
+}

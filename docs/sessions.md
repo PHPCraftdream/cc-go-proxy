@@ -75,14 +75,19 @@ ccgp --send claude codex 1 --force   # take the source's version
 ```
 
 - `--fork` writes the source as a **new session** in the destination, with a new id (the same id on every run, made
-  from the original's, so the next run finds it and only appends what came after). Every id of the session is replaced, in every line, in the files of its folder and in their names: the
-  session id, every uuid (messages, prompts, …), the API's `toolu_…` / `msg_…` / `req_…` ids, the ids of subagents
-  (`agent-<id>.jsonl`, `.meta.json`) and of background tasks (`tool-results/<id>.txt`), wherever they stand, text
-  included. Each old id always gets the same new one, so tool calls keep their results, subagents their files, and the
+  from the original's, so the next run finds it and only appends what came after). Every id of the session is
+  replaced, in every line, in the files of its folder and in their names: the session id, the session's uuids (every
+  uuid that is a field's value somewhere in it: messages, prompts, …), the API's `toolu_…` / `msg_…` / `req_…` ids,
+  the ids of subagents (`agent-<id>.jsonl`, `.meta.json`) and of background tasks (`tool-results/<id>.txt`; a task id
+  of letters only is taken when it has the form `b` + 8 letters), wherever they stand, text included. A uuid only
+  mentioned in text (a link to something else) is not the session's and stays, and so does a word an id field holds.
+  Each old id always gets the same new one, so tool calls keep their results, subagents their files, and the
   next run extends the fork; a fork that kept any id of the original would be the same thing to Claude Code in places
   (with the original's message ids `/resume` listed only one of the two). Files that are not text (images) are copied
   as they are. The `session-owner` lines are left out: they name the account of the source's Claude Code, and Claude
-  Code stamps a transcript without one with the account that opens it. The old session stays
+  Code stamps a transcript without one with the account that opens it (a copy without `--fork` keeps them, as copies
+  made before did, so it stays in step with them). If the fork's id is already a session in another folder of the
+  destination, it is reported `elsewhere` and not written a second time. The old session stays
   as it was. The run says `open a fork with: ccgp <profile> --resume <new id>`. If the fork was continued on its own
   too, it diverges in turn: it is reported and left alone (move or delete that file to get a fresh fork).
 - `--force` replaces the destination with the source. The old file is renamed to `<id>.jsonl.bak-<time>` in the same
@@ -92,10 +97,13 @@ ccgp --send claude codex 1 --force   # take the source's version
 
 **Sessions of a subdirectory.** The sessions of the directory you run `--send` in include those Claude Code moved into
 the folder of a directory below it (it does so with a session continued in a worktree): a folder whose name starts
-with the directory's and whose transcript starts in the directory or below it (a session begun here and continued in a worktree
-records the directory first). Such a session is written into the
+with the directory's and whose transcript starts in the directory itself (a session begun here and continued in a
+worktree records the directory first), judged session by session: a worktree's folder also holds the sessions begun in
+the worktree, and those, like the sessions begun in any subdirectory, stay that subdirectory's. Such a session is
+written into the
 folder of the directory you run it in, and its `relocated` lines are made to name that directory: Claude Code lists a
-session under the last `relocatedCwd` of its transcript (before the `cwd` of its first lines), so with the worktree the
+session under the last `relocatedCwd` of its transcript (before the `cwd` of its first lines; a marker line is known by its type,
+whatever the order of its fields), so with the worktree the
 source names, `/resume` in the directory would hide it (Ctrl+W there shows the worktrees' sessions). The line says
 `(of a subdirectory, written into <folder>)`.
 

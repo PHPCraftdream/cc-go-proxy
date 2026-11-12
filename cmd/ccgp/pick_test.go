@@ -20,7 +20,9 @@ func pickTUI(t *testing.T) (*tui, *string) {
 func TestPickListsTheProfilesAndYourOwnClaude(t *testing.T) {
 	h, _ := pickTUI(t)
 	h.has("Run Claude Code with which profile?", "1 codex codex codex", "2 work work claude", "3 zai zai anthropic_compat",
-		"4 claude your own Claude Code, as plain claude (no ccgp)")
+		"4 claude your own Claude Code, as plain claude (no ccgp)",
+		"c your own Claude Code · esc, q or ctrl+c leave without running")
+	h.lacks("esc back")
 }
 
 func TestPickChoosesAndQuits(t *testing.T) {

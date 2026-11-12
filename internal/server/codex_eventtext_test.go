@@ -27,6 +27,8 @@ func TestDropShownMessage(t *testing.T) {
 		{"not a string",
 			`{"message":null,"error":{"message":"boom"}}`, "boom", `{"message":null,"error":{"message":"(shown before)"}}`, true},
 		{"broken json", `{"message":"bo`, "boom", `{"message":"bo`, false},
+		{"found inside the reason is another text", `{"error":{"message":"a"}}`, "bad", `{"error":{"message":"a"}}`, false},
+		{"the end of a word is not the message", `{"error":{"message":"boom"}}`, "kaboom", `{"error":{"message":"boom"}}`, false},
 		{"no detail", "", "boom", "", false},
 	} {
 		got, dropped := dropShownMessage(tt.detail, tt.msg)

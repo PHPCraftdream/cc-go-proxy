@@ -69,6 +69,7 @@ func pickMenu(picked *string) *menu {
 	}
 	return &menu{
 		head: func(*app) string { return "Run Claude Code with which profile?" },
+		keys: "↑/↓ move · enter or number run · c your own Claude Code · esc, q or ctrl+c leave without running",
 		items: func(a *app) []menuItem {
 			var items []menuItem
 			for _, r := range buildProfileRows(a.cfg, a.store, a.claudeBase) {
