@@ -54,9 +54,14 @@ func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		// A name is an id only with a digit in it: notes.md is a name.
-		if sm := shortName.FindStringSubmatch(d.Name()); sm != nil && strings.IndexFunc(sm[1], isDigit) >= 0 {
-			m.add(sm[1])
+		// Claude Code names the files of tool-results/ and subagents/ by id
+		// (a task's output may be named by an id of letters only, mentioned
+		// nowhere else); elsewhere a name is an id only with a digit in it.
+		if sm := shortName.FindStringSubmatch(d.Name()); sm != nil {
+			dir := filepath.Base(filepath.Dir(p))
+			if dir == "tool-results" || dir == "subagents" || strings.IndexFunc(sm[1], isDigit) >= 0 {
+				m.add(sm[1])
+			}
 		}
 		if rewritable(p) || strings.HasSuffix(p, ".jsonl") {
 			return m.scan(p)
