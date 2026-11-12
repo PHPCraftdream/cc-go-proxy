@@ -19,6 +19,7 @@ const (
 	fagent = "a004a671eb6e46d71"
 	ftask  = "b01bxagzb"
 	fword  = "bxagzbcde" // a task id without a digit
+	fname  = "beafulydc" // a task output named by letters only, mentioned nowhere
 )
 
 // session writes a transcript that names every kind of id, and a folder with
@@ -40,6 +41,8 @@ func forkSource(t *testing.T) pair {
 	put(t, filepath.Join(side, "tool-results", ftask+".txt"), "output of "+ftask+" for "+ftool, t0)
 	put(t, filepath.Join(side, "tool-results", ftool+".txt"), "result", t0)
 	put(t, filepath.Join(side, "tool-results", "diff_sdk.txt"), "plain name", t0)
+	put(t, filepath.Join(side, "tool-results", fname+".txt"), "unnamed output", t0)
+	put(t, filepath.Join(side, "notes.md"), "a name without a digit outside tool-results", t0)
 	put(t, filepath.Join(side, "image.png"), "\x89PNG "+ftool, t0)
 	return p
 }
@@ -100,6 +103,12 @@ func TestForkGivesEveryIdAndFileNameItsOwn(t *testing.T) {
 	if got := read(t, filepath.Join(side, "tool-results", "diff_sdk.txt")); got != "plain name" {
 		t.Errorf("plain file = %q", got)
 	}
+	if got := read(t, filepath.Join(side, "tool-results", m.mapShort(fname)+".txt")); got != "unnamed output" {
+		t.Errorf("letters-only task output = %q", got)
+	}
+	if got := read(t, filepath.Join(side, "notes.md")); got != "a name without a digit outside tool-results" {
+		t.Errorf("notes.md = %q", got)
+	}
 	if got := read(t, filepath.Join(side, "image.png")); got != "\x89PNG "+ftool {
 		t.Errorf("a binary file was changed: %q", got)
 	}
@@ -110,7 +119,7 @@ func TestForkGivesEveryIdAndFileNameItsOwn(t *testing.T) {
 		}
 		return nil
 	})
-	if len(names) != 6 || strings.Contains(strings.Join(names, " "), fagent) || strings.Contains(strings.Join(names, " "), ftask) {
+	if all := strings.Join(names, " "); len(names) != 8 || strings.Contains(all, fagent) || strings.Contains(all, ftask) || strings.Contains(all, fname) {
 		t.Errorf("files of the fork: %v", names)
 	}
 
