@@ -201,22 +201,18 @@ func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 }
 
 // inProject keeps the sessions of one project folder, in order, and with
-// within those of its subdirectories' folders (Into set to project). An id is
-// kept once, the newest.
+// within those Claude Code moved from it into a subdirectory's folder (Into set
+// to project). An id is kept once, the newest.
 func inProject(list []Session, project, within string) []Session {
 	var out []Session
 	seen := map[string]bool{}
-	under := map[string]bool{} // folder -> its sessions are within's
 	for _, s := range list {
 		switch {
 		case strings.EqualFold(s.Project, project):
 		case within != "" && len(s.Project) > len(project) && strings.EqualFold(s.Project[:len(project)+1], project+"-"):
-			ok, known := under[s.Project]
-			if !known {
-				ok = cwdWithin(s.Path, within)
-				under[s.Project] = ok
-			}
-			if !ok {
+			// Each session for itself: a worktree's folder holds the sessions
+			// begun there as well as those moved there.
+			if !begunIn(s.Path, within) {
 				continue
 			}
 			s.Into = project
@@ -232,16 +228,17 @@ func inProject(list []Session, project, within string) []Session {
 	return out
 }
 
-// cwdWithin reports whether the transcript starts in dir or below it. A session
-// begun in dir and continued in a worktree records dir first: Claude Code moves
-// the whole file into the worktree's folder. Only the first lines are read.
-func cwdWithin(path, dir string) bool {
+// begunIn reports whether the transcript starts in dir itself. A session begun
+// in dir and continued in a worktree records dir first: Claude Code moves the
+// whole file into the worktree's folder. One begun in a subdirectory is that
+// subdirectory's. Only the first lines are read.
+func begunIn(path, dir string) bool {
 	cwd := transcriptCwd(path)
 	if cwd == "" {
 		return false
 	}
 	rel, err := filepath.Rel(dir, cwd)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	return err == nil && rel == "."
 }
 
 // transcriptCwd is the first "cwd" of a transcript, from its first 50 lines.
@@ -309,7 +306,11 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		id := forkID(s.ID)
 		dst = dstFile(id)
 		res.Fork = id
-		if opt.rewrite, err = newForkIDs(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
+		if other := idElsewhere(dstDir, s.Folder(), id); other != "" {
+			// The fork's id is taken in another folder too (a fork written
+			// there before): not a second session of that id.
+			st, res.Other = Elsewhere, other
+		} else if opt.rewrite, err = newForkIDs(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
 			if st, removed, backup, err = place(s.Path, dst, true, opt, prog); st == Copied || st == Updated {
 				st = Forked
 			}

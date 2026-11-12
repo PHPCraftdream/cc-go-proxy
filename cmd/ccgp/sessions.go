@@ -251,9 +251,6 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 				elsewhere++
 			}
 			line += "  (" + skipReason(r) + ")"
-			if r.Fork != "" {
-				line += "; the fork " + r.Fork + " went its own way too and was left alone"
-			}
 		}
 		_, _ = fmt.Fprintln(w, line)
 	}
@@ -297,11 +294,15 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 }
 
 func skipReason(r sessions.Result) string {
-	switch r.Status {
-	case sessions.Ahead:
+	switch {
+	case r.Status == sessions.Ahead:
 		return "the destination already has more of it"
-	case sessions.Elsewhere:
+	case r.Status == sessions.Elsewhere && r.Fork != "":
+		return "its fork " + r.Fork + " is in " + r.Other + " already, for another directory; not written a second time"
+	case r.Status == sessions.Elsewhere:
 		return "the destination has a session of this id in " + r.Other + ", for another directory; not written next to it"
+	case r.Fork != "":
+		return "both sides changed; the fork " + r.Fork + " went its own way too and was left alone"
 	}
 	return "both sides changed; the destination was not overwritten"
 }

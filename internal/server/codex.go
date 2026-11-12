@@ -74,7 +74,9 @@ func eventText(msg, detail string) string {
 const shownMessage = `"(shown before)"`
 
 // dropShownMessage replaces each non-empty "message" string of the raw JSON
-// event that msg contains with shownMessage; dropped tells whether any was.
+// event that msg shows (msg is it, or ends with ": " and it, as describeError
+// joins a code and a message) with shownMessage; dropped tells whether any was.
+// A message merely found inside msg ("a" in "bad") is another text.
 func dropShownMessage(detail, msg string) (string, bool) {
 	const key = `"message"`
 	var b strings.Builder
@@ -96,7 +98,7 @@ func dropShownMessage(detail, msg string) (string, bool) {
 		k += len(rest[k:]) - len(strings.TrimLeft(rest[k:], " \t\r\n"))
 		var s string
 		dec := json.NewDecoder(strings.NewReader(rest[k:]))
-		if k >= len(rest) || rest[k] != '"' || dec.Decode(&s) != nil || s == "" || !strings.Contains(msg, s) {
+		if k >= len(rest) || rest[k] != '"' || dec.Decode(&s) != nil || s == "" || msg != s && !strings.HasSuffix(msg, ": "+s) {
 			b.WriteString(rest[:k])
 			rest = rest[k:]
 			continue
@@ -544,9 +546,20 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		resp, err = retry.callPrepared()
 	}
 	if err != nil {
+		// Canceled before ccgp's own cancel: the client of a non-stream request
+		// left (watchClientGone) before the backend's reply started.
+		left := ctx.Err() != nil
 		cancel()
 		if retry.websocket && ctx.Err() != nil {
 			trace.noteWSCanceled(ctx.Err())
+		}
+		if left {
+			what := "stream"
+			if !wantStream {
+				what = "non-stream reply"
+			}
+			logStreamCanceled(logOut, trace.start, what, cfg.Profile, probe.Model+" -> "+model,
+				joinNonEmpty("before the reply started", trace.connText()))
 		}
 		if errors.Is(err, oauth.ErrNotLoggedIn) || errors.Is(err, oauth.ErrReloginRequired) {
 			return anthropicError(c, fiber.StatusUnauthorized, "authentication_error",

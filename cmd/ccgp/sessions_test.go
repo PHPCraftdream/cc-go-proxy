@@ -185,6 +185,12 @@ func TestSkipReasonNamesTheCause(t *testing.T) {
 	if got := skipReason(sessions.Result{Status: sessions.Elsewhere, Other: "D--x"}); !strings.Contains(got, "in D--x, for another directory") {
 		t.Errorf("Elsewhere: %q", got)
 	}
+	if got := skipReason(sessions.Result{Status: sessions.Elsewhere, Other: "D--x", Fork: "f1"}); !strings.Contains(got, "its fork f1 is in D--x already") {
+		t.Errorf("Elsewhere fork: %q", got)
+	}
+	if got := skipReason(sessions.Result{Status: sessions.Diverged, Fork: "f1"}); !strings.Contains(got, "the fork f1 went its own way too") {
+		t.Errorf("Diverged fork: %q", got)
+	}
 }
 
 // A profile without a session of the working directory gets the latest

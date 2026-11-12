@@ -211,12 +211,16 @@ type menu struct {
 	head   func(a *app) string
 	info   func(a *app) string
 	items  func(a *app) []menuItem
+	keys   string // the help line, when not the usual one
 	cursor int
 }
 
 func (m *menu) header(a *app) string { return m.head(a) }
 
 func (m *menu) help() string {
+	if m.keys != "" {
+		return m.keys
+	}
 	return "↑/↓ move · enter or number select · esc back · ctrl+c quit"
 }
 

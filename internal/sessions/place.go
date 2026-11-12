@@ -124,12 +124,20 @@ func uuidOf(s string) string {
 	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
 }
 
-// Marker lines of a transcript, as Claude Code writes them.
-var (
-	ownerLine     = []byte(`{"type":"session-owner"`)
-	relocatedLine = []byte(`{"type":"relocated"`)
-	relocatedKey  = []byte(`"relocatedCwd":`)
-)
+// relocatedKey is the field of a relocated line that names the directory.
+var relocatedKey = []byte(`"relocatedCwd":`)
+
+// isMarker reports whether a transcript line is of type want, whatever the
+// order of its fields; a message quoting such a line is not one.
+func isMarker(line []byte, want string) bool {
+	if !bytes.Contains(line, []byte(`"`+want+`"`)) {
+		return false
+	}
+	var v struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(line, &v) == nil && v.Type == want
+}
 
 // lineRewrite is what a copy changes in the lines of src, nil for nothing:
 //   - a session written into the folder of opt.home (Session.Into) says it was
@@ -152,10 +160,10 @@ func lineRewrite(opt Options, jsonl bool, src string) func([]byte) []byte {
 		return nil
 	}
 	return func(line []byte) []byte {
-		if jsonl && ids != nil && bytes.HasPrefix(line, ownerLine) {
+		if jsonl && ids != nil && isMarker(line, "session-owner") {
 			return nil
 		}
-		if home != nil && bytes.HasPrefix(line, relocatedLine) {
+		if home != nil && isMarker(line, "relocated") {
 			line = setRelocated(line, home)
 		}
 		if ids != nil {
