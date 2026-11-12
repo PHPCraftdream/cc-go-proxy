@@ -106,13 +106,13 @@ func features() []feature {
 		{[]string{"--logout"}, []string{"providers/provider/logout"}},
 
 		{[]string{"--send"}, []string{"sessions/send/name/name/copy"}},
-		{[]string{"--send --fork"}, []string{"sessions/send/name/name/fork"}},
+		{[]string{"--send --fork"}, []string{"sessions/send/name/name/fork", "sessions/send/name/name/forkforce"}},
 		{[]string{"--send --force"}, []string{"sessions/send/name/name/force"}},
 		{[]string{"--import"}, []string{"sessions/import/name/copy"}},
-		{[]string{"--import --fork"}, []string{"sessions/import/name/fork"}},
+		{[]string{"--import --fork"}, []string{"sessions/import/name/fork", "sessions/import/name/forkforce"}},
 		{[]string{"--import --force"}, []string{"sessions/import/name/force"}},
 		{[]string{"--export"}, []string{"sessions/export/name/copy"}},
-		{[]string{"--export --fork"}, []string{"sessions/export/name/fork"}},
+		{[]string{"--export --fork"}, []string{"sessions/export/name/fork", "sessions/export/name/forkforce"}},
 		{[]string{"--export --force"}, []string{"sessions/export/name/force"}},
 
 		{[]string{"--status"}, []string{"server/status"}},
@@ -648,6 +648,9 @@ func cmdRuns() []cmdRun {
 		{[]string{"--send"}, []string{"--send", "codex", "zai"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "copy"}, "")},
 		{[]string{"--send --fork"}, []string{"--send", "codex", "zai", "1", "--fork"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "fork"}, "1")},
 		{[]string{"--send --force"}, []string{"--send", "codex", "zai", "--force"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "force"}, "")},
+		{[]string{"--send --fork"}, []string{"--send", "codex", "zai", "1", "--fork", "--force"}, false, typed([]string{"sessions", "send", "name:codex", "name:zai", "forkforce"}, "1")},
+		{[]string{"--import --fork"}, []string{"--import", "zai", "--fork", "--force"}, false, typed([]string{"sessions", "import", "name:zai", "forkforce"}, "")},
+		{[]string{"--export --fork"}, []string{"--export", "codex", "2", "--fork", "--force"}, false, typed([]string{"sessions", "export", "name:codex", "forkforce"}, "2")},
 	}
 }
 

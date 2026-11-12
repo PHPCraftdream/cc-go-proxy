@@ -81,13 +81,18 @@ Without a flag nothing is ever overwritten. A session still being written is cop
 A session can be continued on both sides: you went on in the profile, and also in your own Claude Code (or the same
 session lives in two profiles). The two files then share a beginning and differ after it, and `ccgp --send` does not
 guess which one is right: it reports `diverged`, leaves the destination alone, and `ccgp <profile> --resume <id>` opens
-the destination's version, not the source's. Two flags say what to do (they exclude each other and work with `--send`,
+the destination's version, not the source's. Two flags say what to do (they work with `--send`,
 `--import` and `--export`):
 
 ```sh
-ccgp --send claude codex 1 --fork    # keep both
-ccgp --send claude codex 1 --force   # take the source's version
+ccgp --send claude codex 1 --fork          # keep both
+ccgp --send claude codex 1 --force         # take the source's version
+ccgp --send claude codex 1 --fork --force  # keep both, and write the fork afresh
 ```
+
+Together, `--fork --force` forks a diverged session as `--fork` does, and a fork the destination already holds that
+went its own way (written by an earlier ccgp, or continued there) is renamed to `.bak-<time>` and written afresh. The
+original is never touched, and a session that did not diverge is copied as without the flags.
 
 - `--fork` writes the source as a **new session** in the destination, with a new id (the same id on every run, made
   from the original's, so the next run finds it and only appends what came after). Every id of the session is
@@ -165,7 +170,7 @@ so the copy resumes there. The report says `left out its failed end: N API error
 The end left out is what follows the last line of the conversation (a prompt you typed, a reply, a tool result,
 an attachment, a task notification) and the session state written right after it (title, mode, last prompt). It
 holds only API error messages, the records of the requests that failed, the turn durations and scheduled prompts
-around them. Nothing is left out when that part holds no API error, when it is longer than 64 MiB, or when the
+around them, and the `[Request interrupted by user]` notes of turns you stopped with Esc. Nothing is left out when that part holds no API error, when it is longer than 64 MiB, or when the
 transcript has no other line. Only the session's own transcript is looked at, not its subagents'.
 
 The rule stays append-only: once the session goes on, the errors are no longer its end and come along with the

@@ -10,12 +10,17 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Fixed
+- `ccgp --send` / `--fork` / `--force` kept the failed end of a session whose API errors were followed by a turn the user
+  stopped with Esc: the `[Request interrupted by user]` note counted as conversation. It is now part of the failed end.
 - `ccgp --send` / `--fork` of a session begun in another directory (moved into this one's folder by `/cd` or an
   earlier copy) wrote a copy that `claude --resume` in the directory did not list: with no `relocated` line, Claude Code
   took the first lines' `cwd`, and on Windows its worktree filter hid the session. The copy now names the directory in a
   `relocated` line after each `last-prompt` line.
 
 ### Changed
+- `--fork` and `--force` of `ccgp --send` / `--import` / `--export` work together: a diverged session is forked, and a
+  fork the destination already holds that went its own way is kept as `.bak-<time>` and written afresh; the original is
+  never touched. They used to exclude each other.
 - `ccgp --send --fork` of the 1.8 GB live session takes 37 s instead of 91 s, with output byte for byte the same.
   What a profile showed and what changed:
   - the short ids and slugs are found by hand-written finders instead of regular expressions, which took 20 s;

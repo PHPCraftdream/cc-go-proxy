@@ -182,9 +182,6 @@ func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 	if count < 1 {
 		return nil, fmt.Errorf("sessions: count must be at least 1, got %d", count)
 	}
-	if opt.Fork && opt.Force {
-		return nil, errors.New("sessions: fork and force exclude each other")
-	}
 	if sameDir(srcDir, dstDir) {
 		return nil, errors.New("sessions: source and destination are the same directory")
 	}
@@ -317,10 +314,16 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		own.home, own.stamp = opt.Within, true
 	}
 	own.trimTail = true
+	// With Fork, Force is the fork's: the original stays as it is.
+	orig := own
+	orig.Force = own.Force && !opt.Fork
 	if other := idElsewhere(dstDir, s.Folder(), s.ID); other != "" {
 		st, res.Other = Elsewhere, other
 	} else {
-		st, c, backup, err = place(s.Path, dst, true, own, prog)
+		st, c, backup, err = place(s.Path, dst, true, orig, prog)
+	}
+	if opt.Fork && (err != nil || st != Diverged && st != Elsewhere) {
+		opt.Force = false // not forked: the original's files stay too
 	}
 	if err == nil && (st == Diverged || st == Elsewhere) && opt.Fork {
 		id := forkID(s.ID)
@@ -332,7 +335,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 			st, res.Other = Elsewhere, other
 		} else if opt.rewrite, err = newForkIDs(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
 			own.rewrite = opt.rewrite
-			if st, c, backup, err = place(s.Path, dst, true, own, prog); st == Copied || st == Updated {
+			if st, c, backup, err = place(s.Path, dst, true, own, prog); st == Copied || st == Updated || st == Replaced {
 				st = Forked
 			}
 		}

@@ -44,12 +44,13 @@ func classifyTail(line []byte) tailKind {
 		return tailState
 	}
 	var v struct {
-		Type       string `json:"type"`
-		Subtype    string `json:"subtype"`
-		UUID       string `json:"uuid"`
-		IsMeta     bool   `json:"isMeta"`
-		TurnOrigin string `json:"turnOrigin"`
-		APIError   bool   `json:"isApiErrorMessage"`
+		Type       string          `json:"type"`
+		Subtype    string          `json:"subtype"`
+		UUID       string          `json:"uuid"`
+		IsMeta     bool            `json:"isMeta"`
+		TurnOrigin string          `json:"turnOrigin"`
+		APIError   bool            `json:"isApiErrorMessage"`
+		Message    json.RawMessage `json:"message"` // any shape: read only for a user line
 	}
 	if json.Unmarshal(line, &v) != nil {
 		return tailUseful
@@ -68,8 +69,41 @@ func classifyTail(line []byte) tailKind {
 		return tailNoise
 	case v.Type == "user" && v.IsMeta && v.TurnOrigin == "scheduled":
 		return tailNoise
+	case v.Type == "user" && isInterrupt(v.Message):
+		return tailNoise
 	}
 	return tailUseful
+}
+
+// interruptTexts are the lines Claude Code writes when the user stops a turn
+// (Esc): no part of the conversation.
+var interruptTexts = map[string]bool{
+	"[Request interrupted by user]":              true,
+	"[Request interrupted by user for tool use]": true,
+}
+
+// isInterrupt reports whether a user message's content is only an interrupt
+// note, as a string or as one text block.
+func isInterrupt(message json.RawMessage) bool {
+	if !bytes.Contains(message, []byte("[Request interrupted by user")) {
+		return false
+	}
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(message, &m) != nil {
+		return false
+	}
+	content := m.Content
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return interruptTexts[s]
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	return json.Unmarshal(content, &blocks) == nil && len(blocks) == 1 && blocks[0].Type == "text" && interruptTexts[blocks[0].Text]
 }
 
 // failedTail returns where the failed end of a transcript of size bytes

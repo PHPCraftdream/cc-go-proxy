@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,10 +31,7 @@ const claudeEndpointLabel = "claude"
 // `ccgp --import|--export <profile> [count]`, all through the same code path.
 // Only the sessions of the directory the command is run in are copied.
 func sessionsCmd(kind string, args []string) error {
-	args, fork, force, err := splitSessionFlags(args)
-	if err != nil {
-		return err
-	}
+	args, fork, force := splitSessionFlags(args)
 	from, to, count, err := parseSendCommand(kind, args)
 	if err != nil {
 		return err
@@ -89,8 +85,9 @@ func sessionsCmd(kind string, args []string) error {
 var sessionVerbs = []string{"--fork", "--force"}
 
 // splitSessionFlags takes --fork and --force out of the arguments of the
-// session commands.
-func splitSessionFlags(args []string) (rest []string, fork, force bool, err error) {
+// session commands. Both: a diverged session is forked, and a fork that went
+// its own way is replaced (kept as a backup); the original is left alone.
+func splitSessionFlags(args []string) (rest []string, fork, force bool) {
 	for _, a := range args {
 		switch a {
 		case "--fork":
@@ -101,10 +98,7 @@ func splitSessionFlags(args []string) (rest []string, fork, force bool, err erro
 			rest = append(rest, a)
 		}
 	}
-	if fork && force {
-		return nil, false, false, errors.New("--fork and --force exclude each other: --fork keeps both versions, --force replaces the destination")
-	}
-	return rest, fork, force, nil
+	return rest, fork, force
 }
 
 // projectDirName is how Claude Code names the projects/ folder of a working
@@ -241,6 +235,9 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 			done++
 			stripped += r.Removed
 			line += "  (both versions kept: this one is the new session " + r.Fork + ")"
+			if r.Backup != "" {
+				line += "  (the earlier fork is kept as " + r.Backup + ")"
+			}
 			forks = append(forks, r.Fork)
 		case r.Status == sessions.Replaced:
 			done++

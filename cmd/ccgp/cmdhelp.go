@@ -187,7 +187,9 @@ is skipped, unless you say what to do:
            versions stay: "ccgp <profile> --resume <id>" opens the new one
   --force  replace the destination with the source; the old file is kept as
            <id>.jsonl.bak-<time> (also for a destination that is ahead)
-The two flags exclude each other.
+Both: a diverged session is forked, and a fork that went its own way since
+(an earlier fork written otherwise) is replaced, kept as a backup; the
+original is never touched.
 
 Examples:
   ccgp --send claude codex
