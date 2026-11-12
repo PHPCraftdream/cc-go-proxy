@@ -22,31 +22,44 @@ const copyBuf = 1 << 20
 // already holds.
 var errDiverged = errors.New("sessions: destination differs from the source")
 
+// copied is what syncFile left out of a file.
+type copied struct {
+	removed int // thinking blocks
+	failed  int // API errors of the transcript's failed end (failedTail)
+}
+
 // syncFile writes src to dst under the append-only rule described at Copy,
 // streaming: nothing is held in memory but one chunk. jsonl files are cut to
 // their last complete line (the source may be a live session) and optionally
-// stripped of thinking blocks. prog, when set, receives the bytes of src
-// consumed so far (throttled by opt.ProgressEvery).
-func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (Status, int, error) {
+// stripped of thinking blocks; the failed end of a transcript (opt.trimTail)
+// is compared with the destination but never written. prog, when set,
+// receives the bytes of src consumed so far (throttled by opt.ProgressEvery).
+func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (Status, copied, error) {
 	f, err := os.Open(src)
 	if err != nil {
-		return 0, 0, err
+		return 0, copied{}, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return 0, 0, err
+		return 0, copied{}, err
 	}
 	size := info.Size()
 	if jsonl {
 		if size, err = completeLen(f, size); err != nil {
-			return 0, 0, err
+			return 0, copied{}, err
+		}
+	}
+	cut, failed := size, 0
+	if jsonl && opt.trimTail {
+		if cut, failed, err = failedTail(f, size); err != nil {
+			return 0, copied{}, err
 		}
 	}
 
 	p, err := newPlacer(dst, info.ModTime())
 	if err != nil {
-		return 0, 0, err
+		return 0, copied{}, err
 	}
 	defer p.close()
 
@@ -58,35 +71,55 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		}
 		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
 	}
-	if fn := lineRewrite(opt, jsonl, src); fn != nil {
-		in = newSwapReader(in, fn)
-	}
-	removed := 0
+	rewrite := lineRewrite(opt, jsonl, src)
+	var strip *thinkingStripper
 	if jsonl && opt.StripThinking {
-		bw := bufio.NewWriterSize(p, copyBuf)
-		if removed, err = StripThinkingStream(in, bw); err == nil {
-			err = bw.Flush()
+		strip = newThinkingStripper()
+	}
+	if rewrite != nil || strip != nil {
+		s := newSwapReader(in, func(line []byte) ([]byte, error) {
+			if rewrite != nil {
+				if line = rewrite(line); len(line) == 0 {
+					return nil, nil
+				}
+			}
+			if strip != nil {
+				return strip.line(line)
+			}
+			return line, nil
+		})
+		if cut < size {
+			s.cut, s.mark = cut, p.compareFrom
 		}
-	} else {
-		_, err = io.CopyBuffer(p, in, make([]byte, copyBuf))
+		in = s
+	} else if cut < size {
+		p.compareFrom(cut)
+	}
+	_, err = io.CopyBuffer(p, in, make([]byte, copyBuf))
+	var c copied
+	if strip != nil {
+		c.removed = strip.removed
 	}
 	if errors.Is(err, errDiverged) {
-		return Diverged, removed, nil
+		return Diverged, c, nil
 	}
 	if err != nil {
-		return 0, 0, fmt.Errorf("%s: %w", src, err)
+		return 0, copied{}, fmt.Errorf("%s: %w", src, err)
 	}
 	st, err := p.finish()
-	return st, removed, err
+	if p.left {
+		c.failed = failed
+	}
+	return st, c, err
 }
 
 // place is syncFile plus Options.Force: a destination that diverged from the
 // source or is ahead of it is renamed to <dst>.bak-<time> and written afresh.
 // backup is that path, empty when nothing was replaced.
-func place(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (st Status, removed int, backup string, err error) {
-	st, removed, err = syncFile(src, dst, jsonl, opt, prog)
+func place(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (st Status, c copied, backup string, err error) {
+	st, c, err = syncFile(src, dst, jsonl, opt, prog)
 	if err != nil || !opt.Force || (st != Diverged && st != Ahead) {
-		return st, removed, "", err
+		return st, c, "", err
 	}
 	stamp := time.Now().Format("20060102-150405")
 	backup = dst + ".bak-" + stamp
@@ -97,13 +130,13 @@ func place(src, dst string, jsonl bool, opt Options, prog func(done, total int64
 		backup = fmt.Sprintf("%s.bak-%s-%d", dst, stamp, i)
 	}
 	if err = os.Rename(dst, backup); err != nil {
-		return 0, 0, "", err
+		return 0, copied{}, "", err
 	}
-	if _, removed, err = syncFile(src, dst, jsonl, opt, prog); err != nil {
+	if _, c, err = syncFile(src, dst, jsonl, opt, prog); err != nil {
 		_ = os.Rename(backup, dst) // nothing was written: put the old file back
-		return 0, 0, "", err
+		return 0, copied{}, "", err
 	}
-	return Replaced, removed, backup, nil
+	return Replaced, c, backup, nil
 }
 
 // forkID is the id a diverged session is written under: derived from the
@@ -190,30 +223,63 @@ func setRelocated(line, home []byte) []byte {
 }
 
 // swapReader passes a file through fn, line by line; a line fn returns empty
-// is left out.
+// is left out. When mark is set, it is called once with the length of the
+// output so far as the line at input offset cut is reached.
 type swapReader struct {
-	br  *bufio.Reader
-	fn  func([]byte) []byte
-	buf []byte
-	err error
+	br   *bufio.Reader
+	fn   func([]byte) ([]byte, error)
+	buf  []byte
+	err  error
+	in   int64 // input bytes read
+	out  int64 // output bytes produced
+	cut  int64
+	mark func(int64)
 }
 
-func newSwapReader(r io.Reader, fn func([]byte) []byte) *swapReader {
+func newSwapReader(r io.Reader, fn func([]byte) ([]byte, error)) *swapReader {
 	return &swapReader{br: bufio.NewReaderSize(r, copyBuf), fn: fn}
 }
 
+// Read fills p with as many lines as fit, so the writer gets large chunks.
 func (s *swapReader) Read(p []byte) (int, error) {
-	for len(s.buf) == 0 {
-		if s.err != nil {
-			return 0, s.err
+	n := 0
+	for n < len(p) {
+		if len(s.buf) == 0 {
+			if s.err != nil {
+				if n > 0 {
+					return n, nil
+				}
+				return 0, s.err
+			}
+			s.next()
+			continue
 		}
-		var line []byte
-		line, s.err = s.br.ReadBytes('\n')
-		s.buf = s.fn(line)
+		c := copy(p[n:], s.buf)
+		s.buf = s.buf[c:]
+		n += c
 	}
-	n := copy(p, s.buf)
-	s.buf = s.buf[n:]
 	return n, nil
+}
+
+// next puts the next line, passed through fn, into buf.
+func (s *swapReader) next() {
+	if s.mark != nil && s.in >= s.cut {
+		s.mark(s.out)
+		s.mark = nil
+	}
+	line, err := s.br.ReadBytes('\n')
+	s.in += int64(len(line))
+	s.err = err
+	if len(line) == 0 {
+		return
+	}
+	out, ferr := s.fn(line)
+	if ferr != nil {
+		s.err = ferr
+		return
+	}
+	s.buf = out
+	s.out += int64(len(out))
 }
 
 // progressReader reports how much of a stream was read, at most once per interval.
@@ -273,10 +339,12 @@ type placer struct {
 	out     *os.File
 	tmp     string // temp file of a new destination until finish
 	wrote   bool   // bytes beyond the old content were written
+	limit   int64  // stream bytes from here on are compared, never written; -1: none
+	left    bool   // bytes beyond limit were left out
 }
 
 func newPlacer(dst string, mtime time.Time) (*placer, error) {
-	p := &placer{dst: dst, mtime: mtime}
+	p := &placer{dst: dst, mtime: mtime, limit: -1}
 	f, err := os.Open(dst)
 	switch {
 	case err == nil:
@@ -312,6 +380,12 @@ func (p *placer) Write(b []byte) (int, error) {
 		}
 		p.pos += m
 		b = b[m:]
+	}
+	if p.limit >= 0 && p.pos+int64(len(b)) > p.limit {
+		keep := max(0, p.limit-p.pos)
+		p.pos += int64(len(b)) - keep
+		b = b[:keep]
+		p.left = true
 	}
 	if len(b) == 0 {
 		return n, nil
@@ -371,11 +445,15 @@ func (p *placer) finish() (Status, error) {
 		}
 		p.out = nil
 		return Updated, os.Chtimes(p.dst, p.mtime, p.mtime)
-	case p.pos == p.oldSize:
+	case p.pos >= p.oldSize: // more only where nothing is written
 		return Unchanged, nil
 	}
 	return Ahead, nil
 }
+
+// compareFrom makes the stream from byte n on only checked against what the
+// destination already holds.
+func (p *placer) compareFrom(n int64) { p.limit = n }
 
 // close releases the handles and removes an unfinished temp file.
 func (p *placer) close() {

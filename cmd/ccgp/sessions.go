@@ -223,6 +223,9 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 		if note := artifactsNote(r); note != "" {
 			line += "  (" + note + ")"
 		}
+		if note := failedNote(r); note != "" {
+			line += "  (" + note + ")"
+		}
 		switch {
 		case r.Err != nil:
 			failed++
@@ -309,6 +312,17 @@ func artifactsNote(r sessions.Result) string {
 		parts = append(parts, fmt.Sprintf("plan: %d", r.Plans))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// failedNote tells that a written transcript was left without its failed end.
+func failedNote(r sessions.Result) string {
+	switch r.Status {
+	case sessions.Copied, sessions.Updated, sessions.Forked, sessions.Replaced:
+		if r.Failed > 0 {
+			return fmt.Sprintf("left out its failed end: %d API errors with no reply after them", r.Failed)
+		}
+	}
+	return ""
 }
 
 func skipReason(r sessions.Result) string {

@@ -10,6 +10,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `ccgp --send` / `--import` / `--export` (plain, `--fork`, `--force`) leave out the failed end of a session: the
+  turns at its end that got only `API Error: …` in place of a reply, with their request records and the scheduled
+  prompts that kept firing into them (18 usage-limit 502s in a row in a live session). The copy resumes from the last
+  real exchange; once the session goes on, the errors come along as before. An earlier copy that holds them stays
+  `unchanged`.
 - `ccgp --send` / `--import` / `--export` bring what Claude Code keeps of a session outside its transcript: the task
   list (`tasks/<id>/`), the file versions of `/rewind` (`file-history/<id>/`) and the plan (`plans/<slug>.md`). A copy
   showed none of the original's tasks before (36 in the live session), could not `/rewind` (3655 versions) and had no

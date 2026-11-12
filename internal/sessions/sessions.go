@@ -89,6 +89,9 @@ type Options struct {
 	// home is Within for a session written into Project from a subdirectory's
 	// folder (Session.Into): its transcript is made to say it lives there.
 	home string
+	// trimTail leaves out the failed end of the transcript (failedTail): set
+	// for a session's own transcript, not for its subagents'.
+	trimTail bool
 	// OnStart, when set, is called before each session; i counts from 1 up to n.
 	OnStart func(i, n int, s Session)
 	// OnProgress, when set, reports how much of a transcript is processed while
@@ -114,6 +117,7 @@ type Result struct {
 	History int    // file versions written (file-history/<id>/)
 	Plans   int    // plan files written (plans/<slug>.md)
 	Removed int    // thinking blocks removed
+	Failed  int    // API errors left out with the failed end of the transcript
 	Fork    string // id of the fork the session was written as (Options.Fork)
 	Backup  string // path the replaced destination was kept at (Options.Force)
 	Other   string // project folder of the destination that holds the id (Elsewhere)
@@ -293,18 +297,20 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	// A session id is one session for Claude Code: the same id in another
 	// project folder is another session, never written over or next to.
 	var (
-		st      Status
-		removed int
-		backup  string
-		err     error
+		st     Status
+		c      copied
+		backup string
+		err    error
 	)
 	if s.Into != "" {
 		opt.home = opt.Within
 	}
+	own := opt // the session's own transcript
+	own.trimTail = true
 	if other := idElsewhere(dstDir, s.Folder(), s.ID); other != "" {
 		st, res.Other = Elsewhere, other
 	} else {
-		st, removed, backup, err = place(s.Path, dst, true, opt, prog)
+		st, c, backup, err = place(s.Path, dst, true, own, prog)
 	}
 	if err == nil && (st == Diverged || st == Elsewhere) && opt.Fork {
 		id := forkID(s.ID)
@@ -315,7 +321,8 @@ func copySession(dstDir string, s Session, opt Options) Result {
 			// there before): not a second session of that id.
 			st, res.Other = Elsewhere, other
 		} else if opt.rewrite, err = newForkIDs(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
-			if st, removed, backup, err = place(s.Path, dst, true, opt, prog); st == Copied || st == Updated {
+			own.rewrite = opt.rewrite
+			if st, c, backup, err = place(s.Path, dst, true, own, prog); st == Copied || st == Updated {
 				st = Forked
 			}
 		}
@@ -324,7 +331,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		res.Err = err
 		return res
 	}
-	res.Status, res.Removed, res.Backup = st, removed, backup
+	res.Status, res.Removed, res.Failed, res.Backup = st, c.removed, c.failed, backup
 	if st.Skipped() {
 		return res
 	}
@@ -364,7 +371,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		if err != nil {
 			return err
 		}
-		res.Removed += n
+		res.Removed += n.removed
 		if st == Copied || st == Updated || st == Replaced {
 			res.Files++
 		}

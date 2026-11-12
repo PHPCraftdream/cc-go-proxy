@@ -37,37 +37,55 @@ func StripThinking(data []byte) ([]byte, int, error) {
 // are returned as they are.
 func StripThinkingStream(r io.Reader, w io.Writer) (int, error) {
 	br := bufio.NewReaderSize(r, copyBuf)
-	redirect := map[string]json.RawMessage{} // dropped line's uuid -> parentUuid to use instead
-	removed := 0
+	s := newThinkingStripper()
 	for {
 		seg, rerr := br.ReadBytes('\n')
 		if len(seg) > 0 {
-			line := bytes.TrimRight(seg, "\r\n")
-			eol := seg[len(line):]
-			rewritten, drop, n, err := stripLine(line, redirect)
+			out, err := s.line(seg)
 			if err != nil {
 				return 0, err
 			}
-			removed += n
-			switch {
-			case drop:
-			case rewritten != nil:
-				if _, err := w.Write(append(rewritten, eol...)); err != nil {
-					return 0, err
-				}
-			default:
-				if _, err := w.Write(seg); err != nil {
+			if len(out) > 0 {
+				if _, err := w.Write(out); err != nil {
 					return 0, err
 				}
 			}
 		}
 		if rerr == io.EOF {
-			return removed, nil
+			return s.removed, nil
 		}
 		if rerr != nil {
 			return 0, rerr
 		}
 	}
+}
+
+// thinkingStripper is StripThinkingStream one line at a time.
+type thinkingStripper struct {
+	redirect map[string]json.RawMessage // dropped line's uuid -> parentUuid to use instead
+	removed  int
+}
+
+func newThinkingStripper() *thinkingStripper {
+	return &thinkingStripper{redirect: map[string]json.RawMessage{}}
+}
+
+// line returns what seg, a line with its end of line, becomes: seg itself, its
+// rewritten form, or nil when it is dropped.
+func (s *thinkingStripper) line(seg []byte) ([]byte, error) {
+	line := bytes.TrimRight(seg, "\r\n")
+	rewritten, drop, n, err := stripLine(line, s.redirect)
+	if err != nil {
+		return nil, err
+	}
+	s.removed += n
+	switch {
+	case drop:
+		return nil, nil
+	case rewritten != nil:
+		return append(rewritten, seg[len(line):]...), nil
+	}
+	return seg, nil
 }
 
 // stripLine returns the replacement for line, nil when it stays as is, or
