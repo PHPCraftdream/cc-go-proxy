@@ -73,125 +73,203 @@ func newThinkingStripper() *thinkingStripper {
 // line returns what seg, a line with its end of line, becomes: seg itself, its
 // rewritten form, or nil when it is dropped.
 func (s *thinkingStripper) line(seg []byte) ([]byte, error) {
-	line := bytes.TrimRight(seg, "\r\n")
-	rewritten, drop, n, err := stripLine(line, s.redirect)
-	if err != nil {
-		return nil, err
-	}
-	s.removed += n
-	switch {
-	case drop:
-		return nil, nil
-	case rewritten != nil:
-		return append(rewritten, seg[len(line):]...), nil
-	}
-	return seg, nil
+	out, note := preStrip(seg)
+	return s.finish(out, note)
 }
 
-// stripLine returns the replacement for line, nil when it stays as is, or
-// drop=true when it must disappear.
-func stripLine(line []byte, redirect map[string]json.RawMessage) (rewritten []byte, drop bool, removed int, err error) {
+// stripNote is what preStrip leaves for finish.
+type stripNote struct {
+	removed int
+	drop    bool   // the line had nothing but thinking
+	uuid    string // of a dropped line, when it has one
+	hasUUID bool
+	parent  json.RawMessage // of a dropped line
+	err     error
+	// links are the values of the line's link keys (spans of the line); a
+	// value that is not a plain string makes mustParse.
+	links     [][2]int
+	mustParse bool
+}
+
+// preStrip removes the thinking blocks of seg. It keeps no state, so it runs
+// on any goroutine; the links to dropped lines are finish's, in order.
+func preStrip(seg []byte) ([]byte, any) {
+	line := bytes.TrimRight(seg, "\r\n")
 	if len(line) == 0 || line[0] != '{' {
-		return nil, false, 0, nil
+		return seg, nil
 	}
-	if !bytes.Contains(line, thinkingMark) && !linksTo(line, redirect) {
-		return nil, false, 0, nil
+	out, n := seg, (*stripNote)(nil)
+	if bytes.Contains(line, thinkingMark) {
+		if out, n = stripBlocks(seg, line); n != nil && (n.drop || n.err != nil) {
+			return out, n
+		}
 	}
+	links, must := linkSpans(bytes.TrimRight(out, "\r\n"))
+	if len(links) == 0 && !must {
+		if n == nil {
+			return out, nil
+		}
+		return out, n
+	}
+	if n == nil {
+		n = &stripNote{}
+	}
+	n.links, n.mustParse = links, must
+	return out, n
+}
+
+// linkSpans finds the values of the link keys in line, as linksTo reads them.
+func linkSpans(line []byte) (spans [][2]int, mustParse bool) {
+	for _, k := range linkMarks {
+		for at := 0; ; {
+			i := bytes.Index(line[at:], k)
+			if i < 0 {
+				break
+			}
+			at += i + len(k)
+			v := at
+			for v < len(line) && (line[v] == ' ' || line[v] == '\t') {
+				v++
+			}
+			if v >= len(line) || line[v] != ':' {
+				continue
+			}
+			v++
+			for v < len(line) && (line[v] == ' ' || line[v] == '\t') {
+				v++
+			}
+			if v >= len(line) || line[v] != '"' {
+				continue
+			}
+			v++
+			end := bytes.IndexByte(line[v:], '"')
+			if end < 0 || bytes.IndexByte(line[v:v+end], '\\') >= 0 {
+				mustParse = true // malformed, or escaped: not a plain uuid
+				continue
+			}
+			spans = append(spans, [2]int{v, v + end})
+		}
+	}
+	return spans, mustParse
+}
+
+// linkMarks are the link keys as they stand in a line.
+var linkMarks = func() [][]byte {
+	out := make([][]byte, len(linkKeys))
+	for i, k := range linkKeys {
+		out[i] = []byte(`"` + k + `"`)
+	}
+	return out
+}()
+
+// stripBlocks is preStrip's removal of the thinking blocks of line (seg
+// without its end of line); a nil note: nothing to remove.
+func stripBlocks(seg, line []byte) ([]byte, *stripNote) {
 	var top map[string]json.RawMessage
 	if json.Unmarshal(line, &top) != nil {
-		return nil, false, 0, nil // not ours to judge
+		return seg, nil // not ours to judge
 	}
+	var msg map[string]json.RawMessage
+	var blocks []json.RawMessage
+	if json.Unmarshal(top["message"], &msg) != nil || json.Unmarshal(msg["content"], &blocks) != nil || len(blocks) == 0 {
+		return seg, nil
+	}
+	kept := make([]json.RawMessage, 0, len(blocks))
+	removed := 0
+	for _, b := range blocks {
+		if isThinking(b) {
+			removed++
+		} else {
+			kept = append(kept, b)
+		}
+	}
+	if removed == 0 {
+		return seg, nil
+	}
+	if len(kept) == 0 {
+		n := &stripNote{removed: removed, drop: true, parent: top["parentUuid"]}
+		if raw, ok := top["uuid"]; ok && json.Unmarshal(raw, &n.uuid) == nil {
+			n.hasUUID = true
+		}
+		return nil, n
+	}
+	var err error
+	if msg["content"], err = encode(kept); err == nil {
+		if top["message"], err = encode(msg); err == nil {
+			var out json.RawMessage
+			if out, err = encode(top); err == nil {
+				return append(out, seg[len(line):]...), &stripNote{removed: removed}
+			}
+		}
+	}
+	return seg, &stripNote{err: err}
+}
 
+// finish completes preStrip's work on a line, in the order of the lines: it
+// remembers a dropped line and points the links to it at its parent.
+func (s *thinkingStripper) finish(seg []byte, note any) ([]byte, error) {
+	n, _ := note.(*stripNote)
+	if n == nil {
+		return seg, nil // nothing removed, no link to look at
+	}
+	{
+		if n.err != nil {
+			return nil, n.err
+		}
+		s.removed += n.removed
+		if n.drop {
+			if n.hasUUID {
+				parent := n.parent
+				var id string
+				if parent != nil && json.Unmarshal(parent, &id) == nil {
+					if to, ok := s.redirect[id]; ok {
+						parent = to
+					}
+				}
+				if parent == nil {
+					parent = json.RawMessage("null")
+				}
+				s.redirect[n.uuid] = parent
+			}
+			return nil, nil
+		}
+	}
+	if len(s.redirect) == 0 {
+		return seg, nil
+	}
+	hit := n.mustParse
+	for _, sp := range n.links {
+		if _, ok := s.redirect[string(seg[sp[0]:sp[1]])]; ok {
+			hit = true
+			break
+		}
+	}
+	if !hit {
+		return seg, nil
+	}
+	line := bytes.TrimRight(seg, "\r\n")
+	var top map[string]json.RawMessage
+	if json.Unmarshal(line, &top) != nil {
+		return seg, nil
+	}
 	changed := false
 	for _, k := range linkKeys {
 		var id string
 		if raw, ok := top[k]; ok && json.Unmarshal(raw, &id) == nil {
-			if to, ok := redirect[id]; ok {
+			if to, ok := s.redirect[id]; ok {
 				top[k] = to
 				changed = true
 			}
 		}
 	}
-
-	if rawMsg, ok := top["message"]; ok {
-		var msg map[string]json.RawMessage
-		var blocks []json.RawMessage
-		if json.Unmarshal(rawMsg, &msg) == nil && json.Unmarshal(msg["content"], &blocks) == nil && len(blocks) > 0 {
-			kept := make([]json.RawMessage, 0, len(blocks))
-			for _, b := range blocks {
-				if isThinking(b) {
-					removed++
-				} else {
-					kept = append(kept, b)
-				}
-			}
-			if removed > 0 {
-				if len(kept) == 0 {
-					var id string
-					if raw, ok := top["uuid"]; ok && json.Unmarshal(raw, &id) == nil {
-						parent := top["parentUuid"]
-						if parent == nil {
-							parent = json.RawMessage("null")
-						}
-						redirect[id] = parent
-					}
-					return nil, true, removed, nil
-				}
-				if msg["content"], err = encode(kept); err != nil {
-					return nil, false, 0, err
-				}
-				if top["message"], err = encode(msg); err != nil {
-					return nil, false, 0, err
-				}
-				changed = true
-			}
-		}
-	}
-
 	if !changed {
-		return nil, false, 0, nil
+		return seg, nil
 	}
-	rewritten, err = encode(top)
-	return rewritten, false, removed, err
-}
-
-// linksTo reports whether line may refer to a dropped line through one of the
-// link keys. It over-approximates (a hit only costs a full parse) but never
-// misses a key whose value is a plain string.
-func linksTo(line []byte, redirect map[string]json.RawMessage) bool {
-	if len(redirect) == 0 {
-		return false
+	out, err := encode(top)
+	if err != nil {
+		return nil, err
 	}
-	for _, k := range linkKeys {
-		mark := []byte(`"` + k + `"`)
-		for rest := line; ; {
-			i := bytes.Index(rest, mark)
-			if i < 0 {
-				break
-			}
-			rest = rest[i+len(mark):]
-			v := bytes.TrimLeft(rest, " \t")
-			if len(v) == 0 || v[0] != ':' {
-				continue
-			}
-			v = bytes.TrimLeft(v[1:], " \t")
-			if len(v) == 0 || v[0] != '"' {
-				continue
-			}
-			v = v[1:]
-			end := bytes.IndexByte(v, '"')
-			if end < 0 {
-				return true // malformed: let the parser decide
-			}
-			if _, ok := redirect[string(v[:end])]; ok {
-				return true
-			}
-			if bytes.IndexByte(v[:end], '\\') >= 0 {
-				return true // escaped value: not a plain uuid
-			}
-		}
-	}
-	return false
+	return append(out, seg[len(line):]...), nil
 }
 
 func isThinking(block json.RawMessage) bool {

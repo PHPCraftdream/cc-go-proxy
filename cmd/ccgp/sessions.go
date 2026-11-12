@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -192,6 +193,9 @@ func stripThinkingBetween(from, to endpoint) bool {
 // copySessions copies and reports as it goes (transcripts can be gigabytes);
 // it is the testable core of send. label opens the first output line.
 func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt sessions.Options) error {
+	// A transcript of gigabytes goes through in lines that are mostly garbage at
+	// once: the collector runs a quarter as often (the heap stays small).
+	defer debug.SetGCPercent(debug.SetGCPercent(400))
 	var done, same, skipped, diverged, elsewhere, failed, stripped int
 	var forks []string
 	opened := false

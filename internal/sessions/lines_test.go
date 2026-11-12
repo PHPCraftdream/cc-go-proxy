@@ -24,7 +24,7 @@ func drain(t *testing.T, src lineSource) (string, int, error) {
 	var out bytes.Buffer
 	total := 0
 	for {
-		line, n, err := src.next()
+		line, _, n, err := src.next()
 		out.Write(line)
 		total += n
 		if err != nil {
@@ -51,6 +51,9 @@ func randomLines(r *rand.Rand, n int) string {
 	return b.String()
 }
 
+// rewriteFn is rewrite as a lineFn.
+var rewriteFn = plainLineFn(rewrite)
+
 // rewrite changes some lines, drops others and leaves the rest.
 func rewrite(b []byte) []byte {
 	switch {
@@ -72,9 +75,9 @@ func TestParallelLinesMatchSequential(t *testing.T) {
 		randomLines(r, 50),
 		randomLines(r, 1500) + "tail without newline",
 	} {
-		want, wantN, wantErr := drain(t, newSeqLines(strings.NewReader(in), rewrite, 0))
+		want, wantN, wantErr := drain(t, newSeqLines(strings.NewReader(in), rewriteFn, 0))
 		for _, workers := range []int{1, 2, 7} {
-			got, n, err := drain(t, newParLines(strings.NewReader(in), rewrite, workers))
+			got, n, err := drain(t, newParLines(strings.NewReader(in), rewriteFn, workers))
 			if got != want || n != wantN || n != len(in) || !errors.Is(err, io.EOF) || !errors.Is(wantErr, io.EOF) {
 				t.Errorf("%d workers, %d bytes in: got %d bytes (%d read, %v), want %d (%d, %v)",
 					workers, len(in), len(got), n, err, len(want), wantN, wantErr)
@@ -86,8 +89,8 @@ func TestParallelLinesMatchSequential(t *testing.T) {
 func TestParallelLinesReportTheSourceErrorAfterTheData(t *testing.T) {
 	boom := errors.New("boom")
 	in := randomLines(rand.New(rand.NewSource(2)), 400)
-	got, n, err := drain(t, newParLines(io.MultiReader(strings.NewReader(in), iotest.ErrReader(boom)), rewrite, 4))
-	want, _, _ := drain(t, newSeqLines(strings.NewReader(in), rewrite, 0))
+	got, n, err := drain(t, newParLines(io.MultiReader(strings.NewReader(in), iotest.ErrReader(boom)), rewriteFn, 4))
+	want, _, _ := drain(t, newSeqLines(strings.NewReader(in), rewriteFn, 0))
 	if !errors.Is(err, boom) || got != want || n != len(in) {
 		t.Errorf("got %d bytes, %d read, %v; want %d bytes, then boom", len(got), n, err, len(want))
 	}
@@ -95,14 +98,14 @@ func TestParallelLinesReportTheSourceErrorAfterTheData(t *testing.T) {
 
 func TestParallelLinesStopWhenClosed(t *testing.T) {
 	in := randomLines(rand.New(rand.NewSource(3)), 1500)
-	p := newParLines(strings.NewReader(in), rewrite, 3)
-	if _, _, err := p.next(); err != nil {
+	p := newParLines(strings.NewReader(in), rewriteFn, 3)
+	if _, _, _, err := p.next(); err != nil {
 		t.Fatal(err)
 	}
 	p.close()
 	p.close()          // twice is fine
 	for range 100000 { // the queue empties and ends, nothing blocks
-		if _, _, err := p.next(); err != nil {
+		if _, _, _, err := p.next(); err != nil {
 			return
 		}
 	}
@@ -247,8 +250,8 @@ func TestParallelLinesCloseWaitsForTheReader(t *testing.T) {
 	in := randomLines(rand.New(rand.NewSource(5)), 1500)
 	for range 20 {
 		var closed, late atomic.Bool
-		p := newParLines(afterClose{strings.NewReader(in), &closed, &late}, rewrite, 3)
-		if _, _, err := p.next(); err != nil {
+		p := newParLines(afterClose{strings.NewReader(in), &closed, &late}, rewriteFn, 3)
+		if _, _, _, err := p.next(); err != nil {
 			t.Fatal(err)
 		}
 		p.close()
@@ -262,14 +265,14 @@ func TestParallelLinesCloseWaitsForTheReader(t *testing.T) {
 
 // A small stream is not worth goroutines; a large one with a rewrite is.
 func TestNewLinesChoosesBySize(t *testing.T) {
-	if _, ok := newLines(strings.NewReader(""), rewrite, parallelFrom-1).(*seqLines); !ok {
+	if _, ok := newLines(strings.NewReader(""), rewriteFn, parallelFrom-1).(*seqLines); !ok {
 		t.Error("a small stream went parallel")
 	}
 	if _, ok := newLines(strings.NewReader(""), nil, parallelFrom).(*seqLines); !ok {
 		t.Error("a stream without a rewrite went parallel")
 	}
 	if runtime.GOMAXPROCS(0) > 1 {
-		src := newLines(strings.NewReader(""), rewrite, parallelFrom)
+		src := newLines(strings.NewReader(""), rewriteFn, parallelFrom)
 		if _, ok := src.(*parLines); !ok {
 			t.Error("a large stream was not parallel")
 		}
