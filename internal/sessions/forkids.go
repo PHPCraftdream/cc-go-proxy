@@ -36,6 +36,15 @@ var (
 	// apiID is an id of the Anthropic API: a prefix, then 24 base62 characters
 	// starting with 0.
 	apiID = regexp.MustCompile(`(?:srvtoolu|toolu|msg|req)_0[0-9A-Za-z]{23}`)
+	// codexID is an id of the Responses API, which a session run through ccgp
+	// on Codex holds: tool calls call_<32 hex>, replies resp_<50 hex>, items
+	// fc_/rs_. 20 to 64 letters and digits, a digit among them (call_something
+	// in code is a name).
+	codexID = regexp.MustCompile(`(?:call|resp|fc|rs)_[0-9A-Za-z]{20,64}`)
+	// shortText is how Claude Code names a background task or a subagent in
+	// text, often long before the id field: "with ID: b…", ".../tasks/b….output",
+	// "<task-id>b…</task-id>", "agentId: a…".
+	shortText = regexp.MustCompile(`(?:with ID: |<task-id>|agentId: |tasks[\\/]+)([A-Za-z0-9]{6,24})(?:</task-id>|\.output|[^A-Za-z0-9]|$)`)
 	// shortField is a field holding the short id of a subagent or a task.
 	shortField = regexp.MustCompile(`"(?:agentId|agent_id|[A-Za-z]*[Tt]ask_?[Ii]d|task_id|bash_id|bashId|shell_id|shellId)"\s*:\s*"([A-Za-z0-9]{6,24})"`)
 	shortName  = regexp.MustCompile(`^(?:agent-)?([A-Za-z0-9]{6,24})(?:\.[A-Za-z]+)+$`)
@@ -112,6 +121,14 @@ func (m *forkIDs) scan(path string) error {
 		for _, sm := range uuidValue.FindAllSubmatch(line, -1) {
 			m.uuids[strings.ToLower(string(sm[1]))] = true
 		}
+		// Named in text before any field does: kept from the first mention, so
+		// a later run, when the field has come, maps the earlier lines the same.
+		if bytes.Contains(line, []byte("with ID: ")) || bytes.Contains(line, []byte("<task-id>")) ||
+			bytes.Contains(line, []byte("agentId: ")) || bytes.Contains(line, []byte(".output")) {
+			for _, sm := range shortText.FindAllSubmatch(line, -1) {
+				m.add(string(sm[1]))
+			}
+		}
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -136,6 +153,18 @@ func (m *forkIDs) line(b []byte) []byte {
 	b = replaceAt(b, apiID.FindAllIndex(b, -1), func(id []byte) []byte {
 		i := bytes.IndexByte(id, '_') + 3 // prefix_01 stays
 		return append(append([]byte{}, id[:i]...), derive(m.fid, string(id), base62, len(id)-i)...)
+	})
+	b = replaceAt(b, codexID.FindAllIndex(b, -1), func(id []byte) []byte {
+		i := bytes.IndexByte(id, '_') + 1
+		body := id[i:]
+		if bytes.IndexFunc(body, func(r rune) bool { return r >= '0' && r <= '9' }) < 0 {
+			return id // a name, not an id
+		}
+		alphabet := base62
+		if len(bytes.Trim(body, hexDigits)) == 0 {
+			alphabet = hexDigits
+		}
+		return append(append([]byte{}, id[:i]...), derive(m.fid, string(id), alphabet, len(body))...)
 	})
 	if len(m.short) > 0 {
 		b = m.shortIDs(b)
@@ -208,8 +237,8 @@ func derive(fid, old, alphabet string, n int) string {
 	return string(out)
 }
 
-// replaceAt replaces the matches at idx that do not run on into a letter or
-// digit.
+// replaceAt replaces the matches at idx that stand alone: no letter or digit
+// right after, none right before (but the letter of a JSON escape: \ncall_…).
 func replaceAt(b []byte, idx [][]int, fn func([]byte) []byte) []byte {
 	if len(idx) == 0 {
 		return b
@@ -218,6 +247,9 @@ func replaceAt(b []byte, idx [][]int, fn func([]byte) []byte) []byte {
 	last := 0
 	for _, ix := range idx {
 		if ix[1] < len(b) && isAlnum(b[ix[1]]) {
+			continue
+		}
+		if s := ix[0]; s > 0 && isAlnum(b[s-1]) && (s < 2 || b[s-2] != '\\' || strings.IndexByte("nrtbf", b[s-1]) < 0) {
 			continue
 		}
 		out = append(out, b[last:ix[0]]...)
