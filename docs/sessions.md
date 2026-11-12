@@ -146,6 +146,22 @@ Claude Code writes one line per content block, chained by `parentUuid`; a line l
 children are re-attached to its parent, so the conversation stays connected. Every other line is copied byte
 for byte.
 
+## A failed end is left out
+
+A session can end in turns that got no reply: Claude Code writes `API Error: …` in place of the answer (a usage
+limit, a server error), often once per tick of a scheduled prompt (`/loop`, a babysit cron) that kept firing while
+the limit lasted. A copy (plain, `--fork` or `--force`) leaves that end out and goes on from the last real exchange,
+so the copy resumes there. The report says `left out its failed end: N API errors with no reply after them`.
+
+The end left out is what follows the last line of the conversation (a prompt you typed, a reply, a tool result,
+an attachment, a task notification) and the session state written right after it (title, mode, last prompt). It
+holds only API error messages, the records of the requests that failed, the turn durations and scheduled prompts
+around them. Nothing is left out when that part holds no API error, when it is longer than 64 MiB, or when the
+transcript has no other line. Only the session's own transcript is looked at, not its subagents'.
+
+The rule stays append-only: once the session goes on, the errors are no longer its end and come along with the
+next copy. A copy made earlier that already holds the failed end, or part of it, is `unchanged`, not `ahead`.
+
 ## Boundaries
 
 `claude` as the **source** only reads your Claude Code directory. `claude` as the **destination** is the only

@@ -349,7 +349,7 @@ func TestForkIDIsAStableUUID(t *testing.T) {
 func swapAll(t *testing.T, in string, sw *forkIDs, bufSize int) string {
 	t.Helper()
 	var out strings.Builder
-	r := newSwapReader(strings.NewReader(in), sw.line)
+	r := newSwapReader(strings.NewReader(in), noErr(sw.line))
 	if _, err := io.CopyBuffer(struct{ io.Writer }{&out}, struct{ io.Reader }{r}, make([]byte, bufSize)); err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestSwapReaderWithoutAnIDPassesThrough(t *testing.T) {
 
 func TestSwapReaderReportsTheSourceError(t *testing.T) {
 	boom := errors.New("boom")
-	r := newSwapReader(io.MultiReader(strings.NewReader("OLD\nOL"), iotest.ErrReader(boom)), (&forkIDs{old: "OLD", fid: "NEW"}).line)
+	r := newSwapReader(io.MultiReader(strings.NewReader("OLD\nOL"), iotest.ErrReader(boom)), noErr((&forkIDs{old: "OLD", fid: "NEW"}).line))
 	got, err := io.ReadAll(r)
 	if !errors.Is(err, boom) || string(got) != "NEW\nOL" {
 		t.Errorf("got %q, %v; want the data read before the error, then the error", got, err)
@@ -470,4 +470,9 @@ func TestAnIdInItsOwnFolderIsSyncedThere(t *testing.T) {
 	if r := copyOne(t, p, Options{}); r.Status != Updated || r.Other != "" {
 		t.Errorf("result = %+v, want updated in its own folder", r)
 	}
+}
+
+// noErr is a line function that cannot fail, as swapReader takes it.
+func noErr(fn func([]byte) []byte) func([]byte) ([]byte, error) {
+	return func(b []byte) ([]byte, error) { return fn(b), nil }
 }

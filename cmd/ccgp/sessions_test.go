@@ -360,3 +360,36 @@ func TestCopySessionsReportsTheArtifacts(t *testing.T) {
 		}
 	}
 }
+
+func TestFailedNoteOnlyForAWrittenTranscript(t *testing.T) {
+	for _, st := range []sessions.Status{sessions.Copied, sessions.Updated, sessions.Forked, sessions.Replaced} {
+		if got := failedNote(sessions.Result{Status: st, Failed: 18}); got != "left out its failed end: 18 API errors with no reply after them" {
+			t.Errorf("%v: %q", st, got)
+		}
+	}
+	for _, r := range []sessions.Result{{Status: sessions.Copied}, {Status: sessions.Unchanged, Failed: 3}, {Status: sessions.Diverged, Failed: 3}} {
+		if got := failedNote(r); got != "" {
+			t.Errorf("%v with %d: %q", r.Status, r.Failed, got)
+		}
+	}
+}
+
+// The report line of a session says that its failed end was left out.
+func TestCopySessionsReportsTheFailedEnd(t *testing.T) {
+	src := endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
+	dst := endpoint{dir: t.TempDir(), label: "claude"}
+	reply := `{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n"
+	failed := `{"type":"assistant","uuid":"e1","parentUuid":"a1","isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"API Error: 502"}]}}` + "\n"
+	writeSession(t, src.dir, "D--proj", "s1", reply+failed+failed)
+	var out bytes.Buffer
+	if err := copySessions(&out, "send codex -> claude", src, dst, 1, sessions.Options{Project: "D--proj"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "(left out its failed end: 2 API errors with no reply after them)") {
+		t.Errorf("output:\n%s", out.String())
+	}
+	got, err := os.ReadFile(filepath.Join(dst.dir, "projects", "D--proj", "s1.jsonl"))
+	if err != nil || string(got) != reply {
+		t.Errorf("transcript %q, %v", got, err)
+	}
+}
