@@ -199,13 +199,59 @@ func TestForkDoesNotCrossTheProjectOfAnotherSession(t *testing.T) {
 	}
 }
 
-func TestForkAndForceExcludeEachOther(t *testing.T) {
+// Fork with Force: the original is left alone, a fork that went its own way
+// (an earlier ccgp wrote it otherwise, or it was continued) is replaced and
+// kept as a backup.
+func TestForkWithForceReplacesTheFork(t *testing.T) {
 	p := both(t)
-	if _, err := Copy(p.src, p.dst, 1, Options{Fork: true, Force: true}); err == nil {
-		t.Error("fork and force were both accepted")
+	orig := read(t, p.d)
+	fid := forkID(sid)
+	fpath := filepath.Join(p.dst, "projects", "a", fid+".jsonl")
+	put(t, fpath, entry(fid, "an older fork"), t0)
+
+	r := copyOne(t, p, Options{Fork: true})
+	if r.Status != Diverged || r.Fork != fid {
+		t.Fatalf("fork alone = %+v, want the fork left as it is", r)
 	}
-	if got := read(t, p.d); got != entry(sid, "one")+entry(sid, "from-destination") {
-		t.Errorf("the destination was touched: %q", got)
+	r = copyOne(t, p, Options{Fork: true, Force: true})
+	if r.Status != Forked || r.Fork != fid || r.Backup == "" {
+		t.Fatalf("fork with force = %+v, want the fork replaced", r)
+	}
+	if got := read(t, p.d); got != orig {
+		t.Errorf("the original was touched: %q", got)
+	}
+	if got := read(t, fpath); got != entry(fid, "one")+entry(fid, "from-source") {
+		t.Errorf("fork = %q", got)
+	}
+	if got := read(t, r.Backup); got != entry(fid, "an older fork") {
+		t.Errorf("backup = %q", got)
+	}
+	if b := backups(t, filepath.Join(p.dst, "projects", "a")); len(b) != 1 {
+		t.Errorf("backups = %v, want only the fork's", b)
+	}
+	if r = copyOne(t, p, Options{Fork: true, Force: true}); r.Status != Unchanged {
+		t.Errorf("rerun = %+v", r)
+	}
+}
+
+// Fork with Force on a session that did not diverge: an ordinary copy, the
+// destination's other files are not replaced.
+func TestForkWithForceOnAnUpdateReplacesNothing(t *testing.T) {
+	p := pair{src: t.TempDir(), dst: t.TempDir()}
+	p.s = filepath.Join(p.src, "projects", "a", sid+".jsonl")
+	p.d = filepath.Join(p.dst, "projects", "a", sid+".jsonl")
+	put(t, p.s, entry(sid, "one")+entry(sid, "two"), t0)
+	put(t, p.d, entry(sid, "one"), t0)
+	put(t, filepath.Join(p.src, "projects", "a", sid, "tool-results", "r.txt"), "source", t0)
+	side := filepath.Join(p.dst, "projects", "a", sid, "tool-results", "r.txt")
+	put(t, side, "destination", t0)
+
+	r := copyOne(t, p, Options{Fork: true, Force: true})
+	if r.Status != Updated || r.Fork != "" || r.Backup != "" {
+		t.Fatalf("result = %+v, want updated", r)
+	}
+	if got := read(t, side); got != "destination" {
+		t.Errorf("sidecar file replaced: %q", got)
 	}
 }
 

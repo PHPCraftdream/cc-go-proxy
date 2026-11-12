@@ -176,9 +176,7 @@ func countInput(title, flag string, args ...string) *input {
 			}
 			list = append(list, v)
 		}
-		if flag != "" {
-			list = append(list, flag)
-		}
+		list = append(list, strings.Fields(flag)...)
 		return list, nil
 	})
 }
@@ -199,6 +197,7 @@ func sessionModeMenu(title string, args ...string) *menu {
 				item("copy", "copy; leave a diverged session as it is", ""),
 				item("fork", "copy; keep a diverged session as a new session (--fork)", "--fork"),
 				item("force", "copy; replace a diverged one, the old file is kept (--force)", "--force"),
+				item("forkforce", "copy; keep a diverged one as a new session, written afresh (--fork --force)", "--fork --force"),
 			}
 		},
 	}

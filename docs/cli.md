@@ -444,7 +444,8 @@ It needs `config.ktav`; in the env-only mode (no config file, `PROXY_TOKEN` in t
 `--send <from> <to> [count] [--fork|--force]`, `--import <profile> [count] [--fork|--force]`,
 `--export <profile> [count] [--fork|--force]`: see [sessions](sessions.md). A session the destination already has and
 that went on differently ("diverged") is skipped, unless `--fork` writes it as a new session next to the old one or
-`--force` replaces the destination (the old file is kept as `.bak-<time>`).
+`--force` replaces the destination (the old file is kept as `.bak-<time>`); both together replace an earlier fork
+that went its own way, never the original.
 
 ```sh
 cd ~/projects/app

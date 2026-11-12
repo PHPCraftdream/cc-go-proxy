@@ -31,15 +31,13 @@ func TestSplitSessionFlags(t *testing.T) {
 		{[]string{"--fork", "zai", "3"}, []string{"zai", "3"}, true, false},
 		{[]string{"claude", "--force", "codex", "2"}, []string{"claude", "codex", "2"}, false, true},
 		{[]string{"claude", "codex", "--force"}, []string{"claude", "codex"}, false, true},
+		{[]string{"zai", "--fork", "--force"}, []string{"zai"}, true, true},
 		{nil, nil, false, false},
 	} {
-		rest, fork, force, err := splitSessionFlags(tc.args)
-		if err != nil || !reflect.DeepEqual(rest, tc.rest) || fork != tc.fork || force != tc.force {
-			t.Errorf("%v -> %v fork=%v force=%v err=%v; want %v fork=%v force=%v", tc.args, rest, fork, force, err, tc.rest, tc.fork, tc.force)
+		rest, fork, force := splitSessionFlags(tc.args)
+		if !reflect.DeepEqual(rest, tc.rest) || fork != tc.fork || force != tc.force {
+			t.Errorf("%v -> %v fork=%v force=%v; want %v fork=%v force=%v", tc.args, rest, fork, force, tc.rest, tc.fork, tc.force)
 		}
-	}
-	if _, _, _, err := splitSessionFlags([]string{"zai", "--fork", "--force"}); err == nil || !strings.Contains(err.Error(), "exclude each other") {
-		t.Errorf("both flags: %v", err)
 	}
 }
 
@@ -56,18 +54,10 @@ func TestSessionCommandsTakeTheFlagsAnywhere(t *testing.T) {
 		{"export", []string{"--force", "codex"}, "codex", "claude", 10},
 		{"send", []string{"claude", "--fork", "codex", "2"}, "claude", "codex", 2},
 	} {
-		rest, _, _, err := splitSessionFlags(tc.args)
-		if err != nil {
-			t.Fatal(err)
-		}
+		rest, _, _ := splitSessionFlags(tc.args)
 		from, to, n, err := parseSendCommand(tc.kind, rest)
 		if err != nil || from != tc.from || to != tc.to || n != tc.n {
 			t.Errorf("%s %v -> %q %q %d %v; want %q %q %d", tc.kind, tc.args, from, to, n, err, tc.from, tc.to, tc.n)
-		}
-	}
-	for _, kind := range []string{"import", "export", "send"} {
-		if err := sessionsCmd(kind, []string{"a", "b", "--fork", "--force"}); err == nil || !strings.Contains(err.Error(), "exclude each other") {
-			t.Errorf("%s with both flags: %v", kind, err)
 		}
 	}
 }

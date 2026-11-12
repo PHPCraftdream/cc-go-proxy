@@ -13,15 +13,16 @@ import (
 
 // Lines as Claude Code writes them, cut down to what failedTail looks at.
 const (
-	lPrompt   = `{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}` + "\n"
-	lReply    = `{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
-	lResult   = `{"type":"user","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n"
-	lAttach   = `{"type":"attachment","uuid":"at1","parentUuid":"u2","attachment":{"type":"hook_success"}}` + "\n"
-	lState    = `{"type":"last-prompt","lastPrompt":"hi","leafUuid":"u1"}` + "\n" + `{"type":"ai-title","aiTitle":"Greeting"}` + "\n"
-	lRequest  = `{"type":"api-request","id":"r1","base":"r0"}` + "\n"
-	lError    = `{"type":"assistant","uuid":"e1","parentUuid":"at1","isApiErrorMessage":true,"apiErrorStatus":502,"message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"API Error: 502 codex: usage_limit_reached"}]}}` + "\n"
-	lDuration = `{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"e1"}` + "\n"
-	lTick     = `{"type":"user","uuid":"t1","parentUuid":"s1","isMeta":true,"turnOrigin":"scheduled","message":{"role":"user","content":"# tick"}}` + "\n"
+	lPrompt    = `{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}` + "\n"
+	lReply     = `{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
+	lResult    = `{"type":"user","uuid":"u2","parentUuid":"a1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n"
+	lAttach    = `{"type":"attachment","uuid":"at1","parentUuid":"u2","attachment":{"type":"hook_success"}}` + "\n"
+	lState     = `{"type":"last-prompt","lastPrompt":"hi","leafUuid":"u1"}` + "\n" + `{"type":"ai-title","aiTitle":"Greeting"}` + "\n"
+	lRequest   = `{"type":"api-request","id":"r1","base":"r0"}` + "\n"
+	lError     = `{"type":"assistant","uuid":"e1","parentUuid":"at1","isApiErrorMessage":true,"apiErrorStatus":502,"message":{"role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"API Error: 502 codex: usage_limit_reached"}]}}` + "\n"
+	lDuration  = `{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"e1"}` + "\n"
+	lInterrupt = `{"type":"user","uuid":"i1","parentUuid":"d1","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}` + "\n"
+	lTick      = `{"type":"user","uuid":"t1","parentUuid":"s1","isMeta":true,"turnOrigin":"scheduled","message":{"role":"user","content":"# tick"}}` + "\n"
 )
 
 // scheduledTurn is a turn of a scheduled prompt that got an API error.
@@ -69,6 +70,12 @@ func TestClassifyTail(t *testing.T) {
 		{`{"type":"last-prompt","lastPrompt":"x","leafUuid":"u1"}`, tailState},
 		{`{"type":"relocated","relocatedCwd":"D:\\x"}`, tailState},
 		{"", tailState},
+		{`{"type":"user","uuid":"x","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`, tailNoise},
+		{`{"type":"user","uuid":"x","message":{"content":"[Request interrupted by user for tool use]"}}`, tailNoise},
+		{`{"type":"user","uuid":"x","message":{"content":[{"type":"text","text":"[Request interrupted by user]"},{"type":"text","text":"and more"}]}}`, tailUseful},
+		{`{"type":"user","uuid":"x","message":{"content":"[Request interrupted by user] but go on"}}`, tailUseful},
+		{`{"type":"api-request-blob","hash":"h","message":"[Request interrupted by user]"}`, tailNoise},
+		{`{"type":"user","uuid":"x","message":"[Request interrupted by user]"}`, tailUseful},
 		{lPrompt, tailUseful},
 		{lReply, tailUseful},
 		{lResult, tailUseful},
@@ -101,6 +108,9 @@ func TestFailedTail(t *testing.T) {
 		{"nothing but failures", failedEnd, "", 0},
 		{"empty", "", "", 0},
 		{"a line it cannot read ends the failed end", kept + "garbage\n" + failedEnd, kept + "garbage\n", 3},
+		// Seen live: errors, then a /compact the user stopped with Esc.
+		{"an interrupt after the errors", kept + failedEnd + lRequest + lInterrupt + lState, kept, 3},
+		{"an interrupt alone", kept + lInterrupt + lState, "", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			keep := c.keep
