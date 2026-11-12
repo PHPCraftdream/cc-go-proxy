@@ -101,15 +101,25 @@ func TestWatchClientGoneIgnoresAConnectionThatIsNotTCP(t *testing.T) {
 }
 
 // A request without streaming sends nothing until its reply is complete; when
-// its client goes away meanwhile, the upstream call is canceled and the log says so.
+// its client goes away meanwhile, the upstream call is canceled and the log says
+// so, whether the backend's reply had started (headers and a first event in) or
+// not (the client left while ccgp waited for the headers: once only a race of
+// the first case on a slow runner, which left no canceled line).
 func TestNonStreamReplyIsCanceledWhenTheClientGoesAway(t *testing.T) {
+	t.Run("reply started", func(t *testing.T) { nonStreamClientLeaves(t, true) })
+	t.Run("before the reply", func(t *testing.T) { nonStreamClientLeaves(t, false) })
+}
+
+func nonStreamClientLeaves(t *testing.T, started bool) {
 	received := make(chan struct{}, 1)
 	canceled := make(chan struct{}, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"))
-		w.(http.Flusher).Flush()
+		if started {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n"))
+			w.(http.Flusher).Flush()
+		}
 		received <- struct{}{}
 		select {
 		case <-r.Context().Done():
@@ -160,18 +170,19 @@ func TestNonStreamReplyIsCanceledWhenTheClientGoesAway(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the upstream call went on after the client left")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !strings.Contains(sl.String(), "non-stream reply canceled by client after") && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !strings.Contains(sl.String(), "non-stream reply canceled by client after") {
-		t.Errorf("log lacks the canceled line: %q", sl.String())
-	}
+	// The access line is printed when the handler returns, after its own lines.
+	deadline := time.Now().Add(10 * time.Second)
 	for !strings.Contains(al.String(), "POST") && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if !strings.Contains(al.String(), "| non-stream") {
 		t.Errorf("access line lacks the non-stream note: %q", al.String())
+	}
+	if !strings.Contains(sl.String(), "non-stream reply canceled by client after") {
+		t.Errorf("log lacks the canceled line: %q", sl.String())
+	}
+	if !started && !strings.Contains(sl.String(), "before the reply started") {
+		t.Errorf("log does not say the reply had not started: %q", sl.String())
 	}
 }
 

@@ -546,9 +546,20 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		resp, err = retry.callPrepared()
 	}
 	if err != nil {
+		// Canceled before ccgp's own cancel: the client of a non-stream request
+		// left (watchClientGone) before the backend's reply started.
+		left := ctx.Err() != nil
 		cancel()
 		if retry.websocket && ctx.Err() != nil {
 			trace.noteWSCanceled(ctx.Err())
+		}
+		if left {
+			what := "stream"
+			if !wantStream {
+				what = "non-stream reply"
+			}
+			logStreamCanceled(logOut, trace.start, what, cfg.Profile, probe.Model+" -> "+model,
+				joinNonEmpty("before the reply started", trace.connText()))
 		}
 		if errors.Is(err, oauth.ErrNotLoggedIn) || errors.Is(err, oauth.ErrReloginRequired) {
 			return anthropicError(c, fiber.StatusUnauthorized, "authentication_error",
