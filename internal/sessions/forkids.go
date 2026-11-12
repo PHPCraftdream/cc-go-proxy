@@ -35,15 +35,6 @@ type forkIDs struct {
 }
 
 var (
-	anyUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-	// apiID is an id of the Anthropic API: a prefix, then 24 base62 characters
-	// starting with 0.
-	apiID = regexp.MustCompile(`(?:srvtoolu|toolu|msg|req)_0[0-9A-Za-z]{23}`)
-	// codexID is an id of the Responses API, which a session run through ccgp
-	// on Codex holds: tool calls call_<32 hex>, replies resp_<50 hex>, items
-	// fc_/rs_. 20 to 64 letters and digits, a digit among them (call_something
-	// in code is a name).
-	codexID = regexp.MustCompile(`(?:call|resp|fc|rs)_[0-9A-Za-z]{20,64}`)
 	// shortText is how Claude Code names a background task or a subagent in
 	// text, often long before the id field: "with ID: b…", ".../tasks/b….output",
 	// "<task-id>b…</task-id>", "agentId: a…".
@@ -51,8 +42,6 @@ var (
 	// shortField is a field holding the short id of a subagent or a task.
 	shortField = regexp.MustCompile(`"(?:agentId|agent_id|[A-Za-z]*[Tt]ask_?[Ii]d|task_id|bash_id|bashId|shell_id|shellId)"\s*:\s*"([A-Za-z0-9]{6,24})"`)
 	shortName  = regexp.MustCompile(`^(?:agent-)?([A-Za-z0-9]{6,24})(?:\.[A-Za-z]+)+$`)
-	// uuidValue is a uuid that is a whole JSON string: a field's value.
-	uuidValue = regexp.MustCompile(`"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"`)
 	// letterTask is a background task id of letters only (b + 8).
 	letterTask = regexp.MustCompile(`^b[a-z]{8}$`)
 )
@@ -116,14 +105,12 @@ func (m *forkIDs) scan(path string) error {
 	br := bufio.NewReaderSize(f, copyBuf)
 	for {
 		line, err := br.ReadBytes('\n')
-		if bytes.Contains(line, []byte(`d"`)) || bytes.Contains(line, []byte(`D"`)) {
+		if hasShortField(line) {
 			for _, sm := range shortField.FindAllSubmatch(line, -1) {
 				m.add(string(sm[1]))
 			}
 		}
-		for _, sm := range uuidValue.FindAllSubmatch(line, -1) {
-			m.uuids[strings.ToLower(string(sm[1]))] = true
-		}
+		collectUUIDValues(line, m.uuids)
 		if bytes.Contains(line, []byte(`"slug"`)) {
 			for _, sm := range slugField.FindAllSubmatch(line, -1) {
 				if s := string(sm[1]); m.slugs[s] == "" {
@@ -153,29 +140,10 @@ func (m *forkIDs) line(b []byte) []byte {
 	if m.old != "" && bytes.Contains(b, []byte(m.old)) {
 		b = bytes.ReplaceAll(b, []byte(m.old), []byte(m.fid))
 	}
-	b = anyUUID.ReplaceAllFunc(b, func(u []byte) []byte {
-		s := strings.ToLower(string(u))
-		if !m.uuids[s] {
-			return u
-		}
-		return []byte(forkUUID(m.fid, s))
-	})
-	b = replaceAt(b, apiID.FindAllIndex(b, -1), func(id []byte) []byte {
-		i := bytes.IndexByte(id, '_') + 3 // prefix_01 stays
-		return append(append([]byte{}, id[:i]...), derive(m.fid, string(id), base62, len(id)-i)...)
-	})
-	b = replaceAt(b, codexID.FindAllIndex(b, -1), func(id []byte) []byte {
-		i := bytes.IndexByte(id, '_') + 1
-		body := id[i:]
-		if bytes.IndexFunc(body, func(r rune) bool { return r >= '0' && r <= '9' }) < 0 {
-			return id // a name, not an id
-		}
-		alphabet := base62
-		if len(bytes.Trim(body, hexDigits)) == 0 {
-			alphabet = hexDigits
-		}
-		return append(append([]byte{}, id[:i]...), derive(m.fid, string(id), alphabet, len(body))...)
-	})
+	if len(m.uuids) > 0 {
+		b = m.mapUUIDs(b)
+	}
+	b = m.mapAPIIDs(b)
 	if len(m.short) > 0 {
 		b = m.shortIDs(b)
 	}
@@ -276,28 +244,6 @@ func derive(fid, old, alphabet string, n int) string {
 		}
 	}
 	return string(out)
-}
-
-// replaceAt replaces the matches at idx that stand alone: no letter or digit
-// right after, none right before (but the letter of a JSON escape: \ncall_…).
-func replaceAt(b []byte, idx [][]int, fn func([]byte) []byte) []byte {
-	if len(idx) == 0 {
-		return b
-	}
-	var out []byte
-	last := 0
-	for _, ix := range idx {
-		if ix[1] < len(b) && isAlnum(b[ix[1]]) {
-			continue
-		}
-		if s := ix[0]; s > 0 && isAlnum(b[s-1]) && (s < 2 || b[s-2] != '\\' || strings.IndexByte("nrtbf", b[s-1]) < 0) {
-			continue
-		}
-		out = append(out, b[last:ix[0]]...)
-		out = append(out, fn(b[ix[0]:ix[1]])...)
-		last = ix[1]
-	}
-	return append(out, b[last:]...)
 }
 
 func isAlnum(c byte) bool {
