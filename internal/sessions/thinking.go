@@ -272,45 +272,6 @@ func (s *thinkingStripper) finish(seg []byte, note any) ([]byte, error) {
 	return append(out, seg[len(line):]...), nil
 }
 
-// linksTo reports whether line may refer to a dropped line through one of the
-// link keys. It over-approximates (a hit only costs a full parse) but never
-// misses a key whose value is a plain string.
-func linksTo(line []byte, redirect map[string]json.RawMessage) bool {
-	if len(redirect) == 0 {
-		return false
-	}
-	for _, k := range linkKeys {
-		mark := []byte(`"` + k + `"`)
-		for rest := line; ; {
-			i := bytes.Index(rest, mark)
-			if i < 0 {
-				break
-			}
-			rest = rest[i+len(mark):]
-			v := bytes.TrimLeft(rest, " \t")
-			if len(v) == 0 || v[0] != ':' {
-				continue
-			}
-			v = bytes.TrimLeft(v[1:], " \t")
-			if len(v) == 0 || v[0] != '"' {
-				continue
-			}
-			v = v[1:]
-			end := bytes.IndexByte(v, '"')
-			if end < 0 {
-				return true // malformed: let the parser decide
-			}
-			if _, ok := redirect[string(v[:end])]; ok {
-				return true
-			}
-			if bytes.IndexByte(v[:end], '\\') >= 0 {
-				return true // escaped value: not a plain uuid
-			}
-		}
-	}
-	return false
-}
-
 func isThinking(block json.RawMessage) bool {
 	var b struct {
 		Type string `json:"type"`

@@ -66,7 +66,7 @@ func isShortKey(k []byte) bool {
 		return false
 	}
 	for _, c := range rest[:len(rest)-4] {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
 			return false
 		}
 	}

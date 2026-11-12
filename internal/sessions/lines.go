@@ -20,14 +20,6 @@ func workers() int { return min(runtime.GOMAXPROCS(0), 8) }
 // follows in order (nil: none).
 type lineFn func(line []byte) ([]byte, any)
 
-// plainLineFn is a lineFn of fn, without notes.
-func plainLineFn(fn func([]byte) []byte) lineFn {
-	if fn == nil {
-		return nil
-	}
-	return func(b []byte) ([]byte, any) { return fn(b), nil }
-}
-
 // lineSource yields the lines of a stream, each passed through a lineFn. A
 // line is valid until the next call. n is the line's length in the stream; out
 // is empty when the lineFn drops it. err comes with the last line or after it.

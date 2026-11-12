@@ -314,16 +314,6 @@ func replaceAllTo(dst, b []byte, old, as string) ([]byte, bool) {
 	return append(dst, b...), changed
 }
 
-// replaceWord replaces old where it stands alone: not inside a longer run of
-// letters, digits, '-' and '_' (another slug, or the fork's own, which begins
-// with it).
-func replaceWord(b []byte, old, as string) []byte {
-	if out, changed := replaceWordTo(nil, b, old, as); changed {
-		return out
-	}
-	return b
-}
-
 // replaceWordTo is replaceWord appending to dst; changed is false when
 // nothing was replaced (dst is then to be ignored).
 func replaceWordTo(dst, b []byte, old, as string) ([]byte, bool) {
@@ -352,15 +342,6 @@ func replaceWordTo(dst, b []byte, old, as string) ([]byte, bool) {
 
 // name gives the ids in a path of the session's folder their fork ids.
 func (m *forkIDs) name(rel string) string { return string(m.line([]byte(rel))) }
-
-// shortIDs replaces each run of letters and digits that is a known short id. A
-// run glued to a JSON escape (\n, \t, …) is the id after it.
-func (m *forkIDs) shortIDs(b []byte) []byte {
-	if out, changed := m.shortIDsTo(nil, b); changed {
-		return out
-	}
-	return b
-}
 
 // shortIDsTo is shortIDs appending to dst; changed is false when nothing was
 // replaced (dst is then to be ignored).

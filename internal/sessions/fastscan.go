@@ -60,14 +60,6 @@ func collectUUIDValues(b []byte, set map[string]bool) {
 	})
 }
 
-// mapUUIDs gives each uuid of b that is in set its fork id.
-func (m *forkIDs) mapUUIDs(b []byte) []byte {
-	if out, changed := m.mapUUIDsTo(nil, b); changed {
-		return out
-	}
-	return b
-}
-
 // mapUUIDsTo is mapUUIDs appending to dst; changed is false when nothing was
 // replaced (dst is then to be ignored).
 func (m *forkIDs) mapUUIDsTo(dst, b []byte) ([]byte, bool) {
@@ -98,17 +90,6 @@ func (m *forkIDs) mapUUIDsTo(dst, b []byte) ([]byte, bool) {
 // (toolu_01…, 24 characters after the '_', starting with 0) and the Responses
 // API's (call_…, resp_…, 20 to 64 characters with a digit among them).
 var apiPrefixes = map[string]bool{"srvtoolu": true, "toolu": true, "msg": true, "req": true, "call": false, "resp": false, "fc": false, "rs": false}
-
-// mapAPIIDs gives each API id of b its fork id: the prefix, and for the
-// Anthropic API the 0 and the next character, stay; the rest is derived in the
-// alphabet it was in. An id must stand alone: no letter or digit right after
-// it, none right before (but the letter of a JSON escape: \ncall_…).
-func (m *forkIDs) mapAPIIDs(b []byte) []byte {
-	if out, changed := m.mapAPIIDsTo(nil, b); changed {
-		return out
-	}
-	return b
-}
 
 // mapAPIIDsTo is mapAPIIDs appending to dst; changed is false when nothing
 // was replaced (dst is then to be ignored).
