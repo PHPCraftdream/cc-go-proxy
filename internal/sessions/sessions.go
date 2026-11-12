@@ -2,9 +2,10 @@
 // directories: the user's own one and a ccgp profile's isolated one.
 //
 // A session is projects/<project>/<id>.jsonl plus the optional sibling
-// directory projects/<project>/<id>/ (tool results, subagent transcripts).
-// Nothing else is touched, in particular no credentials, prompt history or
-// live-process registry.
+// directory projects/<project>/<id>/ (tool results, subagent transcripts), and
+// what Claude Code keeps of it elsewhere: its task list, the file versions of
+// /rewind and its plan (artifacts.go). Nothing else is touched, in particular
+// no credentials, prompt history, session environment or live-process registry.
 package sessions
 
 import (
@@ -109,6 +110,9 @@ type Result struct {
 	Session Session
 	Status  Status
 	Files   int    // sidecar files written
+	Tasks   int    // files of the task list written or taken out (tasks/<id>/)
+	History int    // file versions written (file-history/<id>/)
+	Plans   int    // plan files written (plans/<slug>.md)
 	Removed int    // thinking blocks removed
 	Fork    string // id of the fork the session was written as (Options.Fork)
 	Backup  string // path the replaced destination was kept at (Options.Force)
@@ -322,6 +326,17 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	}
 	res.Status, res.Removed, res.Backup = st, removed, backup
 	if st.Skipped() {
+		return res
+	}
+
+	// Tasks, file versions and the plan live outside the transcript.
+	as := s.ID
+	if res.Fork != "" {
+		as = res.Fork
+	}
+	srcDir := filepath.Dir(filepath.Dir(filepath.Dir(s.Path))) // <config dir>/projects/<project>/<id>.jsonl
+	if err = syncArtifacts(srcDir, dstDir, s, as, opt, &res); err != nil {
+		res.Err = err
 		return res
 	}
 

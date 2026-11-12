@@ -29,6 +29,9 @@ type forkIDs struct {
 	old, fid string
 	uuids    map[string]bool // the session's uuids, lower case
 	short    map[string]bool // short ids, to be replaced wherever they stand alone
+	// slugs maps each slug of the session (the name of its plan file) to the
+	// fork's: one plan file for two sessions would be written by both.
+	slugs map[string]string
 }
 
 var (
@@ -57,7 +60,7 @@ var (
 // newForkIDs collects the short ids of the session: its transcript and the
 // files of its folder side (which may not exist).
 func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
-	m := &forkIDs{old: old, fid: fid, uuids: map[string]bool{}, short: map[string]bool{}}
+	m := &forkIDs{old: old, fid: fid, uuids: map[string]bool{}, short: map[string]bool{}, slugs: map[string]string{}}
 	if err := m.scan(transcript); err != nil {
 		return nil, err
 	}
@@ -121,6 +124,13 @@ func (m *forkIDs) scan(path string) error {
 		for _, sm := range uuidValue.FindAllSubmatch(line, -1) {
 			m.uuids[strings.ToLower(string(sm[1]))] = true
 		}
+		if bytes.Contains(line, []byte(`"slug"`)) {
+			for _, sm := range slugField.FindAllSubmatch(line, -1) {
+				if s := string(sm[1]); m.slugs[s] == "" {
+					m.slugs[s] = s + "-" + m.fid[:min(8, len(m.fid))]
+				}
+			}
+		}
 		// Named in text before any field does: kept from the first mention, so
 		// a later run, when the field has come, maps the earlier lines the same.
 		if bytes.Contains(line, []byte("with ID: ")) || bytes.Contains(line, []byte("<task-id>")) ||
@@ -169,7 +179,38 @@ func (m *forkIDs) line(b []byte) []byte {
 	if len(m.short) > 0 {
 		b = m.shortIDs(b)
 	}
+	for old, as := range m.slugs {
+		if bytes.Contains(b, []byte(old)) {
+			b = replaceWord(b, old, as)
+		}
+	}
 	return b
+}
+
+// replaceWord replaces old where it stands alone: not inside a longer run of
+// letters, digits, '-' and '_' (another slug, or the fork's own, which begins
+// with it).
+func replaceWord(b []byte, old, as string) []byte {
+	word := func(c byte) bool { return isAlnum(c) || c == '-' || c == '_' }
+	var out []byte
+	last := 0
+	for i := 0; ; {
+		j := bytes.Index(b[i:], []byte(old))
+		if j < 0 {
+			break
+		}
+		at, end := i+j, i+j+len(old)
+		i = end
+		if at > 0 && word(b[at-1]) || end < len(b) && word(b[end]) {
+			continue
+		}
+		out = append(append(out, b[last:at]...), as...)
+		last = end
+	}
+	if out == nil {
+		return b
+	}
+	return append(out, b[last:]...)
 }
 
 // name gives the ids in a path of the session's folder their fork ids.

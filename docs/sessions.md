@@ -41,8 +41,23 @@ copy; bring a session in on purpose with `ccgp --import <profile>`.
 ## What is copied
 
 `projects/<project>/<id>.jsonl` and the `<id>/` folder next to it (tool results, subagent transcripts), with the
-original modification time. Nothing else crosses: no credentials, no prompt history, no live-process registry,
-no `file-history` (so `/rewind` is unavailable for copied sessions).
+original modification time, and what Claude Code keeps of the session outside its transcript:
+
+| Artifact | Where | How it is copied |
+| --- | --- | --- |
+| the task list | `tasks/<id>/<n>.json`, `.highwatermark` | made the source's: a task that differs is written anew, one the source deleted is taken out; a file changed at the destination after the source's, and a task taken out, is kept as `<name>.bak-<time>` (Claude Code reads `*.json` only) |
+| file versions for `/rewind` | `file-history/<id>/<hash>@v<n>` | like the transcript: a missing version is written, one the destination holds differently is left alone (`--force`: replaced, the old one kept) |
+| the plan | `plans/<slug>.md`, the slug is in the transcript | written when it differs; one changed at the destination after the source's is kept as a backup first |
+
+They follow the transcript: a session the destination went its own way on (`ahead`, `diverged`, `elsewhere`) keeps its
+own tasks, versions and plan untouched, and a session copied before ccgp copied them gets them on the next run (the
+line says `task list: 36 files, file versions for /rewind: 3655, plan: 1`). A fork has them as its own: its task list
+and file versions under its id (task numbers as they are, file versions byte for byte), its plan under a slug of its
+own (`<slug>-<first 8 of its id>`, which its transcript names), so that the fork and the original, in one Claude Code,
+do not write the same plan.
+
+Nothing else crosses: no credentials, no prompt history, no live-process registry, no `session-env/<id>/` (hooks write
+it anew when a session starts or resumes, and a profile's holds ccgp's own environment).
 
 ## Safe to repeat
 

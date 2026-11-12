@@ -220,6 +220,9 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 		if s.Into != "" {
 			line += "  (of a subdirectory, written into " + s.Into + ")"
 		}
+		if note := artifactsNote(r); note != "" {
+			line += "  (" + note + ")"
+		}
 		switch {
 		case r.Err != nil:
 			failed++
@@ -291,6 +294,21 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 		return exitError(1)
 	}
 	return nil
+}
+
+// artifactsNote tells what came with the transcript from outside it.
+func artifactsNote(r sessions.Result) string {
+	var parts []string
+	if r.Tasks > 0 {
+		parts = append(parts, fmt.Sprintf("task list: %d files", r.Tasks))
+	}
+	if r.History > 0 {
+		parts = append(parts, fmt.Sprintf("file versions for /rewind: %d", r.History))
+	}
+	if r.Plans > 0 {
+		parts = append(parts, fmt.Sprintf("plan: %d", r.Plans))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func skipReason(r sessions.Result) string {
