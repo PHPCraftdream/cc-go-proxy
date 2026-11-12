@@ -322,7 +322,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	} else {
 		st, c, backup, err = place(s.Path, dst, true, orig, prog)
 	}
-	if opt.Fork && !(err == nil && (st == Diverged || st == Elsewhere)) {
+	if opt.Fork && (err != nil || st != Diverged && st != Elsewhere) {
 		opt.Force = false // not forked: the original's files stay too
 	}
 	if err == nil && (st == Diverged || st == Elsewhere) && opt.Fork {
