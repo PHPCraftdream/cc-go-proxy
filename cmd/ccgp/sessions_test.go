@@ -176,11 +176,14 @@ func TestShortID(t *testing.T) {
 }
 
 func TestSkipReasonNamesTheCause(t *testing.T) {
-	if got := skipReason(sessions.Ahead); !strings.Contains(got, "already has more") {
+	if got := skipReason(sessions.Result{Status: sessions.Ahead}); !strings.Contains(got, "already has more") {
 		t.Errorf("Ahead: %q", got)
 	}
-	if got := skipReason(sessions.Diverged); !strings.Contains(got, "not overwritten") {
+	if got := skipReason(sessions.Result{Status: sessions.Diverged}); !strings.Contains(got, "not overwritten") {
 		t.Errorf("Diverged: %q", got)
+	}
+	if got := skipReason(sessions.Result{Status: sessions.Elsewhere, Other: "D--x"}); !strings.Contains(got, "in D--x, for another directory") {
+		t.Errorf("Elsewhere: %q", got)
 	}
 }
 

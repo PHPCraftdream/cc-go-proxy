@@ -10,6 +10,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `ccgp --send` / `--import` / `--export`: a session whose id the destination holds in another project folder (Claude
+  Code moves a session into a worktree's folder on one side only) is no longer written with the same id next to it: it
+  is reported `elsewhere`, and `--fork` writes it under a new id. A fork into your own Claude Code ends with
+  `open it with: claude --resume <id>`.
 - The `stream failed` and `upstream retry` lines write the backend's error message once: in the raw event it reads
   `"(shown before)"`, and the reason is no longer cut at 300 bytes (a `cyber_policy` refusal was written twice, the
   first copy cut).

@@ -142,11 +142,13 @@ func TestCopySessionsForkReport(t *testing.T) {
 	}
 }
 
-func TestCopySessionsForkIntoClaudeHasNoResumeHint(t *testing.T) {
+func TestCopySessionsForkIntoClaudeSaysHowToOpenIt(t *testing.T) {
 	src, dst := diverge(t)
 	src, dst = dst, src // zai -> claude: the destination is the user's own Claude Code
 	out := report(t, src, dst, sessions.Options{Fork: true})
-	if !strings.Contains(out, "forked") || strings.Contains(out, "open a fork with") {
+	m := regexp.MustCompile(`new session ([0-9a-f-]{36})\)`).FindStringSubmatch(out)
+	if m == nil || !strings.Contains(out, "forked") || strings.Contains(out, "open a fork with: ccgp") ||
+		!strings.Contains(out, "open it with: claude --resume "+m[1]) {
 		t.Errorf("output:\n%s", out)
 	}
 }
@@ -234,5 +236,37 @@ func TestSessionsCmdForkAndForce(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(baks[0]); string(got) != mine {
 		t.Errorf("backup = %q, want what the profile had", got)
+	}
+}
+
+// The same id in another folder of the destination: not written, and the
+// report names the folder and --fork; with --fork it goes under a new id that
+// the report tells how to open in Claude Code.
+func TestCopySessionsIdInAnotherFolder(t *testing.T) {
+	src := endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
+	dst := endpoint{dir: t.TempDir(), label: "claude"}
+	writeSession(t, src.dir, "D--proj-worktrees-x", forkTestID, forkLine(forkTestID, "one")+forkLine(forkTestID, "new"))
+	writeSession(t, dst.dir, "D--proj", forkTestID, forkLine(forkTestID, "one")+forkLine(forkTestID, "old"))
+
+	out := report(t, src, dst, sessions.Options{})
+	for _, want := range []string{"elsewhere", "has a session of this id in D--proj", "0 written, 0 unchanged, 1 skipped",
+		"--fork writes it under a new id"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+
+	out = report(t, src, dst, sessions.Options{Fork: true})
+	m := regexp.MustCompile(`new session ([0-9a-f-]{36})\)`).FindStringSubmatch(out)
+	if m == nil || m[1] == forkTestID {
+		t.Fatalf("no new session named:\n%s", out)
+	}
+	for _, want := range []string{"forked", "1 written", "open it with: claude --resume " + m[1]} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--fork writes it") {
+		t.Errorf("hint after the choice was made:\n%s", out)
 	}
 }

@@ -57,6 +57,7 @@ Transcripts only grow, so ccgp compares as it copies, in a stream (gigabyte sess
 | `diverged` | Both sides changed differently; the destination is left alone. |
 | `forked` | `--fork`: it diverged, so the source was written as a new session next to the old one. |
 | `replaced` | `--force`: the destination was replaced; the old file is kept beside it. |
+| `elsewhere` | The destination has a session of this id in another project folder (another directory); nothing is written. `--fork` writes it under a new id. |
 
 Without a flag nothing is ever overwritten. A session still being written is copied up to its last complete line.
 
@@ -82,6 +83,12 @@ ccgp --send claude codex 1 --force   # take the source's version
   folder, so nothing is lost (a backup is not a session: `/resume` does not list it; rename it back to
   `<id>.jsonl` to return to it). It also applies to a destination that is `ahead`. Files of the session's folder
   (`<id>/`) that differ are replaced the same way, each with its own `.bak-<time>`.
+
+The same id can also sit in **another project folder** of the destination: Claude Code moves a session into the folder
+of a worktree it enters, on one side only. Its id is then taken by a different session there, and a copy with that id
+would make two sessions of one id. ccgp reports `elsewhere` (with the folder) and writes nothing, `--force` included;
+`--fork` writes it under a new id in the folder of the directory you run it in. Into your own Claude Code the run says
+`open it with: claude --resume <new id>`.
 
 Sessions that do not diverge are copied as always. The interface asks the same in the *Sessions* screens (copy / copy and
 fork / copy and force).
