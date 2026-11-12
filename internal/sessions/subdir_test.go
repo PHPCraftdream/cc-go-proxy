@@ -135,3 +135,72 @@ func TestASessionBegunInTheDirectoryAndMovedIntoAWorktreeIsItsOwn(t *testing.T) 
 		t.Error("not written into the directory's folder")
 	}
 }
+
+func relocatedEntry(id, cwd string) string {
+	c, _ := json.Marshal(cwd)
+	return `{"type":"relocated","relocatedCwd":` + string(c) + `,"sessionId":"` + id + `"}` + "\n"
+}
+
+func ownerEntry(id string) string {
+	return `{"type":"session-owner","accountUuid":"cccccccc-0000-4000-8000-000000000001","organizationUuid":"cccccccc-0000-4000-8000-000000000002","sessionId":"` + id + `"}` + "\n"
+}
+
+// Claude Code lists a session under the last relocatedCwd of its transcript:
+// one written into the directory's folder must say the directory, or the
+// directory's /resume hides it as a worktree's (seen live).
+func TestASessionWrittenIntoTheDirectorySaysItLivesThere(t *testing.T) {
+	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
+	wt := filepath.Join(dir, "worktrees", "x")
+	body := cwdEntry(sid2, dir, "begun here") + relocatedEntry(sid2, wt) + ownerEntry(sid2) +
+		cwdEntry(sid2, wt, `text that says {"type":"relocated","relocatedCwd":"elsewhere"}`) + relocatedEntry(sid2, wt)
+	put(t, filepath.Join(src, "projects", worktree, sid2+".jsonl"), body, t0)
+
+	res, err := Copy(src, dst, 1, Options{Project: home, Within: dir})
+	if err != nil || len(res) != 1 || res[0].Status != Copied {
+		t.Fatalf("results = %+v, %v", res, err)
+	}
+	want := strings.ReplaceAll(body, relocatedEntry(sid2, wt), relocatedEntry(sid2, dir))
+	if got := read(t, filepath.Join(dst, "projects", home, sid2+".jsonl")); got != want {
+		t.Errorf("copy =\n%s\nwant\n%s", got, want)
+	}
+	if res, _ = Copy(src, dst, 1, Options{Project: home, Within: dir}); res[0].Status != Unchanged {
+		t.Errorf("rerun = %+v", res[0])
+	}
+}
+
+// A session of the directory's own folder keeps what it says.
+func TestASessionOfItsOwnFolderKeepsItsRelocation(t *testing.T) {
+	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
+	body := cwdEntry(sid, dir, "x") + relocatedEntry(sid, filepath.Join(dir, "worktrees", "x")) + ownerEntry(sid)
+	put(t, filepath.Join(src, "projects", home, sid+".jsonl"), body, t0)
+	if _, err := Copy(src, dst, 1, Options{Project: home, Within: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dst, "projects", home, sid+".jsonl")); got != body {
+		t.Errorf("copy = %q", got)
+	}
+}
+
+// A fork has no owner: Claude Code stamps it with the account that opens it.
+// (Its uuids would be mapped like every id, naming no account at all.)
+func TestAForkHasNoOwner(t *testing.T) {
+	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
+	wt := filepath.Join(dir, "worktrees", "x")
+	put(t, filepath.Join(src, "projects", worktree, sid2+".jsonl"),
+		cwdEntry(sid2, dir, "begun here")+ownerEntry(sid2)+relocatedEntry(sid2, wt)+ownerEntry(sid2), t0.Add(time.Hour))
+	put(t, filepath.Join(src, "projects", worktree, sid2, "subagents", "agent-a1.jsonl"), ownerEntry(sid2)+entry(sid2, "sub"), t0)
+	put(t, filepath.Join(dst, "projects", home, sid2+".jsonl"), cwdEntry(sid2, dir, "the original"), t0)
+
+	res, err := Copy(src, dst, 1, Options{Project: home, Within: dir, Fork: true})
+	if err != nil || len(res) != 1 || res[0].Status != Forked {
+		t.Fatalf("results = %+v, %v", res, err)
+	}
+	fid := forkID(sid2)
+	got := read(t, filepath.Join(dst, "projects", home, fid+".jsonl"))
+	if want := cwdEntry(fid, dir, "begun here") + relocatedEntry(fid, dir); got != want {
+		t.Errorf("fork =\n%s\nwant\n%s", got, want)
+	}
+	if got := read(t, filepath.Join(dst, "projects", home, fid, "subagents", "agent-a1.jsonl")); got != entry(fid, "sub") {
+		t.Errorf("subagent transcript = %q", got)
+	}
+}

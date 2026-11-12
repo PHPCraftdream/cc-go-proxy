@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -57,8 +58,8 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		}
 		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
 	}
-	if opt.rewrite != nil && (jsonl || rewritable(src)) {
-		in = newSwapReader(in, opt.rewrite)
+	if fn := lineRewrite(opt, jsonl, src); fn != nil {
+		in = newSwapReader(in, fn)
 	}
 	removed := 0
 	if jsonl && opt.StripThinking {
@@ -123,16 +124,74 @@ func uuidOf(s string) string {
 	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
 }
 
-// swapReader passes a file through forkIDs.line, line by line.
+// Marker lines of a transcript, as Claude Code writes them.
+var (
+	ownerLine     = []byte(`{"type":"session-owner"`)
+	relocatedLine = []byte(`{"type":"relocated"`)
+	relocatedKey  = []byte(`"relocatedCwd":`)
+)
+
+// lineRewrite is what a copy changes in the lines of src, nil for nothing:
+//   - a session written into the folder of opt.home (Session.Into) says it was
+//     relocated there: Claude Code lists a session under the last relocatedCwd
+//     of its transcript, before the cwd of its first lines, and the worktree
+//     the source names would hide it from the directory's /resume;
+//   - a fork gets its own ids, and no owner: the session-owner lines name the
+//     account of the source's Claude Code, and Claude Code stamps a transcript
+//     that has none with the account that opens it.
+func lineRewrite(opt Options, jsonl bool, src string) func([]byte) []byte {
+	ids := opt.rewrite
+	if !jsonl && !rewritable(src) {
+		ids = nil
+	}
+	var home []byte
+	if jsonl && opt.home != "" {
+		home, _ = json.Marshal(opt.home)
+	}
+	if ids == nil && home == nil {
+		return nil
+	}
+	return func(line []byte) []byte {
+		if jsonl && ids != nil && bytes.HasPrefix(line, ownerLine) {
+			return nil
+		}
+		if home != nil && bytes.HasPrefix(line, relocatedLine) {
+			line = setRelocated(line, home)
+		}
+		if ids != nil {
+			line = ids.line(line)
+		}
+		return line
+	}
+}
+
+// setRelocated puts the JSON string home in place of the line's relocatedCwd.
+func setRelocated(line, home []byte) []byte {
+	i := bytes.Index(line, relocatedKey)
+	if i < 0 {
+		return line
+	}
+	i += len(relocatedKey)
+	var old string
+	dec := json.NewDecoder(bytes.NewReader(line[i:]))
+	if dec.Decode(&old) != nil {
+		return line
+	}
+	out := append(append([]byte{}, line[:i]...), home...)
+	return append(out, line[i+int(dec.InputOffset()):]...)
+}
+
+// swapReader passes a file through fn, line by line; a line fn returns empty
+// is left out.
 type swapReader struct {
 	br  *bufio.Reader
-	ids *forkIDs
+	fn  func([]byte) []byte
 	buf []byte
 	err error
 }
 
-func newSwapReader(r io.Reader, ids *forkIDs) *swapReader {
-	return &swapReader{br: bufio.NewReaderSize(r, copyBuf), ids: ids}
+func newSwapReader(r io.Reader, fn func([]byte) []byte) *swapReader {
+	return &swapReader{br: bufio.NewReaderSize(r, copyBuf), fn: fn}
 }
 
 func (s *swapReader) Read(p []byte) (int, error) {
@@ -142,7 +201,7 @@ func (s *swapReader) Read(p []byte) (int, error) {
 		}
 		var line []byte
 		line, s.err = s.br.ReadBytes('\n')
-		s.buf = s.ids.line(line)
+		s.buf = s.fn(line)
 	}
 	n := copy(p, s.buf)
 	s.buf = s.buf[n:]

@@ -10,6 +10,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `ccgp --send`: a session taken from a worktree's folder into the directory's now says it lives in the directory
+  (`relocatedCwd`), so `/resume` there lists it: Claude Code goes by that line, and the fork made before stayed hidden as
+  a worktree's session (seen live; found in Claude Code's own code). A fork carries no `session-owner` line any more
+  (the source's account; its ids were also mapped like every uuid).
 - `--fork` replaces every id of the session, in the transcript, in the files of its folder and in their names: uuids,
   `toolu_…` / `msg_…` / `req_…`, subagent and background task ids (`agent-<id>.jsonl`, `tool-results/<id>.txt`), text
   included, each always to the same new one. A fork written by an earlier version reads as diverged and is left alone.
