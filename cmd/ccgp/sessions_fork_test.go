@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -268,5 +269,28 @@ func TestCopySessionsIdInAnotherFolder(t *testing.T) {
 	}
 	if strings.Contains(out, "--fork writes it") {
 		t.Errorf("hint after the choice was made:\n%s", out)
+	}
+}
+
+// A session Claude Code moved into a worktree's folder is taken from there and
+// written into the folder of the directory the command runs in, and said so.
+func TestCopySessionsTakesASessionOfASubdirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "proj")
+	project := projectDirName(dir)
+	wt := filepath.Join(dir, "worktrees", "x")
+	cwd, _ := json.Marshal(wt)
+	src := endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
+	dst := endpoint{dir: t.TempDir(), label: "claude"}
+	writeSession(t, src.dir, projectDirName(wt), forkTestID, `{"type":"user","cwd":`+string(cwd)+`,"sessionId":"`+forkTestID+`"}`+"\n")
+
+	var out bytes.Buffer
+	if err := copySessions(&out, "send codex -> claude", src, dst, 1, sessions.Options{Project: project, Within: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "(of a subdirectory, written into "+project+")") || !strings.Contains(out.String(), "1 written") {
+		t.Errorf("output:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dst.dir, "projects", project, forkTestID+".jsonl")); err != nil {
+		t.Errorf("not written into the directory's folder: %v", err)
 	}
 }

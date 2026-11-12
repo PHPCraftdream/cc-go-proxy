@@ -8,6 +8,9 @@
 package sessions
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -27,6 +30,17 @@ type Session struct {
 	Path    string
 	Size    int64
 	ModTime time.Time
+	// Into is the project folder the session is written to when it is not its
+	// own: a session Claude Code moved into a subdirectory's folder (Options.Within).
+	Into string
+}
+
+// Folder is the project folder the session is written to.
+func (s Session) Folder() string {
+	if s.Into != "" {
+		return s.Into
+	}
+	return s.Project
 }
 
 // Status says what happened to a session's transcript.
@@ -58,6 +72,11 @@ type Options struct {
 	// Project, when set, limits the copy to that projects/ folder (the sessions
 	// of one working directory); the count then applies within it.
 	Project string
+	// Within, set with Project, is the working directory of Project: the
+	// sessions of its subdirectories (a worktree, where Claude Code moves a
+	// session it continues there) count as its own and are written into Project.
+	// A folder qualifies by its name and the cwd its transcript records.
+	Within string
 	// Fork writes a session whose destination diverged under a new id (the same
 	// one every time, so a rerun extends it), leaving the destination alone.
 	Fork bool
@@ -159,7 +178,7 @@ func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 		return nil, err
 	}
 	if opt.Project != "" {
-		list = inProject(list, opt.Project)
+		list = inProject(list, opt.Project, opt.Within)
 	}
 	if len(list) > count {
 		list = list[:count]
@@ -178,20 +197,89 @@ func Copy(srcDir, dstDir string, count int, opt Options) ([]Result, error) {
 	return results, nil
 }
 
-// inProject keeps the sessions of one project folder, in order.
-func inProject(list []Session, project string) []Session {
+// inProject keeps the sessions of one project folder, in order, and with
+// within those of its subdirectories' folders (Into set to project). An id is
+// kept once, the newest.
+func inProject(list []Session, project, within string) []Session {
 	var out []Session
+	seen := map[string]bool{}
+	under := map[string]bool{} // folder -> its sessions are within's
 	for _, s := range list {
-		if strings.EqualFold(s.Project, project) {
-			out = append(out, s)
+		switch {
+		case strings.EqualFold(s.Project, project):
+		case within != "" && len(s.Project) > len(project) && strings.EqualFold(s.Project[:len(project)+1], project+"-"):
+			ok, known := under[s.Project]
+			if !known {
+				ok = cwdWithin(s.Path, within)
+				under[s.Project] = ok
+			}
+			if !ok {
+				continue
+			}
+			s.Into = project
+		default:
+			continue
 		}
+		if seen[s.ID] {
+			continue
+		}
+		seen[s.ID] = true
+		out = append(out, s)
 	}
 	return out
 }
 
+// cwdWithin reports whether the transcript records a working directory below
+// dir (not dir itself). Only the first lines are read.
+func cwdWithin(path, dir string) bool {
+	cwd := transcriptCwd(path)
+	if cwd == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, cwd)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// transcriptCwd is the first "cwd" of a transcript, from its first 50 lines.
+func transcriptCwd(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	br := bufio.NewReaderSize(f, 64<<10)
+	key := []byte(`"cwd":`)
+	for i := 0; i < 50; i++ {
+		line, err := br.ReadSlice('\n')
+		for errors.Is(err, bufio.ErrBufferFull) { // a long line: look at its start only
+			if j := bytes.Index(line, key); j >= 0 {
+				return jsonString(line[j+len(key):])
+			}
+			_, err = br.ReadSlice('\n')
+			line = nil
+		}
+		if j := bytes.Index(line, key); j >= 0 {
+			return jsonString(line[j+len(key):])
+		}
+		if err != nil {
+			return ""
+		}
+	}
+	return ""
+}
+
+// jsonString decodes the JSON string b starts with ("" when it does not).
+func jsonString(b []byte) string {
+	var v string
+	if json.NewDecoder(bytes.NewReader(b)).Decode(&v) != nil {
+		return ""
+	}
+	return v
+}
+
 func copySession(dstDir string, s Session, opt Options) Result {
 	res := Result{Session: s}
-	dstFile := func(id string) string { return filepath.Join(dstDir, projectsDir, s.Project, id+".jsonl") }
+	dstFile := func(id string) string { return filepath.Join(dstDir, projectsDir, s.Folder(), id+".jsonl") }
 	dst := dstFile(s.ID)
 	var prog func(done, total int64)
 	if opt.OnProgress != nil {
@@ -205,7 +293,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		backup  string
 		err     error
 	)
-	if other := idElsewhere(dstDir, s.Project, s.ID); other != "" {
+	if other := idElsewhere(dstDir, s.Folder(), s.ID); other != "" {
 		st, res.Other = Elsewhere, other
 	} else {
 		st, removed, backup, err = place(s.Path, dst, true, opt, prog)

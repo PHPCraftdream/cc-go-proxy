@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -110,16 +112,45 @@ type idSwap struct{ old, new string }
 
 // forkID is the id a diverged session is written under: derived from the
 // original, so the next fork of it lands on the same file and extends it.
-func forkID(id string) string {
-	h := sha256.Sum256([]byte("ccgp fork " + id))
-	h[6] = h[6]&0x0f | 0x40 // version 4 layout, as Claude Code's own ids
+func forkID(id string) string { return uuidOf("ccgp fork " + id) }
+
+// forkUUID is the id the fork fid has in place of the uuid u (of a message, a
+// prompt, …): a fork that kept the original's message ids would be the same
+// conversation to Claude Code, which lists only one of the two.
+func forkUUID(fid, u string) string { return uuidOf("ccgp fork " + fid + " " + u) }
+
+// uuidOf derives a version 4 layout id from s, as Claude Code's own ids.
+func uuidOf(s string) string {
+	h := sha256.Sum256([]byte(s))
+	h[6] = h[6]&0x0f | 0x40
 	h[8] = h[8]&0x3f | 0x80
 	x := hex.EncodeToString(h[:16])
 	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
 }
 
+// uuidField is a JSON field whose value is a uuid: uuid, parentUuid, leafUuid,
+// promptId, messageId, snapshotMessageId, toolUseID of a progress line, … any
+// key, so ids Claude Code adds later are covered too. Ids of other forms stay:
+// agentId and task ids name files of the session's folder, toolu_/msg_/req_
+// ids are the API's.
+var uuidField = regexp.MustCompile(`"[A-Za-z_]+"\s*:\s*"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"`)
+
+// forkUUIDs gives every uuid of a line its fork id; fid itself (the session
+// id, already swapped in) stays.
+func forkUUIDs(line []byte, fid string) []byte {
+	return uuidField.ReplaceAllFunc(line, func(m []byte) []byte {
+		u := strings.ToLower(string(m[len(m)-37 : len(m)-1]))
+		if u == fid {
+			return m
+		}
+		out := append([]byte{}, m[:len(m)-37]...)
+		return append(append(out, forkUUID(fid, u)...), '"')
+	})
+}
+
 // swapReader replaces a session id with another, line by line: transcripts
 // name their session in every line (and the sidecar paths in tool results).
+// The message and prompt ids get fork ids too (forkUUIDs).
 type swapReader struct {
 	br  *bufio.Reader
 	sw  *idSwap
@@ -140,6 +171,9 @@ func (s *swapReader) Read(p []byte) (int, error) {
 		line, s.err = s.br.ReadBytes('\n')
 		if s.sw.old != "" && bytes.Contains(line, []byte(s.sw.old)) {
 			line = bytes.ReplaceAll(line, []byte(s.sw.old), []byte(s.sw.new))
+		}
+		if s.sw.new != "" {
+			line = forkUUIDs(line, s.sw.new)
 		}
 		s.buf = line
 	}
