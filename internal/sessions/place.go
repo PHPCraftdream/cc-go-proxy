@@ -1,7 +1,6 @@
 package sessions
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -77,17 +76,11 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		strip = newThinkingStripper()
 	}
 	if rewrite != nil || strip != nil {
-		s := newSwapReader(in, func(line []byte) ([]byte, error) {
-			if rewrite != nil {
-				if line = rewrite(line); len(line) == 0 {
-					return nil, nil
-				}
-			}
-			if strip != nil {
-				return strip.line(line)
-			}
-			return line, nil
-		})
+		s := &swapReader{src: newLines(in, rewrite)}
+		defer s.src.close()
+		if strip != nil {
+			s.fn = strip.line
+		}
 		if cut < size {
 			s.cut, s.mark = cut, p.compareFrom
 		}
@@ -222,11 +215,11 @@ func setRelocated(line, home []byte) []byte {
 	return append(out, line[i+int(dec.InputOffset()):]...)
 }
 
-// swapReader passes a file through fn, line by line; a line fn returns empty
-// is left out. When mark is set, it is called once with the length of the
-// output so far as the line at input offset cut is reached.
+// swapReader passes the lines of src through fn, which may be nil; a line
+// either leaves empty is left out. When mark is set, it is called once with
+// the length of the output so far as the line at input offset cut is reached.
 type swapReader struct {
-	br   *bufio.Reader
+	src  lineSource
 	fn   func([]byte) ([]byte, error)
 	buf  []byte
 	err  error
@@ -237,7 +230,7 @@ type swapReader struct {
 }
 
 func newSwapReader(r io.Reader, fn func([]byte) ([]byte, error)) *swapReader {
-	return &swapReader{br: bufio.NewReaderSize(r, copyBuf), fn: fn}
+	return &swapReader{src: newSeqLines(r, nil), fn: fn}
 }
 
 // Read fills p with as many lines as fit, so the writer gets large chunks.
@@ -261,25 +254,28 @@ func (s *swapReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// next puts the next line, passed through fn, into buf.
+// next puts the next line into buf.
 func (s *swapReader) next() {
 	if s.mark != nil && s.in >= s.cut {
 		s.mark(s.out)
 		s.mark = nil
 	}
-	line, err := s.br.ReadBytes('\n')
-	s.in += int64(len(line))
+	line, n, err := s.src.next()
+	s.in += int64(n)
 	s.err = err
 	if len(line) == 0 {
 		return
 	}
-	out, ferr := s.fn(line)
-	if ferr != nil {
-		s.err = ferr
-		return
+	if s.fn != nil {
+		out, ferr := s.fn(line)
+		if ferr != nil {
+			s.err = ferr
+			return
+		}
+		line = out
 	}
-	s.buf = out
-	s.out += int64(len(out))
+	s.buf = line
+	s.out += int64(len(line))
 }
 
 // progressReader reports how much of a stream was read, at most once per interval.
