@@ -9,6 +9,12 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Fixed
+- `ccgp --send` / `--fork` of a session begun in another directory (moved into this one's folder by `/cd` or an
+  earlier copy) wrote a copy that `claude --resume` in the directory did not list: with no `relocated` line, Claude Code
+  took the first lines' `cwd`, and on Windows its worktree filter hid the session. The copy now names the directory in a
+  `relocated` line after each `last-prompt` line.
+
 ### Changed
 - `ccgp --send --fork` of the 1.8 GB live session takes 37 s instead of 91 s, with output byte for byte the same.
   What a profile showed and what changed:

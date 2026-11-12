@@ -173,6 +173,89 @@ func TestASessionWrittenIntoTheDirectorySaysItLivesThere(t *testing.T) {
 	}
 }
 
+func lastPromptEntry(id, prompt string) string {
+	return `{"type":"last-prompt","lastPrompt":"` + prompt + `","leafUuid":"aaaaaaaa-0000-4000-8000-000000000001","sessionId":"` + id + `"}` + "\n"
+}
+
+// Claude Code lists a transcript with no relocation in its tail under the cwd
+// of its first lines: a session begun in another directory and kept in this
+// one's folder would be hidden from its /resume (seen live, Windows with
+// worktrees). The copy says it lives here after each last-prompt line, and
+// stays append-only as the source grows.
+func TestASessionBegunElsewhereSaysItLivesHere(t *testing.T) {
+	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
+	other := filepath.Join(t.TempDir(), "pc")
+	path := filepath.Join(src, "projects", home, sid+".jsonl")
+	first := cwdEntry(sid, other, "begun there") + lastPromptEntry(sid, "one") + cwdEntry(sid, dir, "then here")
+	put(t, path, first, t0)
+
+	res, err := Copy(src, dst, 1, Options{Project: home, Within: dir, StripThinking: true})
+	if err != nil || len(res) != 1 || res[0].Status != Copied {
+		t.Fatalf("results = %+v, %v", res, err)
+	}
+	stamp := relocatedEntry(sid, dir)
+	want := cwdEntry(sid, other, "begun there") + lastPromptEntry(sid, "one") + stamp + cwdEntry(sid, dir, "then here")
+	out := filepath.Join(dst, "projects", home, sid+".jsonl")
+	if got := read(t, out); got != want {
+		t.Errorf("copy =\n%s\nwant\n%s", got, want)
+	}
+
+	more := `{"type":"assistant","sessionId":"` + sid + `","message":{"content":[{"type":"thinking","thinking":"x"},{"type":"text","text":"y"}]}}` + "\n" +
+		lastPromptEntry(sid, "thinking\\\" two")
+	put(t, path, first+more, t0.Add(time.Hour))
+	res, err = Copy(src, dst, 1, Options{Project: home, Within: dir, StripThinking: true})
+	if err != nil || res[0].Status != Updated {
+		t.Fatalf("grown source = %+v, %v", res, err)
+	}
+	got := read(t, out)
+	if !strings.HasPrefix(got, want) || !strings.HasSuffix(got, lastPromptEntry(sid, "thinking\\\" two")+stamp) || strings.Contains(got, `"thinking":"x"`) {
+		t.Errorf("extended copy =\n%s", got)
+	}
+	if res, _ = Copy(src, dst, 1, Options{Project: home, Within: dir, StripThinking: true}); res[0].Status != Unchanged {
+		t.Errorf("rerun = %+v", res[0])
+	}
+
+	// A fork names its own id.
+	fdst := t.TempDir()
+	put(t, filepath.Join(fdst, "projects", home, sid+".jsonl"), cwdEntry(sid, other, "the original"), t0)
+	res, err = Copy(src, fdst, 1, Options{Project: home, Within: dir, Fork: true})
+	if err != nil || res[0].Status != Forked {
+		t.Fatalf("fork = %+v, %v", res, err)
+	}
+	fid := forkID(sid)
+	if got := read(t, filepath.Join(fdst, "projects", home, fid+".jsonl")); !strings.Contains(got, `"type":"last-prompt","lastPrompt":"one"`) ||
+		!strings.Contains(got, relocatedEntry(fid, dir)) || strings.Contains(got, sid) {
+		t.Errorf("fork =\n%s", got)
+	}
+}
+
+// A session begun in the directory gets no relocation.
+func TestASessionBegunHereGetsNoRelocation(t *testing.T) {
+	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
+	body := cwdEntry(sid, dir, "x") + lastPromptEntry(sid, "one")
+	put(t, filepath.Join(src, "projects", home, sid+".jsonl"), body, t0)
+	if _, err := Copy(src, dst, 1, Options{Project: home, Within: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dst, "projects", home, sid+".jsonl")); got != body {
+		t.Errorf("copy = %q", got)
+	}
+}
+
+func TestRelocatedLine(t *testing.T) {
+	h, _ := json.Marshal(`D:\p`)
+	if got := string(relocatedLine([]byte(lastPromptEntry(sid, "x")), h)); got != relocatedEntry(sid, `D:\p`) {
+		t.Errorf("got %q", got)
+	}
+	crlf := strings.TrimSuffix(lastPromptEntry(sid, "x"), "\n") + "\r\n"
+	if got := string(relocatedLine([]byte(crlf), h)); got != strings.TrimSuffix(relocatedEntry(sid, `D:\p`), "\n")+"\r\n" {
+		t.Errorf("crlf: %q", got)
+	}
+	if got := relocatedLine([]byte(`{"type":"last-prompt"}`+"\n"), h); got != nil {
+		t.Errorf("no session id: %q", got)
+	}
+}
+
 // A session of the directory's own folder keeps what it says.
 func TestASessionOfItsOwnFolderKeepsItsRelocation(t *testing.T) {
 	src, dst, dir := t.TempDir(), t.TempDir(), filepath.Join(t.TempDir(), "proj")
