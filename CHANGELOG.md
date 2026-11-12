@@ -10,6 +10,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `--fork` replaces every id of the session, in the transcript, in the files of its folder and in their names: uuids,
+  `toolu_…` / `msg_…` / `req_…`, subagent and background task ids (`agent-<id>.jsonl`, `tool-results/<id>.txt`), text
+  included, each always to the same new one. A fork written by an earlier version reads as diverged and is left alone.
 - `ccgp --send` / `--import` / `--export` take the sessions Claude Code moved into a subdirectory's folder (a session
   continued in a worktree) as the current directory's own, and write them into its folder: run from the main checkout,
   the worktree's newest session is found and `/resume` there lists it. A fork gets its own uuids (every field) besides its

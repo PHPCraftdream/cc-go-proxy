@@ -83,8 +83,8 @@ type Options struct {
 	// Force replaces a destination that diverged or is ahead of the source; the
 	// old file is kept next to it as <name>.bak-<time>. Excludes Fork.
 	Force bool
-	// rewrite swaps a session id for another in jsonl files (set for forks).
-	rewrite *idSwap
+	// rewrite gives a fork its own ids, in the files and their names.
+	rewrite *forkIDs
 	// OnStart, when set, is called before each session; i counts from 1 up to n.
 	OnStart func(i, n int, s Session)
 	// OnProgress, when set, reports how much of a transcript is processed while
@@ -302,10 +302,11 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	if err == nil && (st == Diverged || st == Elsewhere) && opt.Fork {
 		id := forkID(s.ID)
 		dst = dstFile(id)
-		opt.rewrite = &idSwap{old: s.ID, new: id}
 		res.Fork = id
-		if st, removed, backup, err = place(s.Path, dst, true, opt, prog); st == Copied || st == Updated {
-			st = Forked
+		if opt.rewrite, err = newForkIDs(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
+			if st, removed, backup, err = place(s.Path, dst, true, opt, prog); st == Copied || st == Updated {
+				st = Forked
+			}
 		}
 	}
 	if err != nil {
@@ -333,6 +334,9 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		rel, err := filepath.Rel(srcSide, p)
 		if err != nil {
 			return err
+		}
+		if opt.rewrite != nil {
+			rel = opt.rewrite.name(rel)
 		}
 		st, n, _, err := place(p, filepath.Join(dstSide, rel), strings.HasSuffix(p, ".jsonl"), opt, nil)
 		if err != nil {
