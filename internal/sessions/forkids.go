@@ -40,13 +40,8 @@ type forkIDs struct {
 }
 
 var (
-	// shortText is how Claude Code names a background task or a subagent in
-	// text, often long before the id field: "with ID: b…", ".../tasks/b….output",
-	// "<task-id>b…</task-id>", "agentId: a…".
-	shortText = regexp.MustCompile(`(?:with ID: |<task-id>|agentId: |tasks[\\/]+)([A-Za-z0-9]{6,24})(?:</task-id>|\.output|[^A-Za-z0-9]|$)`)
-	// shortField is a field holding the short id of a subagent or a task.
-	shortField = regexp.MustCompile(`"(?:agentId|agent_id|[A-Za-z]*[Tt]ask_?[Ii]d|task_id|bash_id|bashId|shell_id|shellId)"\s*:\s*"([A-Za-z0-9]{6,24})"`)
-	shortName  = regexp.MustCompile(`^(?:agent-)?([A-Za-z0-9]{6,24})(?:\.[A-Za-z]+)+$`)
+	// shortName is the name of a file of the session named by a short id.
+	shortName = regexp.MustCompile(`^(?:agent-)?([A-Za-z0-9]{6,24})(?:\.[A-Za-z]+)+$`)
 	// letterTask is a background task id of letters only (b + 8).
 	letterTask = regexp.MustCompile(`^b[a-z]{8}$`)
 )
@@ -54,10 +49,9 @@ var (
 // newForkIDs collects the short ids of the session: its transcript and the
 // files of its folder side (which may not exist).
 func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
-	m := &forkIDs{old: old, fid: fid, uuids: map[string]bool{}, short: map[string]bool{}, slugs: map[string]string{}}
-	if err := m.scan(transcript); err != nil {
-		return nil, err
-	}
+	m := newIDSet(fid)
+	m.old = old
+	files := []string{transcript}
 	err := filepath.WalkDir(side, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) && p == side {
@@ -78,15 +72,78 @@ func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
 			}
 		}
 		if rewritable(p) || strings.HasSuffix(p, ".jsonl") {
-			return m.scan(p)
+			files = append(files, p)
 		}
 		return nil
 	})
+	if err == nil {
+		err = m.scanFiles(files)
+	}
 	if err != nil {
 		return nil, err
 	}
 	m.prepare()
 	return m, nil
+}
+
+// newIDSet is an empty forkIDs of the fork fid.
+func newIDSet(fid string) *forkIDs {
+	return &forkIDs{fid: fid, uuids: map[string]bool{}, short: map[string]bool{}, slugs: map[string]string{}}
+}
+
+// merge adds the ids p collected.
+func (m *forkIDs) merge(p *forkIDs) {
+	for k := range p.uuids {
+		m.uuids[k] = true
+	}
+	for k := range p.short {
+		m.short[k] = true
+	}
+	for k, v := range p.slugs {
+		m.slugs[k] = v
+	}
+}
+
+// scanFiles scans the files, several at once: a session's folder holds
+// thousands of small ones.
+func (m *forkIDs) scanFiles(files []string) error {
+	n := min(workers(), len(files))
+	if n < 2 {
+		for _, f := range files {
+			if err := m.scan(f); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	next := make(chan string)
+	parts := make([]*forkIDs, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range parts {
+		parts[i] = newIDSet(m.fid)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range next {
+				if errs[i] == nil {
+					errs[i] = parts[i].scan(f)
+				}
+			}
+		}()
+	}
+	for _, f := range files {
+		next <- f
+	}
+	close(next)
+	wg.Wait()
+	for i, p := range parts {
+		if errs[i] != nil {
+			return errs[i]
+		}
+		m.merge(p)
+	}
+	return nil
 }
 
 // prepare maps every short id once; line is then free of writes and safe for
@@ -151,7 +208,7 @@ func (m *forkIDs) scan(path string) error {
 	work := make(chan *lineBatch, 2*n)
 	var wg sync.WaitGroup
 	for i := range parts {
-		part := &forkIDs{fid: m.fid, uuids: map[string]bool{}, short: map[string]bool{}, slugs: map[string]string{}}
+		part := newIDSet(m.fid)
 		parts[i] = part
 		wg.Add(1)
 		go func() {
@@ -180,70 +237,98 @@ func (m *forkIDs) scan(path string) error {
 	close(work)
 	wg.Wait()
 	for _, p := range parts {
-		for k := range p.uuids {
-			m.uuids[k] = true
-		}
-		for k := range p.short {
-			m.short[k] = true
-		}
-		for k, v := range p.slugs {
-			m.slugs[k] = v
-		}
+		m.merge(p)
 	}
 	return rerr
 }
 
 // scanLine collects the ids of one line.
 func (m *forkIDs) scanLine(line []byte) {
-	if hasShortField(line) {
-		for _, sm := range shortField.FindAllSubmatch(line, -1) {
-			m.add(string(sm[1]))
-		}
-	}
+	eachShortField(line, func(id []byte) { m.add(string(id)) })
 	collectUUIDValues(line, m.uuids)
-	if bytes.Contains(line, []byte(`"slug"`)) {
-		for _, sm := range slugField.FindAllSubmatch(line, -1) {
-			if s := string(sm[1]); m.slugs[s] == "" {
-				m.slugs[s] = s + "-" + m.fid[:min(8, len(m.fid))]
-			}
+	eachSlug(line, func(v []byte) {
+		if m.slugs[string(v)] == "" {
+			m.slugs[string(v)] = string(v) + "-" + m.fid[:min(8, len(m.fid))]
 		}
-	}
+	})
 	// Named in text before any field does: kept from the first mention, so
 	// a later run, when the field has come, maps the earlier lines the same.
 	if bytes.Contains(line, []byte("with ID: ")) || bytes.Contains(line, []byte("<task-id>")) ||
 		bytes.Contains(line, []byte("agentId: ")) || bytes.Contains(line, []byte(".output")) {
-		for _, sm := range shortText.FindAllSubmatch(line, -1) {
-			m.add(string(sm[1]))
-		}
+		eachShortText(line, func(id []byte) { m.add(string(id)) })
 	}
 }
 
 // line gives every id of b its fork id.
 func (m *forkIDs) line(b []byte) []byte {
-	if m.old != "" && bytes.Contains(b, []byte(m.old)) {
-		b = bytes.ReplaceAll(b, []byte(m.old), []byte(m.fid))
-	}
-	if len(m.uuids) > 0 {
-		b = m.mapUUIDs(b)
-	}
-	b = m.mapAPIIDs(b)
-	if len(m.short) > 0 {
-		b = m.shortIDs(b)
-	}
-	for old, as := range m.slugs {
-		if bytes.Contains(b, []byte(old)) {
-			b = replaceWord(b, old, as)
+	// The steps write into two buffers in turn: a transcript has gigabytes of
+	// lines, and a copy of each per step kept the collector busy.
+	sc := lineScratch.Get().(*[2][]byte)
+	cur, k := b, 0
+	step := func(out []byte, changed bool) {
+		sc[k] = out[:0]
+		if changed {
+			cur, k = out, k^1
 		}
 	}
-	return b
+	if m.old != "" && bytes.Contains(cur, []byte(m.old)) {
+		step(replaceAllTo(sc[k][:0], cur, m.old, m.fid))
+	}
+	if len(m.uuids) > 0 {
+		step(m.mapUUIDsTo(sc[k][:0], cur))
+	}
+	step(m.mapAPIIDsTo(sc[k][:0], cur))
+	if len(m.short) > 0 {
+		step(m.shortIDsTo(sc[k][:0], cur))
+	}
+	for old, as := range m.slugs {
+		if bytes.Contains(cur, []byte(old)) {
+			step(replaceWordTo(sc[k][:0], cur, old, as))
+		}
+	}
+	if len(cur) > 0 && len(b) > 0 && &cur[0] != &b[0] {
+		cur = append([]byte(nil), cur...)
+	}
+	if cap(sc[0])+cap(sc[1]) <= 8<<20 { // one grown by a huge line is not kept
+		lineScratch.Put(sc)
+	}
+	return cur
+}
+
+// lineScratch holds the two buffers of forkIDs.line.
+var lineScratch = sync.Pool{New: func() any { return new([2][]byte) }}
+
+// replaceAllTo appends b to dst with every old replaced by as; changed is
+// false (and dst to be ignored) when b has none.
+func replaceAllTo(dst, b []byte, old, as string) ([]byte, bool) {
+	changed := false
+	for {
+		i := bytes.Index(b, []byte(old))
+		if i < 0 {
+			break
+		}
+		dst = append(append(dst, b[:i]...), as...)
+		b = b[i+len(old):]
+		changed = true
+	}
+	return append(dst, b...), changed
 }
 
 // replaceWord replaces old where it stands alone: not inside a longer run of
 // letters, digits, '-' and '_' (another slug, or the fork's own, which begins
 // with it).
 func replaceWord(b []byte, old, as string) []byte {
+	if out, changed := replaceWordTo(nil, b, old, as); changed {
+		return out
+	}
+	return b
+}
+
+// replaceWordTo is replaceWord appending to dst; changed is false when
+// nothing was replaced (dst is then to be ignored).
+func replaceWordTo(dst, b []byte, old, as string) ([]byte, bool) {
 	word := func(c byte) bool { return isAlnum(c) || c == '-' || c == '_' }
-	var out []byte
+	out, changed := dst, false
 	last := 0
 	for i := 0; ; {
 		j := bytes.Index(b[i:], []byte(old))
@@ -257,11 +342,12 @@ func replaceWord(b []byte, old, as string) []byte {
 		}
 		out = append(append(out, b[last:at]...), as...)
 		last = end
+		changed = true
 	}
-	if out == nil {
-		return b
+	if !changed {
+		return dst, false
 	}
-	return append(out, b[last:]...)
+	return append(out, b[last:]...), true
 }
 
 // name gives the ids in a path of the session's folder their fork ids.
@@ -270,7 +356,16 @@ func (m *forkIDs) name(rel string) string { return string(m.line([]byte(rel))) }
 // shortIDs replaces each run of letters and digits that is a known short id. A
 // run glued to a JSON escape (\n, \t, …) is the id after it.
 func (m *forkIDs) shortIDs(b []byte) []byte {
-	var out []byte
+	if out, changed := m.shortIDsTo(nil, b); changed {
+		return out
+	}
+	return b
+}
+
+// shortIDsTo is shortIDs appending to dst; changed is false when nothing was
+// replaced (dst is then to be ignored).
+func (m *forkIDs) shortIDsTo(dst, b []byte) ([]byte, bool) {
+	out, changed := dst, false
 	last := 0
 	for i := 0; i < len(b); {
 		if !isAlnum(b[i]) {
@@ -289,13 +384,14 @@ func (m *forkIDs) shortIDs(b []byte) []byte {
 			out = append(out, b[last:at]...)
 			out = append(out, m.shortFor(string(b[at:j]))...)
 			last = j
+			changed = true
 		}
 		i = j
 	}
-	if out == nil {
-		return b
+	if !changed {
+		return dst, false
 	}
-	return append(out, b[last:]...)
+	return append(out, b[last:]...), true
 }
 
 // shortFor is the fork's id for the short id id.

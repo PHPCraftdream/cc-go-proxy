@@ -152,21 +152,3 @@ func TestFastFindersAgreeWithTheRegularExpressions(t *testing.T) {
 		}
 	}
 }
-
-// A line without any key shortField matches is not searched: every key it
-// matches is among shortFieldKeys.
-func TestShortFieldKeysCoverTheExpression(t *testing.T) {
-	for _, key := range []string{"agentId", "agent_id", "taskId", "TaskId", "backgroundTaskId", "task_id", "Task_Id", "taskid",
-		"bash_id", "bashId", "shell_id", "shellId", "subtaskId"} {
-		line := []byte(`{"` + key + `":"b01bxagzb"}`)
-		if shortField.Match(line) != hasShortField(line) {
-			t.Errorf("%s: expression %v, keys %v", key, shortField.Match(line), hasShortField(line))
-		}
-		if !hasShortField(line) {
-			t.Errorf("%s is not among the keys", key)
-		}
-	}
-	if hasShortField([]byte(`{"sessionId":"x","uuid":"y","promptId":"z"}`)) {
-		t.Error("an ordinary line is searched")
-	}
-}

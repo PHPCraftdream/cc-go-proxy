@@ -479,5 +479,5 @@ func noErr(fn func([]byte) []byte) func([]byte) ([]byte, error) {
 
 // testSwapReader passes r through fn line after line.
 func testSwapReader(r io.Reader, fn func([]byte) ([]byte, error)) *swapReader {
-	return &swapReader{src: newSeqLines(r, nil, 0), fn: fn}
+	return &swapReader{src: newSeqLines(r, nil, 0), fn: func(b []byte, _ any) ([]byte, error) { return fn(b) }}
 }

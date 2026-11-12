@@ -10,6 +10,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `ccgp --send --fork` of the 1.8 GB live session takes 37 s instead of 91 s, with output byte for byte the same.
+  What a profile showed and what changed:
+  - the short ids and slugs are found by hand-written finders instead of regular expressions, which took 20 s;
+  - the files of a session's folder are scanned several at once;
+  - the costly part of removing thinking blocks (parsing and re-encoding a line), and finding the links to dropped
+    lines, run on the worker goroutines; only re-linking follows in order;
+  - a line's id rewrite reuses two buffers instead of copying the line at every step;
+  - the collector runs a quarter as often during a copy.
 - `ccgp --send --fork` is faster on large sessions: the ids of a transcript are collected and replaced in runs of
   lines on several CPUs (up to 8, in their order), lines are read without a copy each, a short id is told by its
   first character and length before any lookup and mapped once, and the files of the session's folder are copied

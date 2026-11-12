@@ -62,20 +62,36 @@ func collectUUIDValues(b []byte, set map[string]bool) {
 
 // mapUUIDs gives each uuid of b that is in set its fork id.
 func (m *forkIDs) mapUUIDs(b []byte) []byte {
-	var out []byte
+	if out, changed := m.mapUUIDsTo(nil, b); changed {
+		return out
+	}
+	return b
+}
+
+// mapUUIDsTo is mapUUIDs appending to dst; changed is false when nothing was
+// replaced (dst is then to be ignored).
+func (m *forkIDs) mapUUIDsTo(dst, b []byte) ([]byte, bool) {
+	out, changed := dst, false
 	last := 0
+	var low [36]byte
 	eachUUID(b, func(at int) {
-		s := strings.ToLower(string(b[at : at+36]))
-		if !m.uuids[s] {
+		for k, c := range b[at : at+36] {
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			low[k] = c
+		}
+		if !m.uuids[string(low[:])] {
 			return
 		}
-		out = append(append(out, b[last:at]...), forkUUID(m.fid, s)...)
+		out = append(append(out, b[last:at]...), forkUUID(m.fid, string(low[:]))...)
 		last = at + 36
+		changed = true
 	})
-	if out == nil {
-		return b
+	if !changed {
+		return dst, false
 	}
-	return append(out, b[last:]...)
+	return append(out, b[last:]...), true
 }
 
 // apiPrefixes are the prefixes of the ids an API gives out: the Anthropic API's
@@ -88,7 +104,16 @@ var apiPrefixes = map[string]bool{"srvtoolu": true, "toolu": true, "msg": true, 
 // alphabet it was in. An id must stand alone: no letter or digit right after
 // it, none right before (but the letter of a JSON escape: \ncall_…).
 func (m *forkIDs) mapAPIIDs(b []byte) []byte {
-	var out []byte
+	if out, changed := m.mapAPIIDsTo(nil, b); changed {
+		return out
+	}
+	return b
+}
+
+// mapAPIIDsTo is mapAPIIDs appending to dst; changed is false when nothing
+// was replaced (dst is then to be ignored).
+func (m *forkIDs) mapAPIIDsTo(dst, b []byte) ([]byte, bool) {
+	out, changed := dst, false
 	last := 0
 	for i := 0; i < len(b); {
 		j := bytes.IndexByte(b[i:], '_')
@@ -122,11 +147,12 @@ func (m *forkIDs) mapAPIIDs(b []byte) []byte {
 		out = append(append(out, b[last:keep]...), derive(m.fid, string(b[start:end]), alphabet, end-keep)...)
 		last = end
 		i = end
+		changed = true
 	}
-	if out == nil {
-		return b
+	if !changed {
+		return dst, false
 	}
-	return append(out, b[last:]...)
+	return append(out, b[last:]...), true
 }
 
 // apiPrefixBefore finds the API prefix that ends at b[u] ('_'): the longest
@@ -148,20 +174,4 @@ func apiPrefixBefore(b []byte, u int) (start int, anthropic, ok bool) {
 		return s, a, true
 	}
 	return 0, false, false
-}
-
-// shortFieldKeys are the keys shortField matches, as plain text: a line
-// without any of them (most lines; every one has a sessionId) is not searched.
-var shortFieldKeys = [][]byte{
-	[]byte(`agentId"`), []byte(`agent_id"`), []byte(`askId"`), []byte(`askid"`), []byte(`ask_Id"`), []byte(`ask_id"`),
-	[]byte(`ash_id"`), []byte(`ashId"`), []byte(`hell_id"`), []byte(`hellId"`),
-}
-
-func hasShortField(line []byte) bool {
-	for _, k := range shortFieldKeys {
-		if bytes.Contains(line, k) {
-			return true
-		}
-	}
-	return false
 }

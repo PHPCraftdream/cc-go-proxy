@@ -76,10 +76,23 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		strip = newThinkingStripper()
 	}
 	if rewrite != nil || strip != nil {
-		s := &swapReader{src: newLines(in, rewrite, size)}
+		// The work without state runs on several goroutines; the strip's links
+		// to dropped lines follow in order.
+		work := func(line []byte) ([]byte, any) {
+			if rewrite != nil {
+				if line = rewrite(line); len(line) == 0 {
+					return nil, nil
+				}
+			}
+			if strip != nil {
+				return preStrip(line)
+			}
+			return line, nil
+		}
+		s := &swapReader{src: newLines(in, work, size)}
 		defer s.src.close()
 		if strip != nil {
-			s.fn = strip.line
+			s.fn = strip.finish
 		}
 		if cut < size {
 			s.cut, s.mark = cut, p.compareFrom
@@ -220,7 +233,7 @@ func setRelocated(line, home []byte) []byte {
 // the length of the output so far as the line at input offset cut is reached.
 type swapReader struct {
 	src  lineSource
-	fn   func([]byte) ([]byte, error)
+	fn   func([]byte, any) ([]byte, error)
 	buf  []byte
 	err  error
 	in   int64 // input bytes read
@@ -256,14 +269,14 @@ func (s *swapReader) next() {
 		s.mark(s.out)
 		s.mark = nil
 	}
-	line, n, err := s.src.next()
+	line, note, n, err := s.src.next()
 	s.in += int64(n)
 	s.err = err
-	if len(line) == 0 {
+	if len(line) == 0 && note == nil {
 		return
 	}
 	if s.fn != nil {
-		out, ferr := s.fn(line)
+		out, ferr := s.fn(line, note)
 		if ferr != nil {
 			s.err = ferr
 			return

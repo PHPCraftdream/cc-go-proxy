@@ -418,8 +418,9 @@ func copySession(dstDir string, s Session, opt Options) Result {
 	return res
 }
 
-// sidecarWorkers is how many files of a session's folder are copied at once.
-const sidecarWorkers = 4
+// sidecarWorkers is how many files of a session's folder are copied at once:
+// creating a file costs more than writing a small one.
+const sidecarWorkers = 16
 
 // idElsewhere names the project folder of configDir, other than project, that
 // holds the transcript of id, when project itself does not; "" otherwise.
