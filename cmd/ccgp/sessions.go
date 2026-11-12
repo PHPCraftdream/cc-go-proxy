@@ -77,6 +77,7 @@ func sessionsCmd(kind string, args []string) error {
 	opt := sessions.Options{
 		StripThinking: stripThinkingBetween(src, dst),
 		Project:       projectDirName(cwd),
+		Within:        cwd,
 		Fork:          fork,
 		Force:         force,
 	}
@@ -216,6 +217,9 @@ func copySessions(w io.Writer, label string, src, dst endpoint, count int, opt s
 		s := r.Session
 		id := s.Project + "/" + shortID(s.ID)
 		line := fmt.Sprintf("  %-9s %s  %s  %s", r.Status, s.ModTime.Format("2006-01-02 15:04"), id, humanSize(s.Size))
+		if s.Into != "" {
+			line += "  (of a subdirectory, written into " + s.Into + ")"
+		}
 		switch {
 		case r.Err != nil:
 			failed++

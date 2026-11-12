@@ -471,3 +471,40 @@ func TestAnIdInItsOwnFolderIsSyncedThere(t *testing.T) {
 		t.Errorf("result = %+v, want updated in its own folder", r)
 	}
 }
+
+// A fork gets its own message and prompt ids, mapped the same way in every
+// line (links between messages hold) and on every run; other text is kept.
+func TestForkGivesTheMessagesIdsOfItsOwn(t *testing.T) {
+	const (
+		u1 = "aaaaaaaa-0000-4000-8000-000000000001"
+		u2 = "AAAAAAAA-0000-4000-8000-000000000002"
+		pr = "bbbbbbbb-0000-4000-8000-000000000003"
+	)
+	p := both(t)
+	src := `{"parentUuid":null,"uuid":"` + u1 + `","promptId":"` + pr + `","sessionId":"` + sid + `","type":"user","message":{"content":"see ` + u1 + `"}}` + "\n" +
+		`{"parentUuid": "` + u1 + `","uuid":"` + u2 + `","sourceToolAssistantUUID":"` + u1 + `","sessionId":"` + sid + `","type":"assistant"}` + "\n" +
+		`{"type":"file-history-snapshot","messageId":"` + u2 + `"}` + "\n" +
+		`{"type":"summary","leafUuid":"` + u2 + `","toolUseID":"toolu_1"}` + "\n"
+	put(t, p.s, src, t0.Add(2*time.Hour))
+	put(t, p.d, "x\n", t0)
+
+	fid := forkID(sid)
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked {
+		t.Fatalf("result = %+v", r)
+	}
+	n1, n2, np := forkUUID(fid, u1), forkUUID(fid, strings.ToLower(u2)), forkUUID(fid, pr)
+	want := `{"parentUuid":null,"uuid":"` + n1 + `","promptId":"` + np + `","sessionId":"` + fid + `","type":"user","message":{"content":"see ` + u1 + `"}}` + "\n" +
+		`{"parentUuid": "` + n1 + `","uuid":"` + n2 + `","sourceToolAssistantUUID":"` + n1 + `","sessionId":"` + fid + `","type":"assistant"}` + "\n" +
+		`{"type":"file-history-snapshot","messageId":"` + n2 + `"}` + "\n" +
+		`{"type":"summary","leafUuid":"` + n2 + `","toolUseID":"toolu_1"}` + "\n"
+	fork := filepath.Join(p.dst, "projects", "a", fid+".jsonl")
+	if got := read(t, fork); got != want {
+		t.Errorf("fork =\n%s\nwant\n%s", got, want)
+	}
+	if n1 == u1 || n1 == n2 || forkUUID(fid, u1) != n1 || forkUUID(forkID("other"), u1) == n1 {
+		t.Error("fork ids are not derived per fork and per id")
+	}
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Unchanged {
+		t.Errorf("rerun = %+v, want unchanged: the ids must come out the same", r)
+	}
+}
