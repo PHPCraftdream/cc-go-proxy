@@ -12,7 +12,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ### Changed
 - `ccgp --send` / `--import` / `--export` take the sessions Claude Code moved into a subdirectory's folder (a session
   continued in a worktree) as the current directory's own, and write them into its folder: run from the main checkout,
-  the worktree's newest session is found and `/resume` there lists it. A fork gets message ids of its own besides its
+  the worktree's newest session is found and `/resume` there lists it. A fork gets its own uuids (every field) besides its
   session id: with the original's, Claude Code's `/resume` listed only one of the two (seen live). A fork written by an
   earlier version reads as diverged now and is left alone (move it away to get a fresh one).
 - `ccgp --send` / `--import` / `--export`: a session whose id the destination holds in another project folder (Claude

@@ -472,8 +472,9 @@ func TestAnIdInItsOwnFolderIsSyncedThere(t *testing.T) {
 	}
 }
 
-// A fork gets its own message and prompt ids, mapped the same way in every
-// line (links between messages hold) and on every run; other text is kept.
+// A fork gets its own uuids, under any key, mapped the same way in every line
+// (links between messages hold) and on every run; its session id stays, ids of
+// other forms (agentId names a file, toolu_/msg_ are the API's) and text too.
 func TestForkGivesTheMessagesIdsOfItsOwn(t *testing.T) {
 	const (
 		u1 = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -484,7 +485,8 @@ func TestForkGivesTheMessagesIdsOfItsOwn(t *testing.T) {
 	src := `{"parentUuid":null,"uuid":"` + u1 + `","promptId":"` + pr + `","sessionId":"` + sid + `","type":"user","message":{"content":"see ` + u1 + `"}}` + "\n" +
 		`{"parentUuid": "` + u1 + `","uuid":"` + u2 + `","sourceToolAssistantUUID":"` + u1 + `","sessionId":"` + sid + `","type":"assistant"}` + "\n" +
 		`{"type":"file-history-snapshot","messageId":"` + u2 + `"}` + "\n" +
-		`{"type":"summary","leafUuid":"` + u2 + `","toolUseID":"toolu_1"}` + "\n"
+		`{"type":"summary","leafUuid":"` + u2 + `","toolUseID":"toolu_1"}` + "\n" +
+		`{"type":"progress","toolUseID":"` + u1 + `","session_id":"` + sid + `","agentId":"a1b2c3","snapshotMessageId":"` + pr + `","id":"msg_1"}` + "\n"
 	put(t, p.s, src, t0.Add(2*time.Hour))
 	put(t, p.d, "x\n", t0)
 
@@ -496,7 +498,8 @@ func TestForkGivesTheMessagesIdsOfItsOwn(t *testing.T) {
 	want := `{"parentUuid":null,"uuid":"` + n1 + `","promptId":"` + np + `","sessionId":"` + fid + `","type":"user","message":{"content":"see ` + u1 + `"}}` + "\n" +
 		`{"parentUuid": "` + n1 + `","uuid":"` + n2 + `","sourceToolAssistantUUID":"` + n1 + `","sessionId":"` + fid + `","type":"assistant"}` + "\n" +
 		`{"type":"file-history-snapshot","messageId":"` + n2 + `"}` + "\n" +
-		`{"type":"summary","leafUuid":"` + n2 + `","toolUseID":"toolu_1"}` + "\n"
+		`{"type":"summary","leafUuid":"` + n2 + `","toolUseID":"toolu_1"}` + "\n" +
+		`{"type":"progress","toolUseID":"` + n1 + `","session_id":"` + fid + `","agentId":"a1b2c3","snapshotMessageId":"` + np + `","id":"msg_1"}` + "\n"
 	fork := filepath.Join(p.dst, "projects", "a", fid+".jsonl")
 	if got := read(t, fork); got != want {
 		t.Errorf("fork =\n%s\nwant\n%s", got, want)

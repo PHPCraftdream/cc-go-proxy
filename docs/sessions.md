@@ -76,10 +76,11 @@ ccgp --send claude codex 1 --force   # take the source's version
 
 - `--fork` writes the source as a **new session** in the destination, with a new id (the same id on every run, made
   from the original's, so the next run finds it and only appends what came after). The id is swapped in every line of
-  the transcript and in the transcripts of its subagents; tool results are copied as they are. The messages get ids of
-  their own as well (`uuid`, `parentUuid`, `leafUuid`, `promptId`, `messageId`, …, each mapped the same way everywhere
-  and on every run): with the original's message ids Claude Code takes the fork for the same conversation and
-  `/resume` lists only one of the two. The old session stays
+  the transcript and in the transcripts of its subagents; tool results are copied as they are. Every other uuid gets one of
+  its own as well, whatever its field (`uuid`, `parentUuid`, `leafUuid`, `promptId`, `messageId`, `toolUseID`, …), each
+  mapped the same way everywhere and on every run: with the original's message ids Claude Code takes the fork for the
+  same conversation and `/resume` lists only one of the two. Ids of other forms stay: `agentId` and task ids name files
+  of the session's folder, `toolu_…` / `msg_…` / `req_…` are the API's. The old session stays
   as it was. The run says `open a fork with: ccgp <profile> --resume <new id>`. If the fork was continued on its own
   too, it diverges in turn: it is reported and left alone (move or delete that file to get a fresh fork).
 - `--force` replaces the destination with the source. The old file is renamed to `<id>.jsonl.bak-<time>` in the same

@@ -114,8 +114,8 @@ type idSwap struct{ old, new string }
 // original, so the next fork of it lands on the same file and extends it.
 func forkID(id string) string { return uuidOf("ccgp fork " + id) }
 
-// forkUUID is the id a message (or prompt) of the fork fid gets in place of u:
-// a fork that kept the message ids of the original would be the same
+// forkUUID is the id the fork fid has in place of the uuid u (of a message, a
+// prompt, …): a fork that kept the original's message ids would be the same
 // conversation to Claude Code, which lists only one of the two.
 func forkUUID(fid, u string) string { return uuidOf("ccgp fork " + fid + " " + u) }
 
@@ -128,16 +128,23 @@ func uuidOf(s string) string {
 	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
 }
 
-// uuidField is a message or prompt id of a transcript line: uuid, parentUuid,
-// leafUuid, logicalParentUuid, sourceToolAssistantUUID, promptId, messageId.
-var uuidField = regexp.MustCompile(`"(?:[A-Za-z]*(?:[Uu]uid|UUID)|promptId|messageId)"\s*:\s*"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"`)
+// uuidField is a JSON field whose value is a uuid: uuid, parentUuid, leafUuid,
+// promptId, messageId, snapshotMessageId, toolUseID of a progress line, … any
+// key, so ids Claude Code adds later are covered too. Ids of other forms stay:
+// agentId and task ids name files of the session's folder, toolu_/msg_/req_
+// ids are the API's.
+var uuidField = regexp.MustCompile(`"[A-Za-z_]+"\s*:\s*"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"`)
 
-// forkUUIDs gives every message and prompt id of a line its fork id.
+// forkUUIDs gives every uuid of a line its fork id; fid itself (the session
+// id, already swapped in) stays.
 func forkUUIDs(line []byte, fid string) []byte {
 	return uuidField.ReplaceAllFunc(line, func(m []byte) []byte {
-		u := string(m[len(m)-37 : len(m)-1])
+		u := strings.ToLower(string(m[len(m)-37 : len(m)-1]))
+		if u == fid {
+			return m
+		}
 		out := append([]byte{}, m[:len(m)-37]...)
-		return append(append(out, forkUUID(fid, strings.ToLower(u))...), '"')
+		return append(append(out, forkUUID(fid, u)...), '"')
 	})
 }
 
