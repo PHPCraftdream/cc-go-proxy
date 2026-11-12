@@ -10,6 +10,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `ccgp --send --fork` is faster on large sessions: the ids of a transcript are collected and replaced in runs of
+  lines on several CPUs (up to 8, in their order), lines are read without a copy each, a short id is told by its
+  first character and length before any lookup and mapped once, and the files of the session's folder are copied
+  four at a time. The output is byte for byte what it was.
 - `ccgp --send` / `--import` / `--export` (plain, `--fork`, `--force`) leave out the failed end of a session: the
   turns at its end that got only `API Error: …` in place of a reply, with their request records and the scheduled
   prompts that kept firing into them (18 usage-limit 502s in a row in a live session). The copy resumes from the last

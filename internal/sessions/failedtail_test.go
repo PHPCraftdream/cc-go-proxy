@@ -293,7 +293,7 @@ func TestSwapReaderMarksTheOutputAtTheCut(t *testing.T) {
 	double := func(b []byte) ([]byte, error) { return append(append([]byte{}, b...), b...), nil }
 	for _, size := range []int{1, 3, 4096} {
 		got := int64(-1)
-		s := newSwapReader(strings.NewReader("a\nbb\nc\n"), double)
+		s := testSwapReader(strings.NewReader("a\nbb\nc\n"), double)
 		s.cut, s.mark = 5, func(n int64) { got = n }
 		var out strings.Builder
 		if _, err := io.CopyBuffer(struct{ io.Writer }{&out}, struct{ io.Reader }{s}, make([]byte, size)); err != nil {

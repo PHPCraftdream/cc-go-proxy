@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // forkIDs maps every id of a session to the one its fork has, the same way in
@@ -32,6 +33,10 @@ type forkIDs struct {
 	// slugs maps each slug of the session (the name of its plan file) to the
 	// fork's: one plan file for two sessions would be written by both.
 	slugs map[string]string
+	// shortAs is short mapped once (prepare); shape has bit n set for the first
+	// byte of a short id of length n, so most words need no map lookup.
+	shortAs map[string]string
+	shape   [256]uint32
 }
 
 var (
@@ -80,7 +85,31 @@ func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
 	if err != nil {
 		return nil, err
 	}
+	m.prepare()
 	return m, nil
+}
+
+// prepare maps every short id once; line is then free of writes and safe for
+// concurrent use.
+func (m *forkIDs) prepare() {
+	m.shortAs = make(map[string]string, len(m.short))
+	for id := range m.short {
+		m.shortAs[id] = m.mapShort(id)
+		if n := len(id); n < 32 {
+			m.shape[id[0]] |= 1 << n
+		}
+	}
+}
+
+// isShort reports whether b is a short id of the session.
+func (m *forkIDs) isShort(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	if m.shortAs != nil && (len(b) >= 32 || m.shape[b[0]]&(1<<len(b)) == 0) {
+		return false
+	}
+	return m.short[string(b)]
 }
 
 // add keeps a short id: letters and digits mixed, or a task id of letters
@@ -96,41 +125,95 @@ func (m *forkIDs) add(id string) {
 
 func isDigit(r rune) bool { return r >= '0' && r <= '9' }
 
+// scan collects the ids of a file; a large one is read on several goroutines.
 func (m *forkIDs) scan(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	br := bufio.NewReaderSize(f, copyBuf)
-	for {
-		line, err := br.ReadBytes('\n')
-		if hasShortField(line) {
-			for _, sm := range shortField.FindAllSubmatch(line, -1) {
-				m.add(string(sm[1]))
+	n := workers()
+	if info, err := f.Stat(); err != nil || info.Size() < parallelFrom || n < 2 {
+		br := bufio.NewReaderSize(f, copyBuf)
+		var long []byte
+		for {
+			line, err := readLine(br, &long)
+			m.scanLine(line)
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			if err != nil {
+				return err
 			}
 		}
-		collectUUIDValues(line, m.uuids)
-		if bytes.Contains(line, []byte(`"slug"`)) {
-			for _, sm := range slugField.FindAllSubmatch(line, -1) {
-				if s := string(sm[1]); m.slugs[s] == "" {
-					m.slugs[s] = s + "-" + m.fid[:min(8, len(m.fid))]
+	}
+	parts := make([]*forkIDs, n)
+	work := make(chan *lineBatch, 2*n)
+	var wg sync.WaitGroup
+	for i := range parts {
+		part := &forkIDs{fid: m.fid, uuids: map[string]bool{}, short: map[string]bool{}, slugs: map[string]string{}}
+		parts[i] = part
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for b := range work {
+				for rest := b.data; len(rest) > 0; {
+					end := len(rest)
+					if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+						end = i + 1
+					}
+					part.scanLine(rest[:end])
+					rest = rest[end:]
 				}
+				b.free()
+			}
+		}()
+	}
+	var rerr error
+	readBatches(f, func(b *lineBatch) bool {
+		work <- b
+		if b.err != nil && !errors.Is(b.err, io.EOF) {
+			rerr = b.err
+		}
+		return true
+	})
+	close(work)
+	wg.Wait()
+	for _, p := range parts {
+		for k := range p.uuids {
+			m.uuids[k] = true
+		}
+		for k := range p.short {
+			m.short[k] = true
+		}
+		for k, v := range p.slugs {
+			m.slugs[k] = v
+		}
+	}
+	return rerr
+}
+
+// scanLine collects the ids of one line.
+func (m *forkIDs) scanLine(line []byte) {
+	if hasShortField(line) {
+		for _, sm := range shortField.FindAllSubmatch(line, -1) {
+			m.add(string(sm[1]))
+		}
+	}
+	collectUUIDValues(line, m.uuids)
+	if bytes.Contains(line, []byte(`"slug"`)) {
+		for _, sm := range slugField.FindAllSubmatch(line, -1) {
+			if s := string(sm[1]); m.slugs[s] == "" {
+				m.slugs[s] = s + "-" + m.fid[:min(8, len(m.fid))]
 			}
 		}
-		// Named in text before any field does: kept from the first mention, so
-		// a later run, when the field has come, maps the earlier lines the same.
-		if bytes.Contains(line, []byte("with ID: ")) || bytes.Contains(line, []byte("<task-id>")) ||
-			bytes.Contains(line, []byte("agentId: ")) || bytes.Contains(line, []byte(".output")) {
-			for _, sm := range shortText.FindAllSubmatch(line, -1) {
-				m.add(string(sm[1]))
-			}
-		}
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
+	}
+	// Named in text before any field does: kept from the first mention, so
+	// a later run, when the field has come, maps the earlier lines the same.
+	if bytes.Contains(line, []byte("with ID: ")) || bytes.Contains(line, []byte("<task-id>")) ||
+		bytes.Contains(line, []byte("agentId: ")) || bytes.Contains(line, []byte(".output")) {
+		for _, sm := range shortText.FindAllSubmatch(line, -1) {
+			m.add(string(sm[1]))
 		}
 	}
 }
@@ -199,12 +282,12 @@ func (m *forkIDs) shortIDs(b []byte) []byte {
 			j++
 		}
 		at := i
-		if i > 0 && b[i-1] == '\\' && strings.IndexByte("nrtbf", b[i]) >= 0 && !m.short[string(b[i:j])] {
+		if i > 0 && b[i-1] == '\\' && strings.IndexByte("nrtbf", b[i]) >= 0 && !m.isShort(b[i:j]) {
 			at = i + 1
 		}
-		if n := j - at; n >= 6 && n <= 24 && m.short[string(b[at:j])] {
+		if n := j - at; n >= 6 && n <= 24 && m.isShort(b[at:j]) {
 			out = append(out, b[last:at]...)
-			out = append(out, m.mapShort(string(b[at:j]))...)
+			out = append(out, m.shortFor(string(b[at:j]))...)
 			last = j
 		}
 		i = j
@@ -213,6 +296,14 @@ func (m *forkIDs) shortIDs(b []byte) []byte {
 		return b
 	}
 	return append(out, b[last:]...)
+}
+
+// shortFor is the fork's id for the short id id.
+func (m *forkIDs) shortFor(id string) string {
+	if as, ok := m.shortAs[id]; ok {
+		return as
+	}
+	return m.mapShort(id)
 }
 
 // mapShort keeps the first character (a for an agent, b for a task) and the

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -353,6 +354,8 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		return res
 	}
 	dstSide := strings.TrimSuffix(dst, ".jsonl")
+	type job struct{ from, to string }
+	var jobs []job
 	err = filepath.WalkDir(srcSide, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -367,19 +370,56 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		if opt.rewrite != nil {
 			rel = opt.rewrite.name(rel)
 		}
-		st, n, _, err := place(p, filepath.Join(dstSide, rel), strings.HasSuffix(p, ".jsonl"), opt, nil)
-		if err != nil {
-			return err
-		}
-		res.Removed += n.removed
-		if st == Copied || st == Updated || st == Replaced {
-			res.Files++
-		}
+		jobs = append(jobs, job{p, filepath.Join(dstSide, rel)})
 		return nil
 	})
-	res.Err = err
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	// The files are independent: several at once.
+	var (
+		mu   sync.Mutex
+		wg   sync.WaitGroup
+		next = make(chan job)
+	)
+	for range min(sidecarWorkers, len(jobs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range next {
+				st, n, _, err := place(j.from, j.to, strings.HasSuffix(j.from, ".jsonl"), opt, nil)
+				mu.Lock()
+				if err != nil {
+					if res.Err == nil {
+						res.Err = err
+					}
+				} else {
+					res.Removed += n.removed
+					if st == Copied || st == Updated || st == Replaced {
+						res.Files++
+					}
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, j := range jobs {
+		mu.Lock()
+		failed := res.Err != nil
+		mu.Unlock()
+		if failed {
+			break
+		}
+		next <- j
+	}
+	close(next)
+	wg.Wait()
 	return res
 }
+
+// sidecarWorkers is how many files of a session's folder are copied at once.
+const sidecarWorkers = 4
 
 // idElsewhere names the project folder of configDir, other than project, that
 // holds the transcript of id, when project itself does not; "" otherwise.
