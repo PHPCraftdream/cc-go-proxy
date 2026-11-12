@@ -10,6 +10,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Changed
+- `--fork` also replaces the ids of a session run on Codex through ccgp: tool calls `call_<32 hex>` and replies
+  `resp_<50 hex>` (11 836 and 15 714 of them in the live session were kept). A background task's id named in text
+  before its field (`with ID: b…`, `tasks/b….output`, `<task-id>`; 359 in the live session) is known from that first
+  mention, so a fork synced while the task runs is extended later instead of diverging. An id inside a longer word
+  (`recall_…`) is left alone.
 - `ccgp --send` after a review: a session is taken from a worktree's folder only when it began in the directory itself,
   judged session by session (sessions begun in a subdirectory or in the worktree stay theirs; they were written into
   the directory's folder, where `/resume` showed them nowhere); a fork whose id another folder holds is reported

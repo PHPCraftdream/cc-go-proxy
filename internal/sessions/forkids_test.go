@@ -208,3 +208,66 @@ func TestAForkGrowsWithItsSource(t *testing.T) {
 		t.Errorf("the new line does not link to the fork's message: %s", tail)
 	}
 }
+
+// A session run through ccgp on Codex holds the Responses API's ids: tool
+// calls call_<32 hex>, replies resp_<50 hex>. They are the session's too.
+func TestForkReplacesCodexIDs(t *testing.T) {
+	const (
+		call = "call_f2bafbdac980443f9b296d95129b00b6"
+		resp = "resp_0679676010f4e302016af510224ba087d1bd075c135a7fb41d"
+	)
+	m := &forkIDs{fid: forkID(sid)}
+	in := `{"message":{"id":"` + resp + `","content":[{"type":"tool_use","id":"` + call + `"}]}}` + "\n" +
+		`{"content":[{"type":"tool_result","tool_use_id":"` + call + `"}],"text":"<tool-use-id>` + call + `</tool-use-id>\n` + call + ` done"}` + "\n"
+	got := string(m.line([]byte(in)))
+	ncall, nresp := string(m.line([]byte(call))), string(m.line([]byte(resp)))
+	if strings.Contains(got, call) || strings.Contains(got, resp) || strings.Count(got, ncall) != 4 || strings.Count(got, nresp) != 1 {
+		t.Errorf("line = %s\n(call -> %s, resp -> %s)", got, ncall, nresp)
+	}
+	if !regexp.MustCompile(`^call_[0-9a-f]{32}$`).MatchString(ncall) || !regexp.MustCompile(`^resp_[0-9a-f]{50}$`).MatchString(nresp) || ncall == call {
+		t.Errorf("forms: %s %s", ncall, nresp)
+	}
+	// Names in code, ids inside longer words, and over-long runs stay.
+	for _, keep := range []string{
+		"call_backgroundHandlersNow", // no digit: a name
+		"recall_f2bafbdac980443f9b296d95129b00b6",
+		"call_" + strings.Repeat("a1", 33), // 66 characters: no id of the API
+	} {
+		if got := string(m.line([]byte(keep))); got != keep {
+			t.Errorf("%s -> %s", keep, got)
+		}
+	}
+}
+
+// Claude Code names a background task in text long before the field that
+// holds its id: the id is the session's from the first mention, and a fork
+// synced in between is extended, not diverged, once the field comes.
+func TestATaskIDNamedInTextFirstIsKnownFromThere(t *testing.T) {
+	const (
+		task  = "bo1nq9t9c"
+		agent = "abedd0edd7fd1834e"
+	)
+	p := both(t)
+	put(t, p.d, "x\n", t0)
+	first := `{"type":"user","sessionId":"` + sid + `","message":{"content":"Command running in background with ID: ` + task +
+		`. Output is being written to: C:\Temp\` + sid + `\tasks\` + task + `.output; agentId: ` + agent + ` (use SendMessage)"}}` + "\n"
+	put(t, p.s, first, t0.Add(2*time.Hour))
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked {
+		t.Fatalf("first = %+v", r)
+	}
+	fork := filepath.Join(p.dst, "projects", "a", forkID(sid)+".jsonl")
+	before := read(t, fork)
+	if strings.Contains(before, task) || strings.Contains(before, agent) {
+		t.Fatalf("ids named only in text were kept: %s", before)
+	}
+	more := `{"type":"user","sessionId":"` + sid + `","message":{"content":"<task-notification>\n<task-id>` + task +
+		`</task-id>"},"toolUseResult":{"backgroundTaskId":"` + task + `","agentId":"` + agent + `"}}` + "\n"
+	put(t, p.s, first+more, t0.Add(3*time.Hour))
+	if r := copyOne(t, p, Options{Fork: true}); r.Status != Forked {
+		t.Fatalf("after the field came = %+v, want the fork extended", r)
+	}
+	after := read(t, fork)
+	if !strings.HasPrefix(after, before) || strings.Contains(after, task) || strings.Contains(after, agent) {
+		t.Errorf("fork before:\n%s\nafter:\n%s", before, after)
+	}
+}

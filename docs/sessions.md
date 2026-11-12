@@ -78,8 +78,11 @@ ccgp --send claude codex 1 --force   # take the source's version
   from the original's, so the next run finds it and only appends what came after). Every id of the session is
   replaced, in every line, in the files of its folder and in their names: the session id, the session's uuids (every
   uuid that is a field's value somewhere in it: messages, prompts, …), the API's `toolu_…` / `msg_…` / `req_…` ids,
-  the ids of subagents (`agent-<id>.jsonl`, `.meta.json`) and of background tasks (`tool-results/<id>.txt`; a task id
-  of letters only is taken when it has the form `b` + 8 letters), wherever they stand, text included. A uuid only
+  the Responses API's `call_…` / `resp_…` / `fc_…` / `rs_…` ids of a session run on Codex, the ids of subagents
+  (`agent-<id>.jsonl`, `.meta.json`) and of background tasks (`tool-results/<id>.txt`; a task id of letters only is
+  taken when it has the form `b` + 8 letters; one named in text first, as in `with ID: b…` or `tasks/b….output`, is
+  known from there, so a fork synced while the task runs is extended later, not diverged), wherever they stand, text
+  included. A uuid only
   mentioned in text (a link to something else) is not the session's and stays, and so does a word an id field holds.
   Each old id always gets the same new one, so tool calls keep their results, subagents their files, and the
   next run extends the fork; a fork that kept any id of the original would be the same thing to Claude Code in places
