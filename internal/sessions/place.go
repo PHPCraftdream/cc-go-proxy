@@ -76,7 +76,7 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		strip = newThinkingStripper()
 	}
 	if rewrite != nil || strip != nil {
-		s := &swapReader{src: newLines(in, rewrite)}
+		s := &swapReader{src: newLines(in, rewrite, size)}
 		defer s.src.close()
 		if strip != nil {
 			s.fn = strip.line
@@ -88,7 +88,7 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 	} else if cut < size {
 		p.compareFrom(cut)
 	}
-	_, err = io.CopyBuffer(p, in, make([]byte, copyBuf))
+	_, err = io.CopyBuffer(p, in, make([]byte, min(max(size, 32<<10), copyBuf)))
 	var c copied
 	if strip != nil {
 		c.removed = strip.removed
@@ -227,10 +227,6 @@ type swapReader struct {
 	out  int64 // output bytes produced
 	cut  int64
 	mark func(int64)
-}
-
-func newSwapReader(r io.Reader, fn func([]byte) ([]byte, error)) *swapReader {
-	return &swapReader{src: newSeqLines(r, nil), fn: fn}
 }
 
 // Read fills p with as many lines as fit, so the writer gets large chunks.

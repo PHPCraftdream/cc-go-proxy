@@ -133,7 +133,7 @@ func (m *forkIDs) scan(path string) error {
 	}
 	defer func() { _ = f.Close() }()
 	n := workers()
-	if info, err := f.Stat(); err != nil || info.Size() < 4*batchSize || n < 2 {
+	if info, err := f.Stat(); err != nil || info.Size() < parallelFrom || n < 2 {
 		br := bufio.NewReaderSize(f, copyBuf)
 		var long []byte
 		for {
@@ -165,6 +165,7 @@ func (m *forkIDs) scan(path string) error {
 					part.scanLine(rest[:end])
 					rest = rest[end:]
 				}
+				b.free()
 			}
 		}()
 	}

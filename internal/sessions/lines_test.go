@@ -9,7 +9,9 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
 )
@@ -70,7 +72,7 @@ func TestParallelLinesMatchSequential(t *testing.T) {
 		randomLines(r, 50),
 		randomLines(r, 1500) + "tail without newline",
 	} {
-		want, wantN, wantErr := drain(t, newSeqLines(strings.NewReader(in), rewrite))
+		want, wantN, wantErr := drain(t, newSeqLines(strings.NewReader(in), rewrite, 0))
 		for _, workers := range []int{1, 2, 7} {
 			got, n, err := drain(t, newParLines(strings.NewReader(in), rewrite, workers))
 			if got != want || n != wantN || n != len(in) || !errors.Is(err, io.EOF) || !errors.Is(wantErr, io.EOF) {
@@ -85,7 +87,7 @@ func TestParallelLinesReportTheSourceErrorAfterTheData(t *testing.T) {
 	boom := errors.New("boom")
 	in := randomLines(rand.New(rand.NewSource(2)), 400)
 	got, n, err := drain(t, newParLines(io.MultiReader(strings.NewReader(in), iotest.ErrReader(boom)), rewrite, 4))
-	want, _, _ := drain(t, newSeqLines(strings.NewReader(in), rewrite))
+	want, _, _ := drain(t, newSeqLines(strings.NewReader(in), rewrite, 0))
 	if !errors.Is(err, boom) || got != want || n != len(in) {
 		t.Errorf("got %d bytes, %d read, %v; want %d bytes, then boom", len(got), n, err, len(want))
 	}
@@ -223,5 +225,54 @@ func TestCopySidecarFailure(t *testing.T) {
 	res, err := Copy(p.src, p.dst, 1, Options{})
 	if err != nil || len(res) != 1 || res[0].Err == nil {
 		t.Fatalf("Copy = %+v, %v; want the session failed", res, err)
+	}
+}
+
+// afterClose fails the test when the stream is read once closed is set.
+type afterClose struct {
+	r      io.Reader
+	closed *atomic.Bool
+	late   *atomic.Bool
+}
+
+func (a afterClose) Read(p []byte) (int, error) {
+	if a.closed.Load() {
+		a.late.Store(true)
+	}
+	return a.r.Read(p)
+}
+
+// Nothing reads the stream (or reports its progress) once close has returned.
+func TestParallelLinesCloseWaitsForTheReader(t *testing.T) {
+	in := randomLines(rand.New(rand.NewSource(5)), 1500)
+	for range 20 {
+		var closed, late atomic.Bool
+		p := newParLines(afterClose{strings.NewReader(in), &closed, &late}, rewrite, 3)
+		if _, _, err := p.next(); err != nil {
+			t.Fatal(err)
+		}
+		p.close()
+		closed.Store(true)
+		runtime.Gosched()
+		if late.Load() {
+			t.Fatal("the stream was read after close")
+		}
+	}
+}
+
+// A small stream is not worth goroutines; a large one with a rewrite is.
+func TestNewLinesChoosesBySize(t *testing.T) {
+	if _, ok := newLines(strings.NewReader(""), rewrite, parallelFrom-1).(*seqLines); !ok {
+		t.Error("a small stream went parallel")
+	}
+	if _, ok := newLines(strings.NewReader(""), nil, parallelFrom).(*seqLines); !ok {
+		t.Error("a stream without a rewrite went parallel")
+	}
+	if runtime.GOMAXPROCS(0) > 1 {
+		src := newLines(strings.NewReader(""), rewrite, parallelFrom)
+		if _, ok := src.(*parLines); !ok {
+			t.Error("a large stream was not parallel")
+		}
+		src.close()
 	}
 }

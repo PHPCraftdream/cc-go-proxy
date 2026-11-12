@@ -390,16 +390,15 @@ func copySession(dstDir string, s Session, opt Options) Result {
 			for j := range next {
 				st, n, _, err := place(j.from, j.to, strings.HasSuffix(j.from, ".jsonl"), opt, nil)
 				mu.Lock()
-				switch {
-				case err != nil:
+				if err != nil {
 					if res.Err == nil {
 						res.Err = err
 					}
-				case st == Copied || st == Updated || st == Replaced:
-					res.Files++
-					fallthrough
-				default:
+				} else {
 					res.Removed += n.removed
+					if st == Copied || st == Updated || st == Replaced {
+						res.Files++
+					}
 				}
 				mu.Unlock()
 			}
