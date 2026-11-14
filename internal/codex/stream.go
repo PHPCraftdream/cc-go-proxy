@@ -81,6 +81,8 @@ type Translator struct {
 	Emit  Emit
 	// Failed is the message of the error event sent to the client, if any.
 	Failed string
+	// FailedCode is the upstream error code behind Failed, if it had one.
+	FailedCode string
 	// Detail is the raw upstream event that failed the stream (error or
 	// response.failed), for the log.
 	Detail string
@@ -260,7 +262,7 @@ func (t *Translator) handle(ev *event) {
 		if ev.Response != nil && ev.Response.Error != nil {
 			code, msg = ev.Response.Error.Code, ev.Response.Error.Message
 		}
-		t.failOrRetry(overloaded(code, ""), describeError(code, msg, "response failed"))
+		t.failOrRetry(overloaded(code, ""), code, describeError(code, msg, "response failed"))
 
 	case "error":
 		code, msg, typ := ev.Code, ev.Message, ""
@@ -269,7 +271,7 @@ func (t *Translator) handle(ev *event) {
 			code = cmp.Or(code, ev.Error.Code, ev.Error.Type)
 			msg = cmp.Or(msg, ev.Error.Message)
 		}
-		t.failOrRetry(overloaded(code, typ), describeError(code, msg, "upstream error"))
+		t.failOrRetry(overloaded(code, typ), code, describeError(code, msg, "upstream error"))
 	}
 }
 
@@ -285,10 +287,13 @@ func overloaded(code, typ string) bool {
 
 // failOrRetry fails the stream, or marks it for a retry when the failure is
 // worth one, retries are allowed and no content was sent yet.
-func (t *Translator) failOrRetry(worth bool, msg string) {
+func (t *Translator) failOrRetry(worth bool, code, msg string) {
 	if worth && t.AllowRetry && t.next == 0 && !t.done {
 		t.Retry, t.retry, t.RetryTransport = msg, true, false
 		return
+	}
+	if !t.done {
+		t.FailedCode = code
 	}
 	t.fail(msg)
 }

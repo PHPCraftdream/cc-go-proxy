@@ -158,7 +158,7 @@ errors passed on with their status:
 | `404` | unknown token |
 | `503` | the profile cannot be served now, for example the provider has no API key (`run ccgp --login <provider>`) or the profile was removed from the config |
 | `413` | the body is larger than `listen.max_body_mb` |
-| `429` | the backend rate-limited the request; a `Retry-After` of up to 5 s is waited out once, a longer one is passed on with its header |
+| `429` | the backend rate-limited the request; a `Retry-After` of up to 5 s is waited out once, a longer one is passed on with its header. A used-up Codex plan limit (`usage_limit_reached`, over HTTP or as the error event of a non-stream reply) is a `429` `rate_limit_error` with `x-should-retry: false`: the limit holds for hours, so Claude Code does not send the request again |
 | `502` | the connection to the backend failed after the retries |
 
 Codex calls are made before streaming starts, so the backend's HTTP status reaches the client as the status of the

@@ -134,6 +134,10 @@ var overloadBackoff = []time.Duration{2 * time.Second, 5 * time.Second}
 // backend answered with 502/503/504. Short: the next try opens another connection.
 var brokenBackoff = []time.Duration{300 * time.Millisecond, 2 * time.Second}
 
+// noRetry tells Claude Code not to send the request again: a used-up usage
+// limit holds for hours, and each retry uploads the whole request.
+func noRetry(c *fiber.Ctx) { c.Set("x-should-retry", "false") }
+
 // edgeError reports whether status is a gateway error: the request got no
 // further than the edge, so asking again is safe.
 func edgeError(status int) bool {
@@ -596,6 +600,9 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
 			c.Set("Retry-After", ra) // Claude Code backs off by it
 		}
+		if status == http.StatusTooManyRequests && codex.IsUsageLimit(b) {
+			noRetry(c)
+		}
 		hdrs := codexRateHeaders(resp.Header)
 		out := anthropicError(c, status, codex.ErrorType(status), msg)
 		// The log gets the limits and the ids; the client the message.
@@ -622,6 +629,10 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		defer func() { _ = upstream.Body.Close() }()
 		logUpstreamEnd(ctx, tr, trace, upstream, profile, mapped, bodyBytes)
 		out, err := col.Result()
+		if err != nil && tr.FailedCode == codex.UsageLimitCode {
+			noRetry(c)
+			return anthropicError(c, fiber.StatusTooManyRequests, "rate_limit_error", err.Error())
+		}
 		if err != nil {
 			return anthropicError(c, fiber.StatusBadGateway, "api_error", err.Error())
 		}
