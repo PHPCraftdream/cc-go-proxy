@@ -10,6 +10,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Fixed
+- A used-up Codex plan limit (`usage_limit_reached`) reached Claude Code as a `502` when the websocket brought it in a
+  non-stream reply, and Claude Code sent the request, megabytes each, ten times more; over HTTP the `429` was retried
+  too. Both are now a `429` `rate_limit_error` with `x-should-retry: false`, which Claude Code does not retry.
 - `ccgp --send` / `--fork` / `--force` kept the failed end of a session whose API errors were followed by a turn the user
   stopped with Esc: the `[Request interrupted by user]` note counted as conversation. It is now part of the failed end.
 - `ccgp --send` / `--fork` of a session begun in another directory (moved into this one's folder by `/cd` or an

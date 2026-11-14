@@ -248,6 +248,21 @@ func ErrorType(status int) string {
 	return "api_error"
 }
 
+// UsageLimitCode is the error of a used-up plan limit. It resets in hours or
+// days: the same request sent again only uploads it once more.
+const UsageLimitCode = "usage_limit_reached"
+
+// IsUsageLimit reports whether an upstream error body is a used-up plan limit.
+func IsUsageLimit(body []byte) bool {
+	var v struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(body, &v) == nil && (v.Error.Type == UsageLimitCode || v.Error.Code == UsageLimitCode)
+}
+
 // ErrorMessage extracts a message from an upstream error body.
 func ErrorMessage(body []byte) string {
 	var v struct {
