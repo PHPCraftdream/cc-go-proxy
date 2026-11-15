@@ -113,12 +113,18 @@ func updateFlow(checkOnly bool, base, dir, curVersion string,
 			install = append(install, "ccgpy"+exeExt(runtime.GOOS))
 		}
 	}
-	for _, bin := range install {
+	// Every member is extracted and checked before the first binary is
+	// replaced: a broken archive must not leave a half-updated install.
+	contents := make([][]byte, len(install))
+	for i, bin := range install {
 		content, err := extractMember(data, zipArch, name+"/"+bin, updateMaxMember)
 		if err != nil {
 			return err
 		}
-		if err := replaceBinary(dir, bin, content, runtime.GOOS); err != nil {
+		contents[i] = content
+	}
+	for i, bin := range install {
+		if err := replaceBinary(dir, bin, contents[i], runtime.GOOS); err != nil {
 			return err
 		}
 	}

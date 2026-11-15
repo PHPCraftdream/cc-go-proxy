@@ -154,18 +154,9 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 			defer release()
 			defer cancel()
 			defer func() { _ = resp.Body.Close() }()
-			buf := make([]byte, 32<<10)
-			for {
-				n, rerr := resp.Body.Read(buf)
-				if n > 0 {
-					if _, werr := w.Write(buf[:n]); werr != nil || w.Flush() != nil {
-						return // client gone: abort upstream
-					}
-				}
-				if rerr != nil {
-					return
-				}
-			}
+			copySSE(w, resp.Body, func(err error) {
+				logStreamFailure(logOut, trace.start, "stream", cfg.Profile, requested+" -> "+backend, err.Error(), "", "")
+			})
 		})
 		return nil
 	}
@@ -180,6 +171,27 @@ func forwardAnthropic(c *fiber.Ctx, cfg *config.Config, path string, estimateOnF
 		c.Locals(localsErr, upstreamErrorText(resp.StatusCode, resp.Header, b))
 	}
 	return c.Send(b)
+}
+
+// copySSE passes an upstream SSE stream through to the client. A stream the
+// provider breaks is handed to onReadError; a normal end and a client that
+// left (the write fails) stay silent.
+func copySSE(w *bufio.Writer, body io.Reader, onReadError func(error)) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, rerr := body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil || w.Flush() != nil {
+				return // client gone: abort upstream
+			}
+		}
+		if rerr != nil {
+			if rerr != io.EOF && onReadError != nil {
+				onReadError(rerr)
+			}
+			return
+		}
+	}
 }
 
 // estimateTokens is a rough length-based count (about four bytes per token).

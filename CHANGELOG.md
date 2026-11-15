@@ -10,6 +10,20 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Fixed
+- A request body the OpenAI-compatible handler could not parse was printed whole to the server log (a conversation of
+  megabytes); the log now gets the error and the size, the body only with debug on.
+- A stream an `anthropic_compat` provider (z.ai) broke mid-reply left no line in the log after its `200`; it gets a
+  `stream failed after …` line like a Codex one.
+- The first launch of a profile copied the user's latest session without saying where it lives: one begun in another
+  directory was not listed by `/resume` (the bug of `ccgp --send`, fixed before); it now gets the `relocated` line too.
+  The check whether the profile already has a session of the directory reads that one project folder, not every
+  transcript of every project.
+- `ccgp --update` replaced `ccgp` before it had unpacked `ccgpy`: a broken archive could leave the two binaries of
+  different versions. Every file is unpacked and checked first.
+- A rerun of `ccgp --send` read every sidecar file of a session again (tens of thousands in a big one); a file copied
+  byte for byte whose size and time equal the source's is skipped now, as the file versions of `/rewind` already were.
+  Files changed by the copy (thinking blocks removed, a fork's ids) are still compared.
+- Usage lines, help, the README and `docs/cli.md` offered `[--fork|--force]` as alternatives; they can be combined.
 - A used-up Codex plan limit (`usage_limit_reached`) reached Claude Code as a `502` when the websocket brought it in a
   non-stream reply, and Claude Code sent the request, megabytes each, ten times more; over HTTP the `429` was retried
   too. Both are now a `429` `rate_limit_error` with `x-should-retry: false`, which Claude Code does not retry.

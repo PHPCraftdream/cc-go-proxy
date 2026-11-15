@@ -2,8 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -137,5 +140,96 @@ func TestProviderDetectionForHandlers(t *testing.T) {
 				t.Errorf("Expected provider %v, got %v", tt.expectedProvider, provider)
 			}
 		})
+	}
+}
+
+// captureStdout returns what fn prints to os.Stdout. fn must not call
+// t.Fatal: the writer is restored only after it returns.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- string(b)
+	}()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = old
+	return <-done
+}
+
+// A body that cannot be parsed is logged with its size, never in full: it can
+// hold a whole conversation.
+func TestMessagesParseFailureLogsErrorAndSizeNotBody(t *testing.T) {
+	app := fiber.New()
+	cfg := &config.Config{}
+	app.Post("/v1/messages", func(c *fiber.Ctx) error { return handleMessages(c, cfg) })
+
+	body := `{"model":"claude-x","messages":"` + strings.Repeat("secret prompt ", 200) + `"}`
+	old := logOut
+	var buf syncBuf
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 400 {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	log := buf.String()
+	if !strings.Contains(log, "Failed to parse request body") || !strings.Contains(log, fmt.Sprintf("(body: %d bytes)", len(body))) {
+		t.Errorf("log lacks the error and the size: %q", log)
+	}
+	if strings.Contains(log, "secret prompt") {
+		t.Errorf("the body was logged: %q", log)
+	}
+}
+
+// In debug mode the raw body is still printed.
+func TestMessagesParseFailureLogsBodyInDebug(t *testing.T) {
+	app := fiber.New()
+	cfg := &config.Config{Debug: true}
+	app.Post("/v1/messages", func(c *fiber.Ctx) error { return handleMessages(c, cfg) })
+
+	body := `{"model":"claude-x","messages":"not an array"}`
+	old := logOut
+	var buf syncBuf
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+
+	var callErr error
+	var status int
+	out := captureStdout(t, func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := app.Test(req)
+		callErr = err
+		if err == nil {
+			status = resp.StatusCode
+		}
+	})
+	if callErr != nil {
+		t.Fatal(callErr)
+	}
+	if status != 400 {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if !strings.Contains(out, "Raw body") || !strings.Contains(out, body) {
+		t.Errorf("debug output lacks the raw body: %q", out)
+	}
+	if !strings.Contains(buf.String(), "(body: ") {
+		t.Errorf("log lacks the body size: %q", buf.String())
 	}
 }

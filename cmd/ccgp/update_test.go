@@ -512,3 +512,78 @@ func TestUpdateCmdFlags(t *testing.T) {
 		t.Error("unknown flag accepted")
 	}
 }
+
+// A member that cannot be extracted aborts the update before the first
+// binary is replaced: the install never holds two different versions.
+func TestUpdateFlowBrokenMemberLeavesTheInstallAlone(t *testing.T) {
+	dir := t.TempDir()
+	ccgpExe, ccgpyExe := "ccgp"+exeExt(runtime.GOOS), "ccgpy"+exeExt(runtime.GOOS)
+	writeExe(t, filepath.Join(dir, ccgpExe), "old-ccgp")
+	writeExe(t, filepath.Join(dir, ccgpyExe), "old-ccgpy")
+
+	ver := "9.9.9"
+	name, archive, zipArch, err := archiveName(ver, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ccgpMember, ccgpyMember := name+"/ccgp"+exeExt(runtime.GOOS), name+"/ccgpy"+exeExt(runtime.GOOS)
+	var arch []byte
+	if zipArch {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		w, err := zw.Create(ccgpMember)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("new-ccgp")); err != nil {
+			t.Fatal(err)
+		}
+		fh := &zip.FileHeader{Name: ccgpyMember, Method: zip.Deflate}
+		fh.SetMode(os.ModeSymlink)
+		w, err = zw.CreateHeader(fh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("C:/Windows/System32")); err != nil {
+			t.Fatal(err)
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		arch = buf.Bytes()
+	} else {
+		arch = buildTarGzHeaders(t, []*tar.Header{
+			{Name: ccgpMember, Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len("new-ccgp"))},
+			{Name: ccgpyMember, Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
+		}, map[string][]byte{ccgpMember: []byte("new-ccgp")})
+	}
+	sums := fmt.Sprintf("%s  %s\n", sum(arch), archive)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/releases/tag/v"+ver)
+		w.WriteHeader(http.StatusFound)
+	})
+	mux.HandleFunc("/download/v"+ver+"/"+archive, func(w http.ResponseWriter, r *http.Request) { w.Write(arch) })
+	mux.HandleFunc("/download/v"+ver+"/SHA256SUMS", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(sums)) })
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	lookup, download := updateClients()
+	var out bytes.Buffer
+	err = updateFlow(false, srv.URL, dir, "0.1.0", lookup, download, func() bool { return false }, &out)
+	if err == nil || !strings.Contains(err.Error(), ccgpyExe) {
+		t.Fatalf("want the ccgpy member to be rejected, got %v", err)
+	}
+	for bin, want := range map[string]string{ccgpExe: "old-ccgp", ccgpyExe: "old-ccgpy"} {
+		got, err := os.ReadFile(filepath.Join(dir, bin))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", bin, got, err, want)
+		}
+	}
+	for _, pat := range []string{"*.new", "*.old"} {
+		if got, _ := filepath.Glob(filepath.Join(dir, pat)); len(got) != 0 {
+			t.Errorf("%s left behind: %v", pat, got)
+		}
+	}
+}

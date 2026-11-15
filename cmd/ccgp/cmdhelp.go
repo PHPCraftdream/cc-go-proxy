@@ -168,7 +168,7 @@ Examples:
   ccgp --models apply codex
   ccgp --models apply zai
 `,
-	"--send": `ccgp --send <from> <to> [count] [--fork|--force]
+	"--send": `ccgp --send <from> <to> [count] [--fork] [--force]
 
 Copy the latest session transcripts of the current directory from one side
 to the other. A side is "claude" (your own Claude Code) or a profile name;
@@ -197,25 +197,28 @@ Examples:
   ccgp --send codex codex2 1
   ccgp --send claude codex 1 --fork
   ccgp --send claude codex 1 --force
+  ccgp --send claude codex 1 --fork --force
 `,
-	"--import": `ccgp --import <profile> [count] [--fork|--force]
+	"--import": `ccgp --import <profile> [count] [--fork] [--force]
 
 Same as: ccgp --send claude <profile>
---fork keeps a diverged session as a new one, --force replaces the old copy.
+--fork keeps a diverged session as a new one, --force replaces the old copy; together they write a diverged session afresh, replacing an earlier fork that went its own way.
 
 Examples:
   ccgp --import codex
   ccgp --import work 3
   ccgp --import codex 1 --fork
+  ccgp --import codex 1 --fork --force
 `,
-	"--export": `ccgp --export <profile> [count] [--fork|--force]
+	"--export": `ccgp --export <profile> [count] [--fork] [--force]
 
 Same as: ccgp --send <profile> claude
---fork keeps a diverged session as a new one, --force replaces the old copy.
+--fork keeps a diverged session as a new one, --force replaces the old copy; together they write a diverged session afresh, replacing an earlier fork that went its own way.
 
 Examples:
   ccgp --export codex
   ccgp --export zai 3
+  ccgp --export codex 1 --fork --force
 `,
 	"--provider": `ccgp --provider [NAME] [--json]
 ccgp --provider set <name> <key> <value>
