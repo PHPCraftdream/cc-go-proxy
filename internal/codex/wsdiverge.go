@@ -89,26 +89,16 @@ func commonEnds(a, b []byte) (head, tail int) {
 	return head, tail
 }
 
+// itemShape is ItemParts fit for the log: an unknown type is "other".
 func itemShape(item any) ItemShape {
-	switch v := item.(type) {
-	case messageItem:
-		return ItemShape{Kind: messageKind(v.Role), Parts: len(v.Content)}
-	case functionCallItem:
-		return ItemShape{Kind: "function_call"}
-	case functionOutputItem:
-		return ItemShape{Kind: "function_call_output"}
-	case reasoningItem:
-		return ItemShape{Kind: "reasoning"}
-	case map[string]any:
-		kind, _ := v["type"].(string)
-		if kind == "message" {
-			role, _ := v["role"].(string)
-			content, _ := v["content"].([]any)
-			return ItemShape{Kind: messageKind(role), Parts: len(content)}
-		}
-		return ItemShape{Kind: safeItemType(kind)}
+	typ, role, _, parts := ItemParts(item)
+	switch typ {
+	case "":
+		return ItemShape{Kind: "other"}
+	case "message":
+		return ItemShape{Kind: messageKind(role), Parts: parts}
 	}
-	return ItemShape{Kind: "other"}
+	return ItemShape{Kind: safeItemType(typ)}
 }
 
 func messageKind(role string) string {

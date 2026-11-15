@@ -36,6 +36,10 @@ func newChain(req *Request, d *Digest, responseID string, outputItems []json.Raw
 	if req == nil || req.PromptCacheKey == "" {
 		return nil
 	}
+	// A digest of another request has another item count; never index it.
+	if d == nil || len(d.sizes) != len(req.Input) {
+		return nil
+	}
 	chain := &WSChain{
 		responseID:  responseID,
 		fingerprint: d.Fingerprint,
@@ -72,7 +76,7 @@ func (c *WSChain) Delta(next *Request) (items []any, ok bool, reason string) {
 
 // delta is Delta plus, when the history diverged, a description of where. The
 // digest of next may be handed in when it was already computed.
-func (c *WSChain) delta(next *Request, d ...*Digest) (items []any, ok bool, reason string, div *WSDivergence) {
+func (c *WSChain) delta(next *Request, d *Digest) (items []any, ok bool, reason string, div *WSDivergence) {
 	if next == nil || next.PromptCacheKey == "" {
 		return nil, false, "no cache key", nil
 	}
@@ -82,14 +86,10 @@ func (c *WSChain) delta(next *Request, d ...*Digest) (items []any, ok bool, reas
 	if c.responseID == "" {
 		return nil, false, "no response id", nil
 	}
-	var dg *Digest
-	if len(d) > 0 {
-		dg = d[0]
+	if d == nil {
+		d = NewDigest(next)
 	}
-	if dg == nil {
-		dg = NewDigest(next)
-	}
-	current := dg.Fingerprint
+	current := d.Fingerprint
 	if current.Key != c.fingerprint.Key {
 		return nil, false, "cache key changed", nil
 	}
@@ -108,7 +108,7 @@ func (c *WSChain) delta(next *Request, d ...*Digest) (items []any, ok bool, reas
 	if current.ToolChoice != c.fingerprint.ToolChoice {
 		return nil, false, "tool choice changed", nil
 	}
-	hashes := dg.hashes
+	hashes := d.hashes
 	diverged := func(at int) ([]any, bool, string, *WSDivergence) {
 		return nil, false, fmt.Sprintf("history diverged at item %d of %d", at, len(c.hashes)), c.divergence(next, at)
 	}
@@ -269,25 +269,14 @@ func decodeInputItem(item any, target any) bool {
 }
 
 func validDeltaItem(item any) bool {
-	b, err := json.Marshal(item)
-	if err != nil {
-		return false
-	}
-	var value struct {
-		Type string `json:"type"`
-		Role string `json:"role"`
-	}
-	if json.Unmarshal(b, &value) != nil {
-		return false
-	}
-	switch value.Type {
+	typ, role, _, _ := ItemParts(item)
+	switch typ {
 	case "function_call_output":
 		return true
 	case "message":
-		return value.Role == "user"
-	default:
-		return false
+		return role == "user"
 	}
+	return false
 }
 
 func cloneAnySlice(input []any) ([]any, error) {

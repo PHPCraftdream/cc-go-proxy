@@ -33,8 +33,16 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   earlier copy) wrote a copy that `claude --resume` in the directory did not list: with no `relocated` line, Claude Code
   took the first lines' `cwd`, and on Windows its worktree filter hid the session. The copy now names the directory in a
   `relocated` line after each `last-prompt` line.
+- A Codex websocket frame between 16 and 32 MiB (the limit of the socket itself) passed the socket and then failed the
+  translator with `token too long`: its line limit was 16 MiB. The translator takes every frame the socket takes.
 
 ### Changed
+- The OpenAI-compatible `/v1/messages` handler answers a bad body, a wrong API key and a conversion error through the
+  same helper as the Codex path, so the reason is on the access line; statuses and bodies are the same.
+- Cleanup of the Codex websocket path and the OpenAI-compatible stream converter, behaviour unchanged: the websocket
+  manager's `Call` is cut into named steps (one lock for the checks, a dead branch dropped), the four ways of reading an
+  input item's kind are one (`codex.ItemParts`, no encoding of each item to JSON and back), `delta` takes its digest as a
+  required argument, and `streamOpenAIToClaude` is a small state type with one method per block kind.
 - A Codex request hashes its history and fingerprint once, not three times (cache watch, delta decision, the chain kept
   after the reply): less CPU per request on a history of several MiB; log texts are the same.
 - A Codex endpoint that has taken a zstd body once gets its later `400`/`415` back as it is: the request's own error

@@ -154,8 +154,7 @@ func DialWS(ctx context.Context, baseURL string, s *oauth.Session, h WSHandshake
 	if err != nil {
 		return nil, safeContextError(ctx, err, errWSAuthentication)
 	}
-	allSecrets := appendTokenSecrets(nil, tok)
-	allSecrets = appendSecret(allSecrets, routingState(h.Routing)...)
+	allSecrets := handshakeSecrets(nil, tok, h.Routing)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		tr := newWSTransport(ctx)
@@ -166,7 +165,6 @@ func DialWS(ctx context.Context, baseURL string, s *oauth.Session, h WSHandshake
 			},
 		}
 		activity := newWSActivity()
-		tr.TLSClientConfig = ensureWSALPN(tr.TLSClientConfig)
 		handshakeCtx, cancel := context.WithTimeout(ctx, wsHandshakeTimeout)
 		conn, resp, dialErr := websocket.Dial(handshakeCtx, endpoint, &websocket.DialOptions{
 			HTTPClient:      client,
@@ -187,7 +185,7 @@ func DialWS(ctx context.Context, baseURL string, s *oauth.Session, h WSHandshake
 			h.Routing.capture(resp.Header)
 		}
 		if resp != nil {
-			allSecrets = appendSecret(allSecrets, routingState(h.Routing)...)
+			allSecrets = handshakeSecrets(allSecrets, tok, h.Routing)
 			if state, ok := headerValueFold(resp.Header, "x-codex-turn-state"); ok {
 				allSecrets = appendSecret(allSecrets, state)
 			}
@@ -305,6 +303,12 @@ func routingState(r *Routing) []string {
 
 func appendTokenSecrets(secrets []string, tok *oauth.Tokens) []string {
 	return appendSecret(secrets, tok.AccessToken, tok.RefreshToken, tok.IDToken, tok.AccountID)
+}
+
+// handshakeSecrets adds the token and the routing state to the secrets to scrub.
+func handshakeSecrets(secrets []string, tok *oauth.Tokens, r *Routing) []string {
+	secrets = appendTokenSecrets(secrets, tok)
+	return appendSecret(secrets, routingState(r)...)
 }
 
 func appendSecret(secrets []string, values ...string) []string {

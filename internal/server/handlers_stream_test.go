@@ -268,6 +268,28 @@ func TestStreamOpenAIToClaudeFinishReasonTerminatesWithoutDone(t *testing.T) {
 	}
 }
 
+// An invalid choice ends the stream with an error event: the chunks and the
+// [DONE] after it are not read, and no success event follows.
+func TestStreamOpenAIToClaudeInvalidChoiceEndsTheStream(t *testing.T) {
+	input := `data: {"choices":["not an object"]}` + "\n\n" +
+		`data: {"choices":[{"delta":{"content":"late"}}]}` + "\n\n" +
+		"data: [DONE]\n\n"
+	var output bytes.Buffer
+	if err := streamOpenAIToClaude(bufio.NewWriter(&output), strings.NewReader(input), "test-model", &config.Config{}, time.Now()); err != nil {
+		t.Fatalf("streamOpenAIToClaude() error = %v, want the stream error to be emitted as SSE", err)
+	}
+	events := parseStreamEvents(output.String())
+	if len(events) == 0 || events[len(events)-1].name != "error" {
+		t.Fatalf("final event = %#v, want error", events)
+	}
+	for _, event := range events {
+		switch event.name {
+		case "content_block_start", "content_block_delta", "message_delta", "message_stop":
+			t.Fatalf("event %q emitted around an invalid choice", event.name)
+		}
+	}
+}
+
 type failedStreamWriter struct {
 	writes int
 }

@@ -368,21 +368,11 @@ func codexTurnKind(req *codex.Request) (continuation, newTurn bool) {
 	}
 	sawUser := false
 	for i := len(req.Input) - 1; i >= 0; i-- {
-		raw, err := json.Marshal(req.Input[i])
-		if err != nil {
-			return false, false
-		}
-		var item struct {
-			Type string `json:"type"`
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(raw, &item) != nil {
-			return false, false
-		}
+		typ, role, _, _ := codex.ItemParts(req.Input[i])
 		switch {
-		case item.Type == "function_call_output":
+		case typ == "function_call_output":
 			return true, false
-		case item.Type == "message" && item.Role == "user":
+		case typ == "message" && role == "user":
 			sawUser = true
 		default:
 			return false, sawUser

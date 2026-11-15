@@ -15,7 +15,7 @@ func TestWSDivergenceEditedLastItemKeepsTheReply(t *testing.T) {
 		`,{"role":"assistant","content":"answer"},`+wsUser("again"), ""))
 	n := len(base.Input)
 
-	_, ok, reason, d := chain.delta(next)
+	_, ok, reason, d := chain.delta(next, nil)
 	if ok || reason != fmt.Sprintf("history diverged at item %d of %d", n-1, n) || d == nil {
 		t.Fatalf("delta ok=%v reason=%q div=%+v", ok, reason, d)
 	}
@@ -40,7 +40,7 @@ func TestWSDivergenceReplacedLastItemHasNoReply(t *testing.T) {
 	base := wsRequest(t, wsBody(wsUser("first")+`,{"role":"assistant","content":"a1"},`+wsUser("side question"), ""))
 	chain := NewChain(base, "resp", []json.RawMessage{wsAnswer})
 	next := wsRequest(t, wsBody(wsUser("first")+`,{"role":"assistant","content":"a1"},`+wsUser("main question"), ""))
-	_, ok, _, d := chain.delta(next)
+	_, ok, _, d := chain.delta(next, nil)
 	if ok || d == nil || d.At != len(base.Input)-1 || d.SameHead < 0 || d.ReplyAt != -1 || !d.Reply {
 		t.Fatalf("delta ok=%v div=%+v", ok, d)
 	}
@@ -52,18 +52,18 @@ func TestWSDivergenceShorterAndEarlyChanges(t *testing.T) {
 
 	shorter := *base
 	shorter.Input = base.Input[:len(base.Input)-1]
-	_, ok, reason, d := chain.delta(&shorter)
+	_, ok, reason, d := chain.delta(&shorter, nil)
 	if ok || d == nil || d.At != len(shorter.Input) || d.Now.Kind != "" || d.SameHead != -1 || d.Reply {
 		t.Fatalf("shorter: ok=%v reason=%q div=%+v", ok, reason, d)
 	}
 
 	early := wsRequest(t, wsBody(wsUser("changed")+`,{"role":"assistant","content":"a1"},`+wsUser("tail"), ""))
-	_, ok, _, d = chain.delta(early)
+	_, ok, _, d = chain.delta(early, nil)
 	if ok || d == nil || d.At != 0 || d.SameHead != -1 || d.SameTail != -1 || d.Was.Kind != "user message" {
 		t.Fatalf("early: ok=%v div=%+v", ok, d)
 	}
 
-	if _, _, _, d := chain.delta(nil); d != nil {
+	if _, _, _, d := chain.delta(nil, nil); d != nil {
 		t.Errorf("no request gave a divergence %+v", d)
 	}
 }

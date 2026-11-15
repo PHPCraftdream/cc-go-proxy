@@ -230,13 +230,6 @@ func safeWSFallbackReason(err error) string {
 	if err == nil {
 		return "connection failed"
 	}
-	const handshakePrefix = "handshake returned HTTP "
-	if at := strings.Index(err.Error(), handshakePrefix); at >= 0 {
-		var status int
-		if _, scanErr := fmt.Sscanf(err.Error()[at+len(handshakePrefix):], "%d", &status); scanErr == nil && status >= 100 && status <= 599 {
-			return fmt.Sprintf("handshake HTTP %d", status)
-		}
-	}
 	var handshake *codex.WSHandshakeError
 	if errors.As(err, &handshake) && handshake.Status >= 100 && handshake.Status <= 599 {
 		return fmt.Sprintf("handshake HTTP %d", handshake.Status)
