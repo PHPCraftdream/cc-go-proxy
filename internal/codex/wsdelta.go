@@ -28,19 +28,26 @@ func NewChain(req *Request, responseID string, outputItems []json.RawMessage) *W
 	if req == nil || req.PromptCacheKey == "" {
 		return nil
 	}
-	hashes, sizes, last := itemDigests(req, true)
+	return newChain(req, NewDigest(req), responseID, outputItems)
+}
+
+// newChain is NewChain with the request's digest already computed.
+func newChain(req *Request, d *Digest, responseID string, outputItems []json.RawMessage) *WSChain {
+	if req == nil || req.PromptCacheKey == "" {
+		return nil
+	}
 	chain := &WSChain{
 		responseID:  responseID,
-		fingerprint: NewFingerprint(req),
+		fingerprint: d.Fingerprint,
 		inputLen:    len(req.Input),
-		hashes:      hashes,
+		hashes:      d.hashes,
 		output:      make([]json.RawMessage, len(outputItems)),
 		shapes:      make([]ItemShape, len(req.Input)),
-		last:        last,
+		last:        d.last,
 	}
 	for i, item := range req.Input {
 		chain.shapes[i] = itemShape(item)
-		chain.shapes[i].Size = sizes[i]
+		chain.shapes[i].Size = d.sizes[i]
 	}
 	for i := range outputItems {
 		chain.output[i] = append(json.RawMessage(nil), outputItems[i]...)
@@ -59,12 +66,13 @@ func (c *WSChain) ResponseID() string {
 // Delta returns the items of next that the backend does not hold yet, or
 // ok=false and a short reason when next must be sent in full.
 func (c *WSChain) Delta(next *Request) (items []any, ok bool, reason string) {
-	items, ok, reason, _ = c.delta(next)
+	items, ok, reason, _ = c.delta(next, nil)
 	return items, ok, reason
 }
 
-// delta is Delta plus, when the history diverged, a description of where.
-func (c *WSChain) delta(next *Request) (items []any, ok bool, reason string, div *WSDivergence) {
+// delta is Delta plus, when the history diverged, a description of where. The
+// digest of next may be handed in when it was already computed.
+func (c *WSChain) delta(next *Request, d ...*Digest) (items []any, ok bool, reason string, div *WSDivergence) {
 	if next == nil || next.PromptCacheKey == "" {
 		return nil, false, "no cache key", nil
 	}
@@ -74,7 +82,14 @@ func (c *WSChain) delta(next *Request) (items []any, ok bool, reason string, div
 	if c.responseID == "" {
 		return nil, false, "no response id", nil
 	}
-	current := NewFingerprint(next)
+	var dg *Digest
+	if len(d) > 0 {
+		dg = d[0]
+	}
+	if dg == nil {
+		dg = NewDigest(next)
+	}
+	current := dg.Fingerprint
 	if current.Key != c.fingerprint.Key {
 		return nil, false, "cache key changed", nil
 	}
@@ -93,7 +108,7 @@ func (c *WSChain) delta(next *Request) (items []any, ok bool, reason string, div
 	if current.ToolChoice != c.fingerprint.ToolChoice {
 		return nil, false, "tool choice changed", nil
 	}
-	hashes := ItemHashes(next)
+	hashes := dg.hashes
 	diverged := func(at int) ([]any, bool, string, *WSDivergence) {
 		return nil, false, fmt.Sprintf("history diverged at item %d of %d", at, len(c.hashes)), c.divergence(next, at)
 	}

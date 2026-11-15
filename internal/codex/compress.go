@@ -23,14 +23,29 @@ import (
 // one gains nothing.
 var compressThreshold = 32 << 10
 
-// Keep the endpoint refusal cache bounded.
-const maxRefusedEndpoints = 128
+// Keep the endpoint refusal and acceptance caches bounded.
+const (
+	maxRefusedEndpoints  = 128
+	maxAcceptedEndpoints = 128
+)
 
-var compressionRefusals = struct {
+// endpointMemory remembers one fact per endpoint, bounded: the oldest entry
+// (smallest sequence) is dropped when one more is needed.
+type endpointMemory struct {
 	sync.Mutex
 	endpoints map[string]uint64
 	next      uint64
-}{endpoints: make(map[string]uint64)}
+	max       int
+}
+
+func newEndpointMemory(max int) *endpointMemory {
+	return &endpointMemory{endpoints: make(map[string]uint64), max: max}
+}
+
+var (
+	compressionRefusals    = newEndpointMemory(maxRefusedEndpoints)
+	compressionAcceptances = newEndpointMemory(maxAcceptedEndpoints)
+)
 
 func normalizedEndpoint(raw string) string {
 	u, err := url.Parse(raw)
@@ -48,40 +63,56 @@ func normalizedEndpoint(raw string) string {
 	return scheme + "://" + host + path
 }
 
-func compressionRefused(raw string) bool {
+func (m *endpointMemory) has(raw string) bool {
 	endpoint := normalizedEndpoint(raw)
 	if endpoint == "" {
 		return false
 	}
-	compressionRefusals.Lock()
-	defer compressionRefusals.Unlock()
-	_, ok := compressionRefusals.endpoints[endpoint]
+	m.Lock()
+	defer m.Unlock()
+	_, ok := m.endpoints[endpoint]
 	return ok
 }
 
-func refuseCompression(raw string) (string, bool) {
+func (m *endpointMemory) learn(raw string) (string, bool) {
 	endpoint := normalizedEndpoint(raw)
 	if endpoint == "" {
 		return "", false
 	}
-	compressionRefusals.Lock()
-	defer compressionRefusals.Unlock()
-	if _, ok := compressionRefusals.endpoints[endpoint]; ok {
+	m.Lock()
+	defer m.Unlock()
+	if _, ok := m.endpoints[endpoint]; ok {
 		return endpoint, false
 	}
-	if len(compressionRefusals.endpoints) >= maxRefusedEndpoints {
+	if len(m.endpoints) >= m.max {
 		var oldest string
 		var oldestSequence uint64
-		for key, sequence := range compressionRefusals.endpoints {
+		for key, sequence := range m.endpoints {
 			if oldest == "" || sequence < oldestSequence {
 				oldest, oldestSequence = key, sequence
 			}
 		}
-		delete(compressionRefusals.endpoints, oldest)
+		delete(m.endpoints, oldest)
 	}
-	compressionRefusals.next++
-	compressionRefusals.endpoints[endpoint] = compressionRefusals.next
+	m.next++
+	m.endpoints[endpoint] = m.next
 	return endpoint, true
+}
+
+func compressionRefused(raw string) bool {
+	return compressionRefusals.has(raw)
+}
+
+func refuseCompression(raw string) (string, bool) {
+	return compressionRefusals.learn(raw)
+}
+
+func compressionAccepted(raw string) bool {
+	return compressionAcceptances.has(raw)
+}
+
+func acceptCompression(raw string) (string, bool) {
+	return compressionAcceptances.learn(raw)
 }
 
 // encoder is shared: EncodeAll is safe for concurrent use.
@@ -121,14 +152,16 @@ func wireFrom(ctx context.Context) *Wire {
 
 // sendPrepared posts the prepared body, compressed when it is big enough. A 400 or 415 for a
 // compressed body is asked again plain; only when that is accepted is the
-// compression given up for good (a genuinely bad request fails both ways).
+// compression given up for good (a genuinely bad request fails both ways). An
+// endpoint that has taken a compressed body once keeps it: its later 400 or
+// 415 is the request's own error and goes back to the caller as it is.
 func sendPrepared(ctx context.Context, url string, p *Prepared, tok *oauth.Tokens) (*http.Response, error) {
 	body, hdr := p.body, p.headers
 	w := wireFrom(ctx)
 	if w != nil {
 		*w = Wire{Raw: len(body), Sent: len(body)}
 	}
-	if len(body) < compressThreshold || compressionRefused(url) {
+	if len(body) < compressThreshold || (compressionRefused(url) && !compressionAccepted(url)) {
 		return post(ctx, url, body, "", hdr, tok)
 	}
 	packed := p.compressed()
@@ -136,7 +169,13 @@ func sendPrepared(ctx context.Context, url string, p *Prepared, tok *oauth.Token
 		w.Sent, w.Encoding = len(packed), "zstd"
 	}
 	resp, err := post(ctx, url, packed, "zstd", hdr, tok)
+	if err == nil && resp.StatusCode/100 == 2 {
+		acceptCompression(url) // a later 400/415 is then the request's own error
+	}
 	if err != nil || (resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusUnsupportedMediaType) {
+		return resp, err
+	}
+	if compressionAccepted(url) { // this endpoint takes compressed bodies: the 400/415 is the request's own error
 		return resp, err
 	}
 	refused := resp.StatusCode

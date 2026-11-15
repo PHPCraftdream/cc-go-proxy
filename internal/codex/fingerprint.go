@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -51,6 +52,43 @@ func NewFingerprint(req *Request) Fingerprint {
 func ItemHashes(req *Request) []uint64 {
 	hashes, _, _ := itemDigests(req, false)
 	return hashes
+}
+
+// Digest is a request's fingerprint and its item digests, computed once and
+// handed to every place that needs them: the cache watch, the delta decision
+// and the chain kept after the reply.
+type Digest struct {
+	Fingerprint Fingerprint
+	hashes      []uint64
+	sizes       []int
+	last        []byte
+}
+
+// NewDigest hashes req once: the fingerprint, every input item, its encoded
+// size and the encoding of the last one.
+func NewDigest(req *Request) *Digest {
+	hashes, sizes, last := itemDigests(req, true)
+	return &Digest{Fingerprint: NewFingerprint(req), hashes: hashes, sizes: sizes, last: last}
+}
+
+// Hashes is the hash of every input item, for the cache watch.
+func (d *Digest) Hashes() []uint64 {
+	if d == nil {
+		return nil
+	}
+	return d.hashes
+}
+
+type digestKey struct{}
+
+// WithDigest makes the codex call on ctx reuse d.
+func WithDigest(ctx context.Context, d *Digest) context.Context {
+	return context.WithValue(ctx, digestKey{}, d)
+}
+
+func digestFrom(ctx context.Context) *Digest {
+	d, _ := ctx.Value(digestKey{}).(*Digest)
+	return d
 }
 
 // itemDigests hashes every input item and, with sized, also returns the encoded

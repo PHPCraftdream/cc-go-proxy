@@ -34,18 +34,20 @@ func bigRequest() *Request {
 	return &Request{Model: "m", Input: []any{map[string]any{"type": "message", "role": "user", "content": text}}}
 }
 
-// resetCompression makes a test independent of the refusal cache.
+// resetCompression makes a test independent of the refusal and acceptance caches.
 func resetCompression(t *testing.T) {
 	t.Helper()
-	compressionRefusals.Lock()
-	compressionRefusals.endpoints = make(map[string]uint64)
-	compressionRefusals.next = 0
-	compressionRefusals.Unlock()
+	clear := func(m *endpointMemory) {
+		m.Lock()
+		m.endpoints = make(map[string]uint64)
+		m.next = 0
+		m.Unlock()
+	}
+	clear(compressionRefusals)
+	clear(compressionAcceptances)
 	t.Cleanup(func() {
-		compressionRefusals.Lock()
-		compressionRefusals.endpoints = make(map[string]uint64)
-		compressionRefusals.next = 0
-		compressionRefusals.Unlock()
+		clear(compressionRefusals)
+		clear(compressionAcceptances)
 	})
 }
 
@@ -255,6 +257,56 @@ func TestCallKeepsCompressionWhenThePlainBodyFailsToo(t *testing.T) {
 	}
 }
 
+// A 400 for a compressed body at an endpoint that has accepted compression
+// before is the request's own error (a genuinely bad request): it goes back
+// to the caller without the plain retry.
+func TestCallRememberedAcceptedEndpointKeepsABadRequestCompressed(t *testing.T) {
+	resetCompression(t)
+	var compressed, plain atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.Header.Get("Content-Encoding") != "" {
+			if compressed.Add(1) == 1 {
+				_, _ = w.Write([]byte("data: {}\n\n"))
+				return
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad input"}}`))
+			return
+		}
+		plain.Add(1)
+		_, _ = w.Write([]byte("data: {}\n\n"))
+	}))
+	defer backend.Close()
+
+	s := testSession(t)
+	endpoint := backend.URL + "/responses"
+	resp, err := Call(context.Background(), endpoint, s, bigRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || compressed.Load() != 1 {
+		t.Fatalf("first call: status %d after %d compressed tries, want 200 after 1", resp.StatusCode, compressed.Load())
+	}
+
+	var wire Wire
+	resp, err = Call(WithWire(context.Background(), &wire), endpoint, s, bigRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || compressed.Load() != 2 || plain.Load() != 0 {
+		t.Fatalf("second call: status %d after %d compressed and %d plain tries, want 400 after 2 and 0", resp.StatusCode, compressed.Load(), plain.Load())
+	}
+	if wire.Encoding != "zstd" {
+		t.Errorf("wire after the remembered acceptance = %+v, want zstd as sent", wire)
+	}
+	if compressionRefused(endpoint) {
+		t.Error("a bad request at an endpoint that takes compression switched the compression off")
+	}
+}
+
 func TestCallCompressionRefusalIsPerNormalizedEndpoint(t *testing.T) {
 	resetCompression(t)
 	type counts struct {
@@ -345,6 +397,25 @@ func TestCompressionRefusalStateIsBounded(t *testing.T) {
 		t.Error("oldest endpoint should have been evicted")
 	}
 	if !compressionRefused("https://example.com/" + strconv.Itoa(maxRefusedEndpoints+9) + "/responses") {
+		t.Error("most recent endpoint should remain cached")
+	}
+}
+
+func TestCallCompressionAcceptedStateIsBounded(t *testing.T) {
+	resetCompression(t)
+	for i := 0; i < maxAcceptedEndpoints+10; i++ {
+		acceptCompression("https://example.com/" + strconv.Itoa(i) + "/responses")
+	}
+	compressionAcceptances.Lock()
+	got := len(compressionAcceptances.endpoints)
+	compressionAcceptances.Unlock()
+	if got > maxAcceptedEndpoints {
+		t.Fatalf("accepted state has %d entries, cap is %d", got, maxAcceptedEndpoints)
+	}
+	if compressionAccepted("https://example.com/0/responses") {
+		t.Error("oldest endpoint should have been evicted")
+	}
+	if !compressionAccepted("https://example.com/" + strconv.Itoa(maxAcceptedEndpoints+9) + "/responses") {
 		t.Error("most recent endpoint should remain cached")
 	}
 }

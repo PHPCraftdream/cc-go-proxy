@@ -241,6 +241,46 @@ func TestItemHashesOfAnEmptyRequest(t *testing.T) {
 	}
 }
 
+func TestNewDigestMatchesThePiecewiseHashes(t *testing.T) {
+	req := &Request{
+		Model:          "gpt-5-codex",
+		PromptCacheKey: "digest-cache-key",
+		Input: []any{
+			messageItem{Type: "message", Role: "developer", Content: []contentPart{{Type: "input_text", Text: "system prompt"}}},
+			messageItem{Type: "message", Role: "user", Content: []contentPart{{Type: "input_text", Text: "first"}}},
+			messageItem{Type: "message", Role: "assistant", Content: []contentPart{{Type: "input_text", Text: "answer"}}},
+			messageItem{Type: "message", Role: "user", Content: []contentPart{{Type: "input_text", Text: "second"}}},
+		},
+		Tools:      []Tool{{Type: "function", Name: "secret_tool", Parameters: json.RawMessage(`{"type":"object"}`)}},
+		Reasoning:  &Reasoning{Effort: "high", Summary: "auto"},
+		ToolChoice: map[string]any{"type": "function", "name": "secret_tool"},
+	}
+	d := NewDigest(req)
+	if d.Fingerprint != NewFingerprint(req) {
+		t.Errorf("digest fingerprint = %+v, want %+v", d.Fingerprint, NewFingerprint(req))
+	}
+	want := ItemHashes(req)
+	got := d.Hashes()
+	if len(got) != len(want) {
+		t.Fatalf("%d hashes, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("item %d hash = %d, want %d", i, got[i], want[i])
+		}
+	}
+	if len(got) != len(req.Input) {
+		t.Errorf("%d hashes for %d input items", len(got), len(req.Input))
+	}
+
+	if got := NewDigest(&Request{Input: []any{messageItem{Type: "message", Role: "user"}}}).Hashes(); got != nil {
+		t.Errorf("hashes without a cache key: %#v, want nil", got)
+	}
+	if got := (*Digest)(nil).Hashes(); got != nil {
+		t.Errorf("hashes of a nil digest: %#v, want nil", got)
+	}
+}
+
 type countingMarshaler struct {
 	calls *int
 }

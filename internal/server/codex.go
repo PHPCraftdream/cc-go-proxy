@@ -435,14 +435,15 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if pr := cfg.Providers[cfg.ProviderName]; pr != nil {
 		baseURL = pr.BaseURL
 	}
-	fingerprint := codex.NewFingerprint(req)
+	digest := codex.NewDigest(req)
+	fingerprint := digest.Fingerprint
 	continuation, newTurn := codexTurnKind(req)
 	turnRegistration := turnStates.Begin(fingerprint, continuation, newTurn, time.Now())
 	routing := codex.NewRouting(turnRegistration.threadID, turnRegistration.state, func(state string) {
 		turnRegistration.Store(state, time.Now())
 	})
 	ctx, cancel := context.WithCancel(upstreamCtx(context.Background(), cfg))
-	wsCtx := codex.WithRouting(ctx, routing)
+	wsCtx := codex.WithDigest(codex.WithRouting(ctx, routing), digest)
 	trace := newUpstreamTrace()
 	trace.nonStream = !wantStream
 	if !wantStream {
@@ -455,7 +456,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	trace.routing = routing
 	trace.newTurn = turnRegistration.newTurn
 	trace.fp = fingerprint
-	registration := promptWatch.See(trace.fp, codex.ItemHashes(req))
+	registration := promptWatch.See(trace.fp, digest.Hashes())
 	trace.prev = registration.prev
 	trace.promptGeneration = registration.generation
 	originalCancel := cancel
