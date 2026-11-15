@@ -865,10 +865,15 @@ func TestWSFailureAndIncompleteRemainIncomplete(t *testing.T) {
 		})
 	}
 }
+
+// A server that never answers the handshake is given up on by the handshake
+// deadline alone: it is held until the test lets it go, so no wall-clock
+// threshold decides the outcome, and only the deadline can end the dial.
 func TestWSHandshakeDeadlineCanShrink(t *testing.T) {
 	old := wsHandshakeTimeout
 	wsHandshakeTimeout = 40 * time.Millisecond
 	t.Cleanup(func() { wsHandshakeTimeout = old })
+	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		hj, ok := w.(http.Hijacker)
 		if !ok {
@@ -881,16 +886,23 @@ func TestWSHandshakeDeadlineCanShrink(t *testing.T) {
 			return
 		}
 		defer c.Close()
-		<-time.After(250 * time.Millisecond)
+		<-release
 	}))
 	defer server.Close()
-	start := time.Now()
-	_, err := DialWS(context.Background(), server.URL, testSession(t), WSHandshake{Request: &Request{Model: "m"}})
-	if err == nil {
-		t.Fatal("stalled handshake succeeded")
-	}
-	if time.Since(start) > 200*time.Millisecond {
-		t.Fatalf("handshake deadline did not bound dial: %s", time.Since(start))
+	defer close(release) // runs before server.Close, which waits for the handler
+	session := testSession(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := DialWS(context.Background(), server.URL, session, WSHandshake{Request: &Request{Model: "m"}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("stalled handshake succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("handshake deadline did not bound dial: a silent server was never given up on")
 	}
 }
 

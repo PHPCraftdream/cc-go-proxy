@@ -481,7 +481,9 @@ inside the npm package, and the next npm install would put the packaged version 
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` | profile runs | Set by ccgp from the profile; yours win |
 | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `PROXY_TOKEN`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL` | env-only mode | See [configuration](configuration.md#env-only-mode) |
 | `CODEX_TRANSPORT` | server | `auto` (default) or `websocket` (alias `ws`): Codex requests try the websocket, HTTP is the fallback; `http`: HTTP only. Read at start ([Codex websocket transport](api.md#codex-websocket-transport)) |
+| `OPENROUTER_APP_URL`, `OPENROUTER_APP_NAME` | server | Sent to OpenAI-compatible backends as `HTTP-Referer` and `X-Title` (OpenRouter's app attribution) |
 | `CCGP_VERSION`, `CCGP_INSTALL_DIR` | `install.sh`, `install.ps1` | Version and directory to install |
+| `CCGP_NO_PATH=1` | `install.ps1` | Do not add the install directory to the user `PATH` |
 
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN` and the Bedrock / Vertex /
 Foundry switches of the parent are removed before `claude` starts, for proxy, `claude` and `claude_api` profiles alike

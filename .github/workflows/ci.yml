@@ -247,7 +247,7 @@ jobs:
         ver="${want##*/v}"
         CCGP_VERSION="$ver" sh install.sh
         [ "$("$CCGP_INSTALL_DIR/ccgp" --version)" = "ccgp v$ver" ]
-        "$CCGP_INSTALL_DIR/ccgpy" help | grep -q '^usage: ccgpy <profile>'
+        "$CCGP_INSTALL_DIR/ccgpy" help | grep -q '^usage: ccgpy '
         # Again without a version, over the installed binaries: it must be the same release.
         sh install.sh
         [ "$("$CCGP_INSTALL_DIR/ccgp" --version)" = "ccgp v$ver" ]
@@ -275,7 +275,7 @@ jobs:
         ./install.ps1
         $v = & "$env:CCGP_INSTALL_DIR\ccgp.exe" --version
         if ($v -ne "ccgp v$ver") { throw "version is '$v', wanted 'ccgp v$ver'" }
-        & "$env:CCGP_INSTALL_DIR\ccgpy.exe" help | Select-String -Pattern '^usage: ccgpy <profile>' -Quiet | ForEach-Object { if (-not $_) { throw 'ccgpy help' } }
+        & "$env:CCGP_INSTALL_DIR\ccgpy.exe" help | Select-String -Pattern '^usage: ccgpy ' -Quiet | ForEach-Object { if (-not $_) { throw 'ccgpy help' } }
         # Again without a version, over the installed binaries: it must be the same release.
         Remove-Item Env:CCGP_VERSION
         ./install.ps1

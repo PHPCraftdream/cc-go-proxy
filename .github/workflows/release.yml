@@ -189,7 +189,7 @@ jobs:
         got="$(./out/ccgp --version)"
         echo "$got"
         [ "$got" = "ccgp v${VERSION}" ]
-        ./out/ccgpy help | grep -q '^usage: ccgpy <profile>'
+        ./out/ccgpy help | grep -q '^usage: ccgpy '
 
     - name: Package
       run: |

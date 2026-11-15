@@ -178,6 +178,9 @@ func angelServeArgs(serveArgs []string) []string {
 	return append([]string{"--serve", "-s"}, serveArgs...)
 }
 
+// helpColumn is the width of the command column of the help text.
+const helpColumn = 34
+
 // printHelp writes the help text, with the command lines from the table.
 func printHelp(w io.Writer) {
 	_, _ = fmt.Fprint(w, `ccgp - Claude Code bridge to OpenAI-compatible APIs and ChatGPT Codex
@@ -195,7 +198,12 @@ Usage:
 			continue
 		}
 		head := strings.TrimSpace(c.name + " " + c.args)
-		_, _ = fmt.Fprintf(w, "  ccgp %-34s %s\n", head, c.desc)
+		if len(head) > helpColumn {
+			// Too long for the column: the description goes under it.
+			_, _ = fmt.Fprintf(w, "  ccgp %s\n  %-*s %s\n", head, helpColumn+5, "", c.desc)
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "  ccgp %-*s %s\n", helpColumn, head, c.desc)
 	}
 	_, _ = fmt.Fprint(w, `
 Profiles:
@@ -224,8 +232,9 @@ Menus and peak hours:
 
 Config (Ktav):
   Windows: %APPDATA%\cc-go-proxy\config.ktav   Linux: ~/.config/cc-go-proxy/config.ktav
+  macOS:   ~/Library/Application Support/cc-go-proxy/config.ktav   (ccgp --status prints the real paths)
   Override: CCGP_CONFIG. Created automatically on first run.
-  Credentials are stored separately in <config dir>/cc-go-proxy/creds (owner-only).
+  Credentials are stored separately in creds/ next to it (owner-only).
 
 Home (a setup that shares nothing with the default one: config, logins, URL tokens, Claude dirs, log):
   ccgp --local <profile|--command> ...   keep everything in ./.ccgp (made on first use, git-ignored)

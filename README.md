@@ -8,7 +8,7 @@
 [![npm](https://img.shields.io/npm/v/@cc-go-proxy/ccgp?logo=npm)](https://www.npmjs.com/package/@cc-go-proxy/ccgp)
 [![Go version](https://img.shields.io/github/go-mod/go-version/PHPCraftdream/cc-go-proxy)](go.mod)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
-[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#install)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20FreeBSD-lightgrey)](#install)
 [![Go Report Card](https://goreportcard.com/badge/github.com/PHPCraftdream/cc-go-proxy)](https://goreportcard.com/report/github.com/PHPCraftdream/cc-go-proxy)
 
 Run [Claude Code](https://claude.com/claude-code) on other models. ccgp is one small Go binary: a local proxy that speaks
@@ -79,7 +79,8 @@ irm https://raw.githubusercontent.com/PHPCraftdream/cc-go-proxy/main/install.ps1
 The scripts download the archive of the latest [release](https://github.com/PHPCraftdream/cc-go-proxy/releases) for your
 OS and CPU, check it against `SHA256SUMS` and install `ccgp` and `ccgpy` (Linux and macOS: `~/.local/bin`; Windows:
 `%LOCALAPPDATA%\Programs\ccgp`, added to your user `PATH`). Set `CCGP_VERSION` to pick a version and
-`CCGP_INSTALL_DIR` to pick the directory; the scripts are short, read them first if you like:
+`CCGP_INSTALL_DIR` to pick the directory (Windows: `CCGP_NO_PATH=1` leaves `PATH` alone); the scripts are short, read
+them first if you like:
 [install.sh](install.sh), [install.ps1](install.ps1).
 
 Platforms of the release archives: Linux (x86-64, arm64, 32-bit ARM from the Raspberry Pi 1 on, riscv64), macOS
@@ -111,7 +112,8 @@ ccgp codex
 On the first run ccgp:
 
 1. creates a default [`config.ktav`](internal/config/config.example.ktav) with `codex`, `codex_api` and `zai` profiles
-   (`%APPDATA%\cc-go-proxy\` on Windows, `~/.config/cc-go-proxy/` elsewhere);
+   (`%APPDATA%\cc-go-proxy\` on Windows, `~/Library/Application Support/cc-go-proxy/` on macOS,
+   `~/.config/cc-go-proxy/` elsewhere);
 2. starts the proxy in the background (`127.0.0.1:60093`);
 3. prints a sign-in link for Codex (the browser is never opened for you) or asks for an API key;
 4. generates the profile's URL token;
@@ -179,7 +181,7 @@ Commands start with `--`; a word without dashes is always a profile (`ccgp statu
 | `ccgp --doctor [--offline] [--json]` | Check `claude`, config, server, logins, backend reachability and permissions |
 | `ccgp --serve [-d] [-s]` | Run the server in the foreground (`-d` dumps bodies, `-s` logs requests) |
 | `ccgp --config reset` | Back up the config and write the default one |
-| `ccgp --connections [active N] [total N] [proxy URL\|off [provider NAME \| profile NAME]]` | Show or set the connections kept to each backend (default 7 active, 10 total) and the SOCKS5 / HTTP proxy: global, with a different one or none per provider or per profile (the nearest level wins) |
+| `ccgp --connections [active N] [total N] [proxy URL\|off [provider NAME \| profile NAME]] [--json]` | Show or set the connections kept to each backend (default 7 active, 10 total) and the SOCKS5 / HTTP proxy: global, with a different one or none per provider or per profile (the nearest level wins) |
 | `ccgp --interactive` / `-i` | Full-screen interface that does everything the commands do: profiles, providers (settings, proxy, sign-in), peak hours, connections, models, sessions, the server; needs a terminal, only the flag starts it. The commands and the interface cover each other, and a test keeps it so ([interactive mode](docs/cli.md#interactive-mode)) |
 | `ccgp --peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider: in them its profiles' requests are refused with a notice in the chat (`mon-fri 14:00-18:00`, in the provider's zone); `pause` works anyway for a while ([peak hours](docs/peak-hours.md)) |
 | `ccgp --update [--check]` | Update ccgp and ccgpy from the latest GitHub release (checksum verified) |
@@ -246,7 +248,8 @@ go test ./...
 node --test "scripts/npm/*.test.mjs"   # npm packaging
 ```
 
-CI runs tests on Linux and Windows, golangci-lint, a license allowlist, and a type-check of all six release targets.
+CI runs tests on Linux and Windows, golangci-lint, a license allowlist, a type-check of every release target, and the
+static Linux binary on several distributions and CPUs.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
 ## License
