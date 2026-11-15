@@ -348,7 +348,8 @@ func TestForceBackupsDoNotCollide(t *testing.T) {
 func TestForceReplacesSidecarFilesToo(t *testing.T) {
 	p := both(t)
 	put(t, filepath.Join(p.src, "projects", "a", sid, "tool-results", "r.txt"), "new", t0)
-	put(t, filepath.Join(p.dst, "projects", "a", sid, "tool-results", "r.txt"), "old", t0)
+	// Changed at the destination after the copy: another time than the source's.
+	put(t, filepath.Join(p.dst, "projects", "a", sid, "tool-results", "r.txt"), "old", t0.Add(time.Hour))
 
 	r := copyOne(t, p, Options{Force: true})
 	if r.Status != Replaced || r.Files != 1 {
@@ -369,7 +370,7 @@ func TestWithoutFlagsASidecarThatDivergedIsLeftAlone(t *testing.T) {
 	put(t, p.d, entry(sid, "one"), t0) // behind: the transcript is extended, the sidecar is looked at
 	put(t, filepath.Join(p.src, "projects", "a", sid, "r.txt"), "new", t0)
 	f := filepath.Join(p.dst, "projects", "a", sid, "r.txt")
-	put(t, f, "old", t0)
+	put(t, f, "old", t0.Add(time.Hour)) // changed after the copy: its time differs from the source's
 	copyOne(t, p, Options{})
 	if got := read(t, f); got != "old" {
 		t.Errorf("sidecar = %q, want it left alone", got)
