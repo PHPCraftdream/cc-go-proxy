@@ -944,7 +944,10 @@ func TestWSManagerBreakBeforeContentUsesFreshFullConnection(t *testing.T) {
 	wsManagerRead(t, resp)
 }
 
-func TestWSManagerFailedIncompleteAndErrorTerminalsDrop(t *testing.T) {
+// TestWSManagerFailedIncompleteAndErrorTerminalsKeepTheConnection pins that a
+// reply which did not complete keeps the connection but not the chain, so the
+// next request goes out in full on the same connection.
+func TestWSManagerFailedIncompleteAndErrorTerminalsKeepTheConnection(t *testing.T) {
 	for _, terminal := range []string{"response.failed", "response.incomplete", "error"} {
 		t.Run(terminal, func(t *testing.T) {
 			m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 2, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: time.Minute})
@@ -966,10 +969,26 @@ func TestWSManagerFailedIncompleteAndErrorTerminalsDrop(t *testing.T) {
 				t.Fatal(err)
 			}
 			second := backend.next(t)
-			if info.Mode != "full" || info.Reused || second.connection == first.connection || wsManagerPrevious(second) != "" {
+			if info.Mode != "full" || !info.Reused || second.connection != first.connection || wsManagerPrevious(second) != "" {
 				t.Fatalf("after %s: info=%+v conn=%d/%d previous=%q", terminal, info, first.connection, second.connection, wsManagerPrevious(second))
 			}
-			if err := second.complete(); err != nil {
+			if stats := m.TakeStats(); stats.Dials != 1 || stats.Fallbacks != 1 {
+				t.Fatalf("after %s stats = %+v, want one dial and one fallback", terminal, stats)
+			}
+			if err := second.complete(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"recovered"}]}`); err != nil {
+				t.Fatal(err)
+			}
+			wsManagerRead(t, resp)
+			assistant := messageItem{Type: "message", Role: "assistant", Content: []contentPart{{Type: "output_text", Text: "recovered"}}}
+			resp, info, err = backend.call(t, m, "terminal", makeWSManagerTestRequest("terminal", wsManagerUser("two"), assistant, wsManagerUser("three")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			third := backend.next(t)
+			if info.Mode != "delta" || third.connection != second.connection || wsManagerPrevious(third) != second.responseID {
+				t.Fatalf("third call after %s: info=%+v conn=%d/%d previous=%q, want delta on %q", terminal, info, second.connection, third.connection, wsManagerPrevious(third), second.responseID)
+			}
+			if err := third.complete(); err != nil {
 				t.Fatal(err)
 			}
 			wsManagerRead(t, resp)
@@ -1390,7 +1409,7 @@ func TestWSManagerDeltaAvoidsFullRequestSerialization(t *testing.T) {
 			count++
 		default:
 			if count != 3 {
-				t.Fatalf("counted item MarshalJSON calls = %d, want 3 (chain hash + full initial frame + delta hash)", count)
+				t.Fatalf("counted item MarshalJSON calls = %d, want 3 (digest of the first request + full initial frame + digest of the second request)", count)
 			}
 			goto checked
 		}
@@ -1400,6 +1419,56 @@ checked:
 		t.Fatal(err)
 	}
 	wsManagerRead(t, resp)
+}
+
+// TestWSManagerDigestComputedOncePerRequest pins the marshal count of a full
+// request and its delta follow-up: one digest per request serves the delta
+// decision and the chain kept after the reply.
+func TestWSManagerDigestComputedOncePerRequest(t *testing.T) {
+	m, _ := newWSManagerForTest(t, wsManagerTestConfig{maxConnections: 2, maxAge: time.Hour, maxIdle: time.Hour, janitorEvery: time.Hour, disabledFor: time.Minute})
+	backend := newWSManagerTestBackend(t)
+	marshalCalls := make(chan struct{}, 16)
+	counted := wsManagerCountingItem{calls: marshalCalls}
+	resp, info, err := backend.call(t, m, "digest", makeWSManagerTestRequest("digest-key", counted))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := backend.next(t)
+	if info.Mode != "full" || info.Reused {
+		t.Fatalf("first info = %+v, want a full request on a new connection", info)
+	}
+	if err := first.complete(`{"type":"message","role":"assistant","content":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	wsManagerRead(t, resp)
+
+	resp, info, err = backend.call(t, m, "digest", makeWSManagerTestRequest("digest-key", counted,
+		messageItem{Type: "message", Role: "assistant"}, wsManagerUser("next")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := backend.next(t)
+	if info.Mode != "delta" || !info.Reused || wsManagerPrevious(second) != first.responseID {
+		t.Fatalf("expected chained delta, info=%+v previous=%q", info, wsManagerPrevious(second))
+	}
+	if err := second.complete(`{"type":"message","role":"assistant","content":[]}`); err != nil {
+		t.Fatal(err)
+	}
+	wsManagerRead(t, resp)
+
+	var count int
+drain:
+	for {
+		select {
+		case <-marshalCalls:
+			count++
+		default:
+			break drain
+		}
+	}
+	if count != 3 {
+		t.Fatalf("counted item MarshalJSON calls = %d, want 3 (digest of the first request + full initial frame + digest of the second request); more means the history was hashed again for the delta or the chain", count)
+	}
 }
 func TestWSManagerZeroValueUsesDefaultCapacity(t *testing.T) {
 	var m WSManager

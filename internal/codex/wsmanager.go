@@ -415,6 +415,11 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 	m.noteLost(owner, lost)
 
 	snapshot := req // not modified by the caller while the exchange runs; the chain keeps only hashes
+	// One digest serves the delta decision and the chain kept after the reply.
+	digest := digestFrom(ctx)
+	if digest == nil {
+		digest = NewDigest(req)
+	}
 	if needsDial {
 		dialStarted := m.now()
 		dialCtx, cancel := context.WithCancel(ctx)
@@ -450,18 +455,18 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 			reason = "new connection"
 		}
 		info := WSInfo{Mode: "full", Reused: false, Reason: reason, ConnAge: connAge, DialTime: dialTime, Limit: learnedLimit}
-		return m.send(ctx, entry, generation, conn, nil, snapshot, info)
+		return m.send(ctx, entry, generation, conn, nil, snapshot, digest, info)
 	}
 
 	info := WSInfo{Mode: "full", Reused: reused, Reason: reason, ConnAge: connAge}
-	return m.send(ctx, entry, generation, conn, chain, snapshot, info)
+	return m.send(ctx, entry, generation, conn, chain, snapshot, digest, info)
 }
 
-func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation uint64, conn *WSConn, chain *WSChain, req *Request, info WSInfo) (*http.Response, WSInfo, error) {
+func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation uint64, conn *WSConn, chain *WSChain, req *Request, d *Digest, info WSInfo) (*http.Response, WSInfo, error) {
 	var frame []byte
 	fallback := false
 	if chain != nil || info.Reused {
-		if delta, ok, why, div := chain.delta(req); ok {
+		if delta, ok, why, div := chain.delta(req, d); ok {
 			var err error
 			frame, err = WSCreatePayload(req, chain.ResponseID(), delta)
 			if err != nil {
@@ -515,6 +520,7 @@ func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation 
 		generation: generation,
 		conn:       conn,
 		req:        req,
+		digest:     d,
 		result:     conn.Result(),
 	}
 	return resp, info, nil
@@ -636,21 +642,25 @@ func (m *WSManager) dropLease(entry *wsManagerEntry, generation uint64, conn *WS
 	}
 }
 
-func (m *WSManager) finishLease(entry *wsManagerEntry, generation uint64, conn *WSConn, req *Request, result WSResult, retain bool) {
+func (m *WSManager) finishLease(entry *wsManagerEntry, generation uint64, conn *WSConn, req *Request, d *Digest, result WSResult, retain bool) {
 	m.noteLost(entry.owner, conn)
 	var chain *WSChain
-	if retain {
-		retain = result.Completed && conn.Err() == nil
-		if retain {
-			chain = NewChain(req, result.ResponseID, result.Items)
+	// A body read to its end keeps the connection; only a completed reply also
+	// keeps the chain, so the next request after a failed terminal goes out in
+	// full on the same connection.
+	healthy := retain && conn.Err() == nil
+	if healthy && result.Completed {
+		if d == nil {
+			d = NewDigest(req)
 		}
+		chain = newChain(req, d, result.ResponseID, result.Items)
 	}
 	m.mu.Lock()
 	if m.entries[entry.key] != entry || !entry.busy || entry.generation != generation || entry.conn != conn {
 		m.mu.Unlock()
 		return
 	}
-	if retain && !m.closed {
+	if healthy && !m.closed {
 		if chain != nil {
 			chain.done = m.now()
 		}
@@ -740,6 +750,7 @@ type wsManagerBody struct {
 	generation uint64
 	conn       *WSConn
 	req        *Request
+	digest     *Digest
 	result     WSResult
 	eof        bool
 	closed     bool
@@ -769,9 +780,9 @@ func (b *wsManagerBody) Read(p []byte) (int, error) {
 	finalResult := b.result
 	b.mu.Unlock()
 	if err == io.EOF {
-		b.finishOnce.Do(func() { b.manager.finishLease(b.entry, b.generation, b.conn, b.req, finalResult, eof) })
+		b.finishOnce.Do(func() { b.manager.finishLease(b.entry, b.generation, b.conn, b.req, b.digest, finalResult, eof) })
 	} else if err != nil {
-		b.finishOnce.Do(func() { b.manager.finishLease(b.entry, b.generation, b.conn, b.req, finalResult, false) })
+		b.finishOnce.Do(func() { b.manager.finishLease(b.entry, b.generation, b.conn, b.req, b.digest, finalResult, false) })
 	}
 	return n, err
 }
@@ -787,7 +798,7 @@ func (b *wsManagerBody) Close() error {
 	result := b.result
 	b.mu.Unlock()
 	err := b.body.Close()
-	b.finishOnce.Do(func() { b.manager.finishLease(b.entry, b.generation, b.conn, b.req, result, eof) })
+	b.finishOnce.Do(func() { b.manager.finishLease(b.entry, b.generation, b.conn, b.req, b.digest, result, eof) })
 	return err
 }
 

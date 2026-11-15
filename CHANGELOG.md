@@ -21,6 +21,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   `relocated` line after each `last-prompt` line.
 
 ### Changed
+- A Codex request hashes its history and fingerprint once, not three times (cache watch, delta decision, the chain kept
+  after the reply): less CPU per request on a history of several MiB; log texts are the same.
+- A Codex endpoint that has taken a zstd body once gets its later `400`/`415` back as it is: the request's own error
+  was sent again plain, 5-10 times larger, for nothing. The first contact still retries plain.
+- A websocket reply that ends without completing (`response.incomplete`, `response.failed`, an `error` event) keeps its
+  healthy connection, and only drops the chain: the next request goes out in full on the same connection instead of
+  paying for a new dial.
 - `--fork` and `--force` of `ccgp --send` / `--import` / `--export` work together: a diverged session is forked, and a
   fork the destination already holds that went its own way is kept as `.bak-<time>` and written afresh; the original is
   never touched. They used to exclude each other.
