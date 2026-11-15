@@ -6,9 +6,11 @@ first run, from [`config.example.ktav`](../internal/config/config.example.ktav):
 | OS | Config | Secrets and tokens | Server log |
 | --- | --- | --- | --- |
 | Windows | `%APPDATA%\cc-go-proxy\config.ktav` | `%APPDATA%\cc-go-proxy\creds\` | `%LOCALAPPDATA%\cc-go-proxy\logs\ccgp.log` |
-| Linux / macOS | `~/.config/cc-go-proxy/config.ktav` | `~/.config/cc-go-proxy/creds/` | `~/.cache/cc-go-proxy/logs/ccgp.log` |
+| Linux | `~/.config/cc-go-proxy/config.ktav` | `~/.config/cc-go-proxy/creds/` | `~/.cache/cc-go-proxy/logs/ccgp.log` |
+| macOS | `~/Library/Application Support/cc-go-proxy/config.ktav` | `~/Library/Application Support/cc-go-proxy/creds/` | `~/Library/Caches/cc-go-proxy/logs/ccgp.log` |
 
-`ccgp --status` prints the real paths. `CCGP_CONFIG` points ccgp at another config file.
+On Linux `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` replace `~/.config` and `~/.cache` when set. `ccgp --status` prints the
+real paths. `CCGP_CONFIG` points ccgp at another config file.
 
 **Another place, all at once.** `ccgp --local` (a `.ccgp` directory in the current directory), `ccgp --home <dir>`,
 `CCGP_HOME` or a `.ccgp` directory that already exists in the current directory move the config, `creds/`, the

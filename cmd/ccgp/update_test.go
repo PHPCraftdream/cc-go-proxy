@@ -12,10 +12,36 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+// The platforms --update knows are exactly the archives release.yml builds.
+func TestReleasePlatformsMatchReleaseWorkflow(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	built := map[string]bool{}
+	for _, m := range regexp.MustCompile(`goos:\s*(\w+),\s*goarch:\s*(\w+)`).FindAllStringSubmatch(string(data), -1) {
+		built[m[1]+"/"+m[2]] = true
+	}
+	if len(built) == 0 {
+		t.Fatal("no build matrix found in release.yml")
+	}
+	for p := range built {
+		if !releasePlatforms[p] {
+			t.Errorf("release.yml builds %s, --update does not know it", p)
+		}
+	}
+	for p := range releasePlatforms {
+		if !built[p] {
+			t.Errorf("--update knows %s, release.yml does not build it", p)
+		}
+	}
+}
 
 func TestCompareVersions(t *testing.T) {
 	cases := []struct {
@@ -51,8 +77,14 @@ func TestArchiveName(t *testing.T) {
 		{"0.1.2", "darwin", "arm64", "ccgp_0.1.2_darwin_arm64", "ccgp_0.1.2_darwin_arm64.tar.gz", false, false},
 		{"0.1.2", "windows", "amd64", "ccgp_0.1.2_windows_amd64", "ccgp_0.1.2_windows_amd64.zip", true, false},
 		{"0.1.2", "windows", "arm64", "ccgp_0.1.2_windows_arm64", "ccgp_0.1.2_windows_arm64.zip", true, false},
-		{"0.1.2", "freebsd", "amd64", "", "", false, true},
+		// Every archive release.yml builds can be updated from.
+		{"0.1.2", "linux", "arm", "ccgp_0.1.2_linux_arm", "ccgp_0.1.2_linux_arm.tar.gz", false, false},
+		{"0.1.2", "linux", "riscv64", "ccgp_0.1.2_linux_riscv64", "ccgp_0.1.2_linux_riscv64.tar.gz", false, false},
+		{"0.1.2", "freebsd", "amd64", "ccgp_0.1.2_freebsd_amd64", "ccgp_0.1.2_freebsd_amd64.tar.gz", false, false},
+		{"0.1.2", "freebsd", "arm64", "ccgp_0.1.2_freebsd_arm64", "ccgp_0.1.2_freebsd_arm64.tar.gz", false, false},
 		{"0.1.2", "linux", "386", "", "", false, true},
+		{"0.1.2", "darwin", "arm", "", "", false, true},
+		{"0.1.2", "freebsd", "riscv64", "", "", false, true},
 	}
 	for _, c := range cases {
 		dir, archive, zipArch, err := archiveName(c.ver, c.goos, c.goarch)

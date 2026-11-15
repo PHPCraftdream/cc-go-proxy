@@ -9,147 +9,63 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
-### Fixed
-- A request body the OpenAI-compatible handler could not parse was printed whole to the server log (a conversation of
-  megabytes); the log now gets the error and the size, the body only with debug on.
-- A stream an `anthropic_compat` provider (z.ai) broke mid-reply left no line in the log after its `200`; it gets a
-  `stream failed after …` line like a Codex one.
-- The first launch of a profile copied the user's latest session without saying where it lives: one begun in another
-  directory was not listed by `/resume` (the bug of `ccgp --send`, fixed before); it now gets the `relocated` line too.
-  The check whether the profile already has a session of the directory reads that one project folder, not every
-  transcript of every project.
-- `ccgp --update` replaced `ccgp` before it had unpacked `ccgpy`: a broken archive could leave the two binaries of
-  different versions. Every file is unpacked and checked first.
-- A rerun of `ccgp --send` read every sidecar file of a session again (tens of thousands in a big one); a file copied
-  byte for byte whose size and time equal the source's is skipped now, as the file versions of `/rewind` already were.
-  Files changed by the copy (thinking blocks removed, a fork's ids) are still compared.
-- Usage lines, help, the README and `docs/cli.md` offered `[--fork|--force]` as alternatives; they can be combined.
-- A used-up Codex plan limit (`usage_limit_reached`) reached Claude Code as a `502` when the websocket brought it in a
-  non-stream reply, and Claude Code sent the request, megabytes each, ten times more; over HTTP the `429` was retried
-  too. Both are now a `429` `rate_limit_error` with `x-should-retry: false`, which Claude Code does not retry.
-- `ccgp --send` / `--fork` / `--force` kept the failed end of a session whose API errors were followed by a turn the user
-  stopped with Esc: the `[Request interrupted by user]` note counted as conversation. It is now part of the failed end.
-- `ccgp --send` / `--fork` of a session begun in another directory (moved into this one's folder by `/cd` or an
-  earlier copy) wrote a copy that `claude --resume` in the directory did not list: with no `relocated` line, Claude Code
-  took the first lines' `cwd`, and on Windows its worktree filter hid the session. The copy now names the directory in a
-  `relocated` line after each `last-prompt` line.
-- A Codex websocket frame between 16 and 32 MiB (the limit of the socket itself) passed the socket and then failed the
-  translator with `token too long`: its line limit was 16 MiB. The translator takes every frame the socket takes.
+## [0.1.0] - 2026-11-15
 
-### Changed
-- The OpenAI-compatible `/v1/messages` handler answers a bad body, a wrong API key and a conversion error through the
-  same helper as the Codex path, so the reason is on the access line; statuses and bodies are the same.
-- Cleanup of the Codex websocket path and the OpenAI-compatible stream converter, behaviour unchanged: the websocket
-  manager's `Call` is cut into named steps (one lock for the checks, a dead branch dropped), the four ways of reading an
-  input item's kind are one (`codex.ItemParts`, no encoding of each item to JSON and back), `delta` takes its digest as a
-  required argument, and `streamOpenAIToClaude` is a small state type with one method per block kind.
-- A Codex request hashes its history and fingerprint once, not three times (cache watch, delta decision, the chain kept
-  after the reply): less CPU per request on a history of several MiB; log texts are the same.
-- A Codex endpoint that has taken a zstd body once gets its later `400`/`415` back as it is: the request's own error
-  was sent again plain, 5-10 times larger, for nothing. The first contact still retries plain.
-- A websocket reply that ends without completing (`response.incomplete`, `response.failed`, an `error` event) keeps its
-  healthy connection, and only drops the chain: the next request goes out in full on the same connection instead of
-  paying for a new dial.
-- `--fork` and `--force` of `ccgp --send` / `--import` / `--export` work together: a diverged session is forked, and a
-  fork the destination already holds that went its own way is kept as `.bak-<time>` and written afresh; the original is
-  never touched. They used to exclude each other.
-- `ccgp --send --fork` of the 1.8 GB live session takes 37 s instead of 91 s, with output byte for byte the same.
-  What a profile showed and what changed:
-  - the short ids and slugs are found by hand-written finders instead of regular expressions, which took 20 s;
-  - the files of a session's folder are scanned several at once;
-  - the costly part of removing thinking blocks (parsing and re-encoding a line), and finding the links to dropped
-    lines, run on the worker goroutines; only re-linking follows in order;
-  - a line's id rewrite reuses two buffers instead of copying the line at every step;
-  - the collector runs a quarter as often during a copy.
-- `ccgp --send --fork` is faster on large sessions: the ids of a transcript are collected and replaced in runs of
-  lines on several CPUs (up to 8, in their order), lines are read without a copy each, a short id is told by its
-  first character and length before any lookup and mapped once, and the files of the session's folder are copied
-  four at a time. The output is byte for byte what it was.
-- `ccgp --send` / `--import` / `--export` (plain, `--fork`, `--force`) leave out the failed end of a session: the
-  turns at its end that got only `API Error: …` in place of a reply, with their request records and the scheduled
-  prompts that kept firing into them (18 usage-limit 502s in a row in a live session). The copy resumes from the last
-  real exchange; once the session goes on, the errors come along as before. An earlier copy that holds them stays
-  `unchanged`.
-- `ccgp --send` / `--import` / `--export` bring what Claude Code keeps of a session outside its transcript: the task
-  list (`tasks/<id>/`), the file versions of `/rewind` (`file-history/<id>/`) and the plan (`plans/<slug>.md`). A copy
-  showed none of the original's tasks before (36 in the live session), could not `/rewind` (3655 versions) and had no
-  plan. A session copied earlier gets them on the next run; one the destination went its own way on keeps its own. A
-  fork has them under its id, and its plan under a slug of its own.
-- `--fork` also replaces the ids of a session run on Codex through ccgp: tool calls `call_<32 hex>` and replies
-  `resp_<50 hex>` (11 836 and 15 714 of them in the live session were kept). A background task's id named in text
-  before its field (`with ID: b…`, `tasks/b….output`, `<task-id>`; 359 in the live session) is known from that first
-  mention, so a fork synced while the task runs is extended later instead of diverging. An id inside a longer word
-  (`recall_…`) is left alone.
-- `ccgp --send` after a review: a session is taken from a worktree's folder only when it began in the directory itself,
-  judged session by session (sessions begun in a subdirectory or in the worktree stay theirs; they were written into
-  the directory's folder, where `/resume` showed them nowhere); a fork whose id another folder holds is reported
-  `elsewhere`, not written twice; a fork replaces only the session's own uuids (fields' values), so a uuid merely
-  mentioned in text is kept, and a word in an id field is not taken for an id; marker lines (`relocated`,
-  `session-owner`) are known by their type, whatever the order of their fields. The log keeps a backend message in the
-  raw event unless the reason is it or ends with it; the profile list's help names its keys. The client of a
-  non-stream request that leaves before the backend's reply started gets the `non-stream reply canceled by client`
-  line too (`before the reply started`); only a 502 access line said so before (found by a flaky test).
-- `ccgp --send`: a session taken from a worktree's folder into the directory's now says it lives in the directory
-  (`relocatedCwd`), so `/resume` there lists it: Claude Code goes by that line, and the fork made before stayed hidden as
-  a worktree's session (seen live; found in Claude Code's own code). A fork carries no `session-owner` line any more
-  (the source's account; its ids were also mapped like every uuid).
-- `--fork` replaces every id of the session, in the transcript, in the files of its folder and in their names: uuids,
-  `toolu_…` / `msg_…` / `req_…`, subagent and background task ids (`agent-<id>.jsonl`, `tool-results/<id>.txt`), text
-  included, each always to the same new one. A fork written by an earlier version reads as diverged and is left alone.
-- `ccgp --send` / `--import` / `--export` take the sessions Claude Code moved into a subdirectory's folder (a session
-  continued in a worktree) as the current directory's own, and write them into its folder: run from the main checkout,
-  the worktree's newest session is found and `/resume` there lists it. A fork gets its own uuids (every field) besides its
-  session id: with the original's, Claude Code's `/resume` listed only one of the two (seen live). A fork written by an
-  earlier version reads as diverged now and is left alone (move it away to get a fresh one).
-- `ccgp --send` / `--import` / `--export`: a session whose id the destination holds in another project folder (Claude
-  Code moves a session into a worktree's folder on one side only) is no longer written with the same id next to it: it
-  is reported `elsewhere`, and `--fork` writes it under a new id. A fork into your own Claude Code ends with
-  `open it with: claude --resume <id>`.
-- The `stream failed` and `upstream retry` lines write the backend's error message once: in the raw event it reads
-  `"(shown before)"`, and the reason is no longer cut at 300 bytes (a `cyber_policy` refusal was written twice, the
-  first copy cut).
-- A Codex request without streaming (Claude Code sends one after a stream failed) is marked: `| non-stream` in its
-  access line, `slow non-stream reply` / `non-stream reply canceled by client` / `non-stream reply failed` in place of
-  the stream lines. Nothing reaches the client before such a reply is complete, and Claude Code gives it up after about
-  5 minutes; ccgp now sees its connection close (the reply is sent with `Connection: close`) and stops the backend's
-  work, so the conversation's websocket is free for the next request instead of busy, which sent it over HTTP in full.
-  Seen live: after a network break, a 5-minute reply was thrown away by the client and the session stood for 9 minutes.
-- README: [cah (cc-arch-hands)](https://github.com/PHPCraftdream/cc-arch-hands) supports ccgp's model mappings and
-  shows the model a request is really routed to (sol, terra, luna, astra, glm).
-- Faster and lighter Codex requests: the 4-5 MiB request body is decoded once instead of three times (5 MiB, 1500 items:
-  267 ms -> 124 ms, 55 -> 38 MB allocated; the converted request is byte for byte the same, guarded by a golden corpus),
-  it is serialized and compressed once for all retries (5-6 MB instead of 16-28 MB per call with two retries) and is
-  released as soon as the first content block goes out, the prompt-diagnostics hashing does nothing for a request
-  without a cache key, and a non-streaming answer is collected in linear time (256 KiB used to copy about 550 MB).
-- `PASSTHROUGH_MODE` was read and never used; the setting is gone (the variable is ignored). Tests that ran a copy of
-  the code (the capability cache), compared keys themselves instead of calling the handler, or were skipped as "not
-  implemented" now test the real code.
-
-- Codex model mapping follows the GPT-6.1 line-up: Sonnet goes to the newest `terra` (was the newest `luna`), Haiku
-  to the newest `luna` (was the `luna` of the release before). Fable stays on `astra`, Opus on `sol`. Run
-  `ccgp --models apply` to rewrite a profile's mapping.
-
-- Documentation and help brought up to date: every command has its own `--help` with the flags and examples
-  (`--which`, `--logs`, `--restart` and `--completion` were one-liners before; `--status`, `--models`, `--send`,
-  `--profile`, `--login` say more), `docs/cli.md` gained running a profile, per-area examples, environment variables and
-  exit codes, and the new `docs/api.md` describes the HTTP endpoints (`/health`, `/call/<token>/…`) with `curl`
-  examples. A test keeps every command's help complete.
-
-- Log: a successful `GET …/model` and `/health` no longer get a line (a third of the log was them); a failed one does.
-  A line `--- 2026-11-02 ---` opens the log of a server and every new day (lines carry the time only). The line of a
-  failed request (403, 429, 502, …) ends with the connection it was on (`conn new (dns …, tls …)`, `conn reused (idle …)`),
-  and the address in an edge's block page (`[IP: …]`) is no longer cut off.
-
-- Log: a request to z.ai (or another Anthropic-style provider) that opened a connection of its own ends with
-  `| conn new (tls …, pool …)`, and a refused or failed one with the connection it was on, as for Codex. A line written
-  just after midnight by a request that began before it stays above the new `--- date ---` line.
-
-- Log: the lines `slow stream`, `stream failed` and `stream canceled by client` are stamped with the start of the
-  call (they were stamped with the moment the reply headers came in, except the slow one), count `after` from the same
-  start as `total`, and the timing ends with `ended HH:MM:SS`, the time the answer ended: such a line is written when
-  the answer ends and could not be placed in time before.
+First release of ccgp as an independent project.
 
 ### Added
+- `ccgp <profile>` launcher: starts the background server, makes sure credentials exist, runs Claude Code through
+  the profile. Named profiles, each with its own URL token and its own provider. A background server started from an
+  older binary is restarted when it is idle; with requests in flight ccgp warns and leaves it running.
+- Command line: every command starts with `--` (`ccgp --status`, `--login`, `--models`, `--profile`, `--send`, ...);
+  a word without dashes is always a profile, only `claude` is reserved, and an unknown `--command` is an error. One
+  command table drives dispatch, `ccgp --help`, `ccgp --<command> --help` and shell completion. See
+  [docs/cli.md](docs/cli.md).
+- `ccgp --profile add` / `list` / `rm`: several logins side by side. `add --like` clones a profile with its own
+  provider (a second ChatGPT account), `--provider` adds a profile to an existing login, `--type` wires up a
+  new backend; `list` shows profiles, providers, login state and Claude dirs; `rm` removes a profile and its
+  provider when unused (`--purge` also deletes the isolated Claude dir and credentials).
+- `ccgp --send <from> <to> [count]`: copy the latest sessions of the current directory between profiles and `claude`
+  (streaming, append-only, progress output); `--import` / `--export` are aliases. Thinking blocks are stripped
+  whenever the two sides belong to different providers, since their signatures are only valid for the provider that
+  wrote them.
+- Safe config editing: `ccgp --profile add` / `rm` edit `config.ktav` surgically (comments, key order and line
+  endings stay), validate the result with the real loader before replacing the file, and keep a
+  `config.ktav.bak-<timestamp>` backup whose name is never overwritten.
+- `ccgp --start` / `--stop` / `--status` / `--serve`, `ccgp --config reset`; Windows, Linux and macOS.
+- `ccgp --restart`, `--logs [-f] [-n N]`, `--doctor [--offline] [--json]`, `--which <profile> <model>`,
+  `--logout <provider>`, `--update [--check]` (checksum-verified self-update from the GitHub release) and
+  `--completion bash|zsh|powershell`; `--json` for `--status`, `--profile list` and `--models`.
+- Token-in-URL access: every model request is `/call/<token>/...`; unknown tokens get `404`. `/health` reports the
+  server binary's path and mtime and the number of in-flight model requests.
+- Authenticated model-label metadata at `/call/<token>/model?requested=<model-id>`, resolved with the inference
+  routing rules without exposing tokens or invoking upstream inference.
+- Ktav configuration with `providers[]` and `profiles[]`, created on first run, hot-reloaded, changed only
+  by explicit commands. Secrets live in a separate owner-only `creds` directory. The parser is the pure-Go package
+  of ktav-lang/golang: nothing is downloaded on first use and the binary works offline.
+- `codex` provider: ChatGPT subscription through OAuth (browser PKCE by default, device code with `--device`),
+  refresh-token rotation, Anthropic Messages translated to the Responses API with reasoning round-trip.
+- `codex_api` provider (OpenAI-compatible API key) and `anthropic_compat` provider (unconverted passthrough, used for
+  z.ai GLM, with an `effort_map`).
+- `ccgp --models` / `ccgp --models apply`: newest Codex models per Claude tier from the account catalog, per-rule
+  `context_window`, built-in z.ai preset; `ccgp --login zai`. For the GPT-6 generation they write a context window of
+  922000 (OpenAI's documented input limit) when the catalog's `max_context_window` is lower; a larger catalog value
+  wins.
+- Per-model context windows and compaction: the launcher sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the rule of the
+  session's main model, clamped to the 100k-1M range Claude Code accepts; `compact_percent`.
+- `count_tokens` for `codex` and `codex_api` answers with a length-based estimate instead of a constant.
+- Isolated Claude Code configuration per profile: official credentials never reach a ccgp session; agents, skills,
+  commands, plugins and settings are mirrored one way.
+- The model-identity sentence in Claude Code's prompt is replaced with the real backend model.
+- `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
+  permission prompts off), a second small binary that starts the `ccgp` next to it.
+- Installation: `install.sh` (Linux, macOS) and `install.ps1` (Windows) install `ccgp` and `ccgpy` from the GitHub
+  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `@cc-go-proxy/ccgp`
+  (`npm install -g @cc-go-proxy/ccgp`, in the npm organization `cc-go-proxy`; the
+  platform packages are `@cc-go-proxy/ccgp-<os>-<cpu>`) installs both commands. CI checks that the scripts install the newest release.
+- Releases: binaries for ten platforms with checksums and build-provenance attestations, npm packages (token or
+  Trusted Publishing, switched on by the repository variable `NPM_PUBLISH`), third-party license notices; dual
+  license check in CI.
 - `ccgp . [claude args…]` and `ccgpy` without a profile (or `ccgpy . [claude args…]`): a list of the profiles to choose
   the one to run, with your own Claude Code (`claude`, run as plain `claude`) as the last entry. The arguments go to
   the chosen one.
@@ -336,9 +252,181 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - A `stream failed` line says `silent for X`: how long the reply had been quiet before it broke. About 45 s means ccgp's
   health ping closed a connection the network no longer carried (the line says so); data right up to the end means a
   reset by the backend or the network.
+- `connections.proxy` in config.ktav and `ccgp --connections proxy URL|off`: all outbound connections (model
+  requests, model catalog, login and token refresh, `--doctor`, `--update`) can go through a SOCKS5 (`socks5://`,
+  `socks5h://`, optional user and password) or HTTP/HTTPS `CONNECT` proxy. The new connections are warmed up through
+  it too; a change applies without a restart, and the password is shown as `***`.
+- Proxy settings cascade: a profile's own `proxy:` (a proxy URL, or `none` for no proxy at all) overrides the global
+  `connections.proxy`; a profile without one inherits it. `ccgp --connections proxy URL|none|inherit profile NAME`
+  edits it. Every way out keeps its own connections; login, the model catalog and the `--doctor` probe use the proxy
+  their provider's profiles agree on.
+- Every 10 minutes the server logs `upstream stats` per upstream client: connections opened and their protocol
+  (h2 or http/1.1), warm-ups opened/used/failed, retries.
+- A slow Codex answer (reply headers after 20 s or the whole answer over 2 minutes) gets a `slow stream` log line
+  with the timing: new or reused connection (DNS, connect, TLS), time to headers, to the first token and in total,
+  request size and tokens. Broken streams carry the same timing. See
+  [docs/cli.md](docs/cli.md#reading-the-log).
+- `connections.active` / `connections.total` in config.ktav (default 7 / 10) and `ccgp --connections [active N]
+  [total N] [--json]` to show and set them: connections taking new requests, and the limit for them plus the ones
+  still finishing older requests. Applied by a running server without a restart.
+
+### Changed
+- The Go module is now `github.com/PHPCraftdream/cc-go-proxy`.
+- Licensed under `MIT OR Apache-2.0` (the MIT-licensed upstream parts keep their notice, see `NOTICE`).
+- The version is set from the release tag at build time.
+- ccgp's own files are Ktav, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
+  `creds` directory and `.ccgp-mirror.ktav` in a profile's Claude directory. The JSON files of earlier versions are read
+  once, converted and removed, so existing logins and URL tokens keep working. A file is checked to read back as the same
+  value before it is written. (Claude Code's own JSON files, such as `settings.json`, are untouched.)
+- The request log says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
+  that breaks after the reply started gets a `stream failed` line; before, both were silent.
+- Codex backend: the wait for the reply headers is limited to 90 seconds. A request the backend stalled on used to hang
+  for several minutes before failing with 502; now it fails sooner and Claude Code retries it.
+- Building from source needs Go 1.26 (the current x/sys, x/term and fasthttp require it); dependencies updated:
+  fiber 2.52.15, fasthttp 1.76.0, x/sys 0.49.0, x/term 0.47.0 and others.
+- The OpenAI-compatible `/v1/messages` handler answers a bad body, a wrong API key and a conversion error through the
+  same helper as the Codex path, so the reason is on the access line; statuses and bodies are the same.
+- Cleanup of the Codex websocket path and the OpenAI-compatible stream converter, behaviour unchanged: the websocket
+  manager's `Call` is cut into named steps (one lock for the checks, a dead branch dropped), the four ways of reading an
+  input item's kind are one (`codex.ItemParts`, no encoding of each item to JSON and back), `delta` takes its digest as a
+  required argument, and `streamOpenAIToClaude` is a small state type with one method per block kind.
+- A Codex request hashes its history and fingerprint once, not three times (cache watch, delta decision, the chain kept
+  after the reply): less CPU per request on a history of several MiB; log texts are the same.
+- A Codex endpoint that has taken a zstd body once gets its later `400`/`415` back as it is: the request's own error
+  was sent again plain, 5-10 times larger, for nothing. The first contact still retries plain.
+- A websocket reply that ends without completing (`response.incomplete`, `response.failed`, an `error` event) keeps its
+  healthy connection, and only drops the chain: the next request goes out in full on the same connection instead of
+  paying for a new dial.
+- `--fork` and `--force` of `ccgp --send` / `--import` / `--export` work together: a diverged session is forked, and a
+  fork the destination already holds that went its own way is kept as `.bak-<time>` and written afresh; the original is
+  never touched. They used to exclude each other.
+- `ccgp --send --fork` of the 1.8 GB live session takes 37 s instead of 91 s, with output byte for byte the same.
+  What a profile showed and what changed:
+  - the short ids and slugs are found by hand-written finders instead of regular expressions, which took 20 s;
+  - the files of a session's folder are scanned several at once;
+  - the costly part of removing thinking blocks (parsing and re-encoding a line), and finding the links to dropped
+    lines, run on the worker goroutines; only re-linking follows in order;
+  - a line's id rewrite reuses two buffers instead of copying the line at every step;
+  - the collector runs a quarter as often during a copy.
+- `ccgp --send --fork` is faster on large sessions: the ids of a transcript are collected and replaced in runs of
+  lines on several CPUs (up to 8, in their order), lines are read without a copy each, a short id is told by its
+  first character and length before any lookup and mapped once, and the files of the session's folder are copied
+  four at a time. The output is byte for byte what it was.
+- `ccgp --send` / `--import` / `--export` (plain, `--fork`, `--force`) leave out the failed end of a session: the
+  turns at its end that got only `API Error: …` in place of a reply, with their request records and the scheduled
+  prompts that kept firing into them (18 usage-limit 502s in a row in a live session). The copy resumes from the last
+  real exchange; once the session goes on, the errors come along as before. An earlier copy that holds them stays
+  `unchanged`.
+- `ccgp --send` / `--import` / `--export` bring what Claude Code keeps of a session outside its transcript: the task
+  list (`tasks/<id>/`), the file versions of `/rewind` (`file-history/<id>/`) and the plan (`plans/<slug>.md`). A copy
+  showed none of the original's tasks before (36 in the live session), could not `/rewind` (3655 versions) and had no
+  plan. A session copied earlier gets them on the next run; one the destination went its own way on keeps its own. A
+  fork has them under its id, and its plan under a slug of its own.
+- `--fork` also replaces the ids of a session run on Codex through ccgp: tool calls `call_<32 hex>` and replies
+  `resp_<50 hex>` (11 836 and 15 714 of them in the live session were kept). A background task's id named in text
+  before its field (`with ID: b…`, `tasks/b….output`, `<task-id>`; 359 in the live session) is known from that first
+  mention, so a fork synced while the task runs is extended later instead of diverging. An id inside a longer word
+  (`recall_…`) is left alone.
+- `ccgp --send` after a review: a session is taken from a worktree's folder only when it began in the directory itself,
+  judged session by session (sessions begun in a subdirectory or in the worktree stay theirs; they were written into
+  the directory's folder, where `/resume` showed them nowhere); a fork whose id another folder holds is reported
+  `elsewhere`, not written twice; a fork replaces only the session's own uuids (fields' values), so a uuid merely
+  mentioned in text is kept, and a word in an id field is not taken for an id; marker lines (`relocated`,
+  `session-owner`) are known by their type, whatever the order of their fields. The log keeps a backend message in the
+  raw event unless the reason is it or ends with it; the profile list's help names its keys. The client of a
+  non-stream request that leaves before the backend's reply started gets the `non-stream reply canceled by client`
+  line too (`before the reply started`); only a 502 access line said so before (found by a flaky test).
+- `ccgp --send`: a session taken from a worktree's folder into the directory's now says it lives in the directory
+  (`relocatedCwd`), so `/resume` there lists it: Claude Code goes by that line, and the fork made before stayed hidden as
+  a worktree's session (seen live; found in Claude Code's own code). A fork carries no `session-owner` line any more
+  (the source's account; its ids were also mapped like every uuid).
+- `--fork` replaces every id of the session, in the transcript, in the files of its folder and in their names: uuids,
+  `toolu_…` / `msg_…` / `req_…`, subagent and background task ids (`agent-<id>.jsonl`, `tool-results/<id>.txt`), text
+  included, each always to the same new one. A fork written by an earlier version reads as diverged and is left alone.
+- `ccgp --send` / `--import` / `--export` take the sessions Claude Code moved into a subdirectory's folder (a session
+  continued in a worktree) as the current directory's own, and write them into its folder: run from the main checkout,
+  the worktree's newest session is found and `/resume` there lists it. A fork gets its own uuids (every field) besides its
+  session id: with the original's, Claude Code's `/resume` listed only one of the two (seen live). A fork written by an
+  earlier version reads as diverged now and is left alone (move it away to get a fresh one).
+- `ccgp --send` / `--import` / `--export`: a session whose id the destination holds in another project folder (Claude
+  Code moves a session into a worktree's folder on one side only) is no longer written with the same id next to it: it
+  is reported `elsewhere`, and `--fork` writes it under a new id. A fork into your own Claude Code ends with
+  `open it with: claude --resume <id>`.
+- The `stream failed` and `upstream retry` lines write the backend's error message once: in the raw event it reads
+  `"(shown before)"`, and the reason is no longer cut at 300 bytes (a `cyber_policy` refusal was written twice, the
+  first copy cut).
+- A Codex request without streaming (Claude Code sends one after a stream failed) is marked: `| non-stream` in its
+  access line, `slow non-stream reply` / `non-stream reply canceled by client` / `non-stream reply failed` in place of
+  the stream lines. Nothing reaches the client before such a reply is complete, and Claude Code gives it up after about
+  5 minutes; ccgp now sees its connection close (the reply is sent with `Connection: close`) and stops the backend's
+  work, so the conversation's websocket is free for the next request instead of busy, which sent it over HTTP in full.
+  Seen live: after a network break, a 5-minute reply was thrown away by the client and the session stood for 9 minutes.
+- README: [cah (cc-arch-hands)](https://github.com/PHPCraftdream/cc-arch-hands) supports ccgp's model mappings and
+  shows the model a request is really routed to (sol, terra, luna, astra, glm).
+- Faster and lighter Codex requests: the 4-5 MiB request body is decoded once instead of three times (5 MiB, 1500 items:
+  267 ms -> 124 ms, 55 -> 38 MB allocated; the converted request is byte for byte the same, guarded by a golden corpus),
+  it is serialized and compressed once for all retries (5-6 MB instead of 16-28 MB per call with two retries) and is
+  released as soon as the first content block goes out, the prompt-diagnostics hashing does nothing for a request
+  without a cache key, and a non-streaming answer is collected in linear time (256 KiB used to copy about 550 MB).
+- `PASSTHROUGH_MODE` was read and never used; the setting is gone (the variable is ignored). Tests that ran a copy of
+  the code (the capability cache), compared keys themselves instead of calling the handler, or were skipped as "not
+  implemented" now test the real code.
+
+- Codex model mapping follows the GPT-6.1 line-up: Sonnet goes to the newest `terra` (was the newest `luna`), Haiku
+  to the newest `luna` (was the `luna` of the release before). Fable stays on `astra`, Opus on `sol`. Run
+  `ccgp --models apply` to rewrite a profile's mapping.
+
+- Documentation and help brought up to date: every command has its own `--help` with the flags and examples
+  (`--which`, `--logs`, `--restart` and `--completion` were one-liners before; `--status`, `--models`, `--send`,
+  `--profile`, `--login` say more), `docs/cli.md` gained running a profile, per-area examples, environment variables and
+  exit codes, and the new `docs/api.md` describes the HTTP endpoints (`/health`, `/call/<token>/…`) with `curl`
+  examples. A test keeps every command's help complete.
+
+- Log: a successful `GET …/model` and `/health` no longer get a line (a third of the log was them); a failed one does.
+  A line `--- 2026-11-02 ---` opens the log of a server and every new day (lines carry the time only). The line of a
+  failed request (403, 429, 502, …) ends with the connection it was on (`conn new (dns …, tls …)`, `conn reused (idle …)`),
+  and the address in an edge's block page (`[IP: …]`) is no longer cut off.
+
+- Log: a request to z.ai (or another Anthropic-style provider) that opened a connection of its own ends with
+  `| conn new (tls …, pool …)`, and a refused or failed one with the connection it was on, as for Codex. A line written
+  just after midnight by a request that began before it stays above the new `--- date ---` line.
+
+- Log: the lines `slow stream`, `stream failed` and `stream canceled by client` are stamped with the start of the
+  call (they were stamped with the moment the reply headers came in, except the slow one), count `after` from the same
+  start as `total`, and the timing ends with `ended HH:MM:SS`, the time the answer ended: such a line is written when
+  the answer ends and could not be placed in time before.
 
 ### Fixed
-
+- `ccgp --update` refused to update on 32-bit ARM, riscv64 and FreeBSD (`no release build`), although the release has
+  archives for them; it now knows every platform the release builds, and a test keeps the two lists equal.
+- Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
+  with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
+  config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
+- A request body the OpenAI-compatible handler could not parse was printed whole to the server log (a conversation of
+  megabytes); the log now gets the error and the size, the body only with debug on.
+- A stream an `anthropic_compat` provider (z.ai) broke mid-reply left no line in the log after its `200`; it gets a
+  `stream failed after …` line like a Codex one.
+- The first launch of a profile copied the user's latest session without saying where it lives: one begun in another
+  directory was not listed by `/resume` (the bug of `ccgp --send`, fixed before); it now gets the `relocated` line too.
+  The check whether the profile already has a session of the directory reads that one project folder, not every
+  transcript of every project.
+- `ccgp --update` replaced `ccgp` before it had unpacked `ccgpy`: a broken archive could leave the two binaries of
+  different versions. Every file is unpacked and checked first.
+- A rerun of `ccgp --send` read every sidecar file of a session again (tens of thousands in a big one); a file copied
+  byte for byte whose size and time equal the source's is skipped now, as the file versions of `/rewind` already were.
+  Files changed by the copy (thinking blocks removed, a fork's ids) are still compared.
+- Usage lines, help, the README and `docs/cli.md` offered `[--fork|--force]` as alternatives; they can be combined.
+- A used-up Codex plan limit (`usage_limit_reached`) reached Claude Code as a `502` when the websocket brought it in a
+  non-stream reply, and Claude Code sent the request, megabytes each, ten times more; over HTTP the `429` was retried
+  too. Both are now a `429` `rate_limit_error` with `x-should-retry: false`, which Claude Code does not retry.
+- `ccgp --send` / `--fork` / `--force` kept the failed end of a session whose API errors were followed by a turn the user
+  stopped with Esc: the `[Request interrupted by user]` note counted as conversation. It is now part of the failed end.
+- `ccgp --send` / `--fork` of a session begun in another directory (moved into this one's folder by `/cd` or an
+  earlier copy) wrote a copy that `claude --resume` in the directory did not list: with no `relocated` line, Claude Code
+  took the first lines' `cwd`, and on Windows its worktree filter hid the session. The copy now names the directory in a
+  `relocated` line after each `last-prompt` line.
+- A Codex websocket frame between 16 and 32 MiB (the limit of the socket itself) passed the socket and then failed the
+  translator with `token too long`: its line limit was 16 MiB. The translator takes every frame the socket takes.
 - Codex websocket: the first 128 bytes of a message's encoding, by which a learned background message was recognised,
   hold only 57 bytes of its text, and ordinary turns that start the same way (a system reminder after a tool's result)
   were taken for background requests: 566 requests in ten hours went over HTTP, and 361 of them were real turns whose
@@ -488,103 +576,6 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
   code and message of an `error` object inside the event also reach Claude Code now.
 - Parallel requests no longer share one connection: they are spread over 7 connections per backend, so one
   busy connection does not slow down the others.
-
-### Added
-- `connections.proxy` in config.ktav and `ccgp --connections proxy URL|off`: all outbound connections (model
-  requests, model catalog, login and token refresh, `--doctor`, `--update`) can go through a SOCKS5 (`socks5://`,
-  `socks5h://`, optional user and password) or HTTP/HTTPS `CONNECT` proxy. The new connections are warmed up through
-  it too; a change applies without a restart, and the password is shown as `***`.
-- Proxy settings cascade: a profile's own `proxy:` (a proxy URL, or `none` for no proxy at all) overrides the global
-  `connections.proxy`; a profile without one inherits it. `ccgp --connections proxy URL|none|inherit profile NAME`
-  edits it. Every way out keeps its own connections; login, the model catalog and the `--doctor` probe use the proxy
-  their provider's profiles agree on.
-- Every 10 minutes the server logs `upstream stats` per upstream client: connections opened and their protocol
-  (h2 or http/1.1), warm-ups opened/used/failed, retries.
-- A slow Codex answer (reply headers after 20 s or the whole answer over 2 minutes) gets a `slow stream` log line
-  with the timing: new or reused connection (DNS, connect, TLS), time to headers, to the first token and in total,
-  request size and tokens. Broken streams carry the same timing. See
-  [docs/cli.md](docs/cli.md#reading-the-log).
-- `connections.active` / `connections.total` in config.ktav (default 7 / 10) and `ccgp --connections [active N]
-  [total N] [--json]` to show and set them: connections taking new requests, and the limit for them plus the ones
-  still finishing older requests. Applied by a running server without a restart.
-
-## [0.1.0] - 2026-10-25
-
-First release of ccgp as an independent project.
-
-### Added
-- `ccgp <profile>` launcher: starts the background server, makes sure credentials exist, runs Claude Code through
-  the profile. Named profiles, each with its own URL token and its own provider. A background server started from an
-  older binary is restarted when it is idle; with requests in flight ccgp warns and leaves it running.
-- Command line: every command starts with `--` (`ccgp --status`, `--login`, `--models`, `--profile`, `--send`, ...);
-  a word without dashes is always a profile, only `claude` is reserved, and an unknown `--command` is an error. One
-  command table drives dispatch, `ccgp --help`, `ccgp --<command> --help` and shell completion. See
-  [docs/cli.md](docs/cli.md).
-- `ccgp --profile add` / `list` / `rm`: several logins side by side. `add --like` clones a profile with its own
-  provider (a second ChatGPT account), `--provider` adds a profile to an existing login, `--type` wires up a
-  new backend; `list` shows profiles, providers, login state and Claude dirs; `rm` removes a profile and its
-  provider when unused (`--purge` also deletes the isolated Claude dir and credentials).
-- `ccgp --send <from> <to> [count]`: copy the latest sessions of the current directory between profiles and `claude`
-  (streaming, append-only, progress output); `--import` / `--export` are aliases. Thinking blocks are stripped
-  whenever the two sides belong to different providers, since their signatures are only valid for the provider that
-  wrote them.
-- Safe config editing: `ccgp --profile add` / `rm` edit `config.ktav` surgically (comments, key order and line
-  endings stay), validate the result with the real loader before replacing the file, and keep a
-  `config.ktav.bak-<timestamp>` backup whose name is never overwritten.
-- `ccgp --start` / `--stop` / `--status` / `--serve`, `ccgp --config reset`; Windows, Linux and macOS.
-- `ccgp --restart`, `--logs [-f] [-n N]`, `--doctor [--offline] [--json]`, `--which <profile> <model>`,
-  `--logout <provider>`, `--update [--check]` (checksum-verified self-update from the GitHub release) and
-  `--completion bash|zsh|powershell`; `--json` for `--status`, `--profile list` and `--models`.
-- Token-in-URL access: every model request is `/call/<token>/...`; unknown tokens get `404`. `/health` reports the
-  server binary's path and mtime and the number of in-flight model requests.
-- Authenticated model-label metadata at `/call/<token>/model?requested=<model-id>`, resolved with the inference
-  routing rules without exposing tokens or invoking upstream inference.
-- Ktav configuration with `providers[]` and `profiles[]`, created on first run, hot-reloaded, changed only
-  by explicit commands. Secrets live in a separate owner-only `creds` directory. The parser is the pure-Go package
-  of ktav-lang/golang: nothing is downloaded on first use and the binary works offline.
-- `codex` provider: ChatGPT subscription through OAuth (browser PKCE by default, device code with `--device`),
-  refresh-token rotation, Anthropic Messages translated to the Responses API with reasoning round-trip.
-- `codex_api` provider (OpenAI-compatible API key) and `anthropic_compat` provider (unconverted passthrough, used for
-  z.ai GLM, with an `effort_map`).
-- `ccgp --models` / `ccgp --models apply`: newest Codex models per Claude tier from the account catalog, per-rule
-  `context_window`, built-in z.ai preset; `ccgp --login zai`. For the GPT-6 generation they write a context window of
-  922000 (OpenAI's documented input limit) when the catalog's `max_context_window` is lower; a larger catalog value
-  wins.
-- Per-model context windows and compaction: the launcher sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` from the rule of the
-  session's main model, clamped to the 100k-1M range Claude Code accepts; `compact_percent`.
-- `count_tokens` for `codex` and `codex_api` answers with a length-based estimate instead of a constant.
-- Isolated Claude Code configuration per profile: official credentials never reach a ccgp session; agents, skills,
-  commands, plugins and settings are mirrored one way.
-- The model-identity sentence in Claude Code's prompt is replaced with the real backend model.
-- `ccgpy <profile> [claude args…]`: a shortcut for `ccgp <profile> --dangerously-skip-permissions …` (Claude Code with
-  permission prompts off), a second small binary that starts the `ccgp` next to it.
-- Installation: `install.sh` (Linux, macOS) and `install.ps1` (Windows) install `ccgp` and `ccgpy` from the GitHub
-  release for the OS and CPU, checked against `SHA256SUMS`; the npm package `@cc-go-proxy/ccgp`
-  (`npm install -g @cc-go-proxy/ccgp`, in the npm organization `cc-go-proxy`; the
-  platform packages are `@cc-go-proxy/ccgp-<os>-<cpu>`) installs both commands. CI checks that the scripts install the newest release.
-- Releases: binaries for ten platforms with checksums and build-provenance attestations, npm packages (token or
-  Trusted Publishing, switched on by the repository variable `NPM_PUBLISH`), third-party license notices; dual
-  license check in CI.
-
-### Changed
-- The Go module is now `github.com/PHPCraftdream/cc-go-proxy`.
-- Licensed under `MIT OR Apache-2.0` (the MIT-licensed upstream parts keep their notice, see `NOTICE`).
-- The version is set from the release tag at build time.
-- ccgp's own files are Ktav, not JSON: `oauth-<provider>.ktav`, `apikey-<provider>.ktav`, `profile-tokens.ktav` in the
-  `creds` directory and `.ccgp-mirror.ktav` in a profile's Claude directory. The JSON files of earlier versions are read
-  once, converted and removed, so existing logins and URL tokens keep working. A file is checked to read back as the same
-  value before it is written. (Claude Code's own JSON files, such as `settings.json`, are untouched.)
-- The request log says why a request failed (`502 - 2m12s POST … : <error>`, any status ≥ 400), and a Codex stream
-  that breaks after the reply started gets a `stream failed` line; before, both were silent.
-- Codex backend: the wait for the reply headers is limited to 90 seconds. A request the backend stalled on used to hang
-  for several minutes before failing with 502; now it fails sooner and Claude Code retries it.
-- Building from source needs Go 1.26 (the current x/sys, x/term and fasthttp require it); dependencies updated:
-  fiber 2.52.15, fasthttp 1.76.0, x/sys 0.49.0, x/term 0.47.0 and others.
-
-### Fixed
-- Long sessions no longer die with `ECONNRESET`: the request body cap was fiber's 4 MiB default, which a conversation
-  with many reasoning signatures outgrows. It is now `listen.max_body_mb` (default `256`, written into the default
-  config); refused bodies get `413` and a `rejected` log line instead of vanishing silently.
 
 [Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0

@@ -207,17 +207,18 @@ func versionParts(v string) []int {
 	return nums
 }
 
+// releasePlatforms are the os/arch pairs release.yml builds an archive for.
+var releasePlatforms = map[string]bool{
+	"linux/amd64": true, "linux/arm64": true, "linux/arm": true, "linux/riscv64": true,
+	"darwin/amd64": true, "darwin/arm64": true,
+	"windows/amd64": true, "windows/arm64": true,
+	"freebsd/amd64": true, "freebsd/arm64": true,
+}
+
 // archiveName returns the archive's top-level directory and its file name:
 // dir `ccgp_<ver>_<os>_<arch>`, file `<dir>.tar.gz` (`.zip` on Windows).
 func archiveName(ver, goos, goarch string) (dir string, archive string, zipArch bool, err error) {
-	switch goos {
-	case "linux", "darwin", "windows":
-	default:
-		return "", "", false, fmt.Errorf("unsupported platform %s/%s: no release build", goos, goarch)
-	}
-	switch goarch {
-	case "amd64", "arm64":
-	default:
+	if !releasePlatforms[goos+"/"+goarch] {
 		return "", "", false, fmt.Errorf("unsupported platform %s/%s: no release build", goos, goarch)
 	}
 	dir = fmt.Sprintf("ccgp_%s_%s_%s", ver, goos, goarch)
