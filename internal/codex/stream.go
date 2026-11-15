@@ -111,11 +111,15 @@ type Translator struct {
 	retry   bool
 }
 
+// wsMaxSSELine is the longest SSE line Run accepts: the largest websocket
+// frame the connection takes, plus the data prefix and its newline.
+var wsMaxSSELine = wsReadLimit + int64(len("data: ")) + 1
+
 // Run consumes the upstream SSE body until completion or EOF.
 func (t *Translator) Run(r io.Reader) error {
 	t.open = map[string]*block{}
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 16<<20) // encrypted reasoning can be large
+	sc.Buffer(make([]byte, 0, 64<<10), int(wsMaxSSELine))
 	for sc.Scan() {
 		line := sc.Bytes()
 		data, ok := bytes.CutPrefix(line, []byte("data:"))

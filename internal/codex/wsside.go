@@ -3,7 +3,6 @@ package codex
 import (
 	"encoding/json"
 	"hash/fnv"
-	"strings"
 )
 
 // Claude Code sends background requests (a suggestion of what to type next, for
@@ -47,24 +46,9 @@ type wsSideCheck struct {
 	item uint64
 }
 
-// sideText is the text of a user message from its encoding; false for any
-// other item.
-func sideText(encoded []byte) (string, bool) {
-	var item struct {
-		Type    string `json:"type"`
-		Role    string `json:"role"`
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(encoded, &item) != nil || item.Type != "message" || item.Role != "user" || len(item.Content) == 0 {
-		return "", false
-	}
-	var b strings.Builder
-	for _, part := range item.Content {
-		b.WriteString(part.Text)
-	}
-	return b.String(), true
+// isUserMessage says whether ItemParts read a user message with content parts.
+func isUserMessage(typ, role string, parts int) bool {
+	return typ == "message" && role == "user" && parts > 0
 }
 
 // sideKey identifies a side message by both ends of its text; a short text
@@ -94,12 +78,13 @@ func lastItemSide(req *Request) (key, item uint64, size int, ok bool) {
 	if req == nil || req.PromptCacheKey == "" || len(req.Input) == 0 {
 		return 0, 0, 0, false
 	}
-	encoded, err := json.Marshal(req.Input[len(req.Input)-1])
+	last := req.Input[len(req.Input)-1]
+	encoded, err := json.Marshal(last)
 	if err != nil || len(encoded) > wsSideMaxSize {
 		return 0, 0, 0, false
 	}
-	text, ok := sideText(encoded)
-	if !ok {
+	typ, role, text, parts := ItemParts(last)
+	if !isUserMessage(typ, role, parts) {
 		return 0, 0, 0, false
 	}
 	return sideKey(text), hashBytes(encoded), len(encoded), true
@@ -124,8 +109,12 @@ func (m *WSManager) learnSide(chain *WSChain, d *WSDivergence) {
 		len(chain.last) == 0 || d.Was.Kind != "user message" || d.Was.Size > wsSideMaxSize {
 		return
 	}
-	text, ok := sideText(chain.last)
-	if !ok {
+	var v any
+	if json.Unmarshal(chain.last, &v) != nil {
+		return
+	}
+	typ, role, text, parts := ItemParts(v)
+	if !isUserMessage(typ, role, parts) {
 		return
 	}
 	key := sideKey(text)

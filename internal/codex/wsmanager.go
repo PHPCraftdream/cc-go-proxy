@@ -163,38 +163,20 @@ func (m *WSManager) initLocked() {
 	if m.maxEntries <= 0 {
 		m.maxEntries = wsManagerMaxConnections
 	}
-	if m.maxEntries < 1 {
-		m.maxEntries = wsManagerMaxConnections
-	}
 	if m.maxAge <= 0 {
 		m.maxAge = wsManagerMaxAge
-	}
-	if m.maxAge <= 0 {
-		m.maxAge = 20 * time.Minute
 	}
 	if m.maxIdle <= 0 {
 		m.maxIdle = wsManagerMaxIdle
 	}
-	if m.maxIdle <= 0 {
-		m.maxIdle = 10 * time.Minute
-	}
 	if m.janitorEvery <= 0 {
 		m.janitorEvery = wsManagerJanitorEvery
-	}
-	if m.janitorEvery <= 0 {
-		m.janitorEvery = time.Minute
 	}
 	if m.disabledFor <= 0 {
 		m.disabledFor = wsManagerDisabledFor
 	}
-	if m.disabledFor <= 0 {
-		m.disabledFor = 10 * time.Minute
-	}
 	if m.backoffFor <= 0 {
 		m.backoffFor = wsManagerBackoffFor
-	}
-	if m.backoffFor <= 0 {
-		m.backoffFor = 30 * time.Second
 	}
 	if m.disabled == nil {
 		m.disabled = make(map[string]time.Time)
@@ -253,6 +235,126 @@ func (m *WSManager) Close() {
 	close(closeDone)
 }
 
+// wsReservation is what Call picked for one exchange while holding the lock.
+type wsReservation struct {
+	entry        *wsManagerEntry
+	generation   uint64
+	conn         *WSConn
+	chain        *WSChain
+	reused       bool
+	needsDial    bool
+	reason       string
+	connAge      time.Duration
+	learnedLimit time.Duration
+	evicted      *WSConn // replaced connection, closed after the lock is gone
+	lost         *WSConn // broken connection, reported after the lock is gone
+}
+
+// reserve takes the lock, inits the manager, refuses closed or disabled
+// managers, picks the bucket's entry: reuse it, mark it busy, or make room
+// (evicting the old connection or the least recently used entry) for a new dial.
+func (m *WSManager) reserve(owner, key, account string, s *oauth.Session, bucket string) (*wsReservation, error) {
+	m.mu.Lock()
+	m.initLocked()
+	if m.closed {
+		m.mu.Unlock()
+		return nil, ErrWSUnavailable
+	}
+	if m.disabledLocked(owner) {
+		m.mu.Unlock()
+		return nil, ErrWSUnavailable
+	}
+	m.startJanitorLocked()
+	now := m.now()
+	r := &wsReservation{}
+	entry := m.entries[key]
+	if entry != nil && entry.busy {
+		m.stats.Busy++
+		m.mu.Unlock()
+		return nil, ErrWSBusy
+	}
+	if entry != nil && entry.conn != nil {
+		limit, lowered := m.ageLimitLocked(owner, now)
+		switch {
+		case entry.conn.Err() != nil:
+			r.reason = "connection broken"
+			r.lost = entry.conn
+		case now.Sub(entry.dialedAt) > limit:
+			r.reason = "connection too old"
+			if lowered {
+				r.reason = "lowered age limit"
+				r.learnedLimit = limit
+				m.stats.Early++
+			}
+		case now.Sub(entry.lastUse) > m.maxIdle:
+			r.reason = "connection too old"
+		default:
+			r.conn = entry.conn
+			r.chain = entry.chain
+			r.reused = true
+			r.connAge = nonnegativeDuration(now.Sub(entry.dialedAt))
+		}
+	}
+	if r.conn == nil {
+		if entry != nil && entry.conn != nil {
+			r.evicted = entry.conn
+			m.closing++
+			entry.conn = nil
+			entry.chain = nil
+			entry.generation++
+		}
+		if entry == nil {
+			if len(m.entries) >= m.maxEntries {
+				if m.closing > 0 {
+					m.stats.Busy++
+					m.mu.Unlock()
+					return nil, ErrWSBusy
+				}
+				var oldest *wsManagerEntry
+				for _, candidate := range m.entries {
+					if candidate.busy {
+						continue
+					}
+					if oldest == nil || candidate.lastUse.Before(oldest.lastUse) {
+						oldest = candidate
+					}
+				}
+				if oldest == nil {
+					m.stats.Busy++
+					m.mu.Unlock()
+					return nil, ErrWSBusy
+				}
+				delete(m.entries, oldest.key)
+				oldest.generation++
+				r.evicted = oldest.conn
+				if r.evicted != nil {
+					m.closing++
+				}
+			} else if len(m.entries)+m.closing >= m.maxEntries {
+				m.stats.Busy++
+				m.mu.Unlock()
+				return nil, ErrWSBusy
+			}
+			entry = &wsManagerEntry{key: key, owner: owner, session: s, account: account, bucket: bucket}
+			m.entries[key] = entry
+		}
+		entry.busy = true
+		entry.generation++
+		r.entry = entry
+		r.generation = entry.generation
+		r.needsDial = true
+		m.stats.Dials++
+		m.dials.Add(1)
+	} else {
+		entry.busy = true
+		entry.generation++
+		r.entry = entry
+		r.generation = entry.generation
+	}
+	m.mu.Unlock()
+	return r, nil
+}
+
 // Call sends req on the bucket's websocket: as an increment of the previous
 // response when the backend still holds it, else in full. The reply is an SSE
 // stream like the HTTP one. ErrWSBusy and ErrWSUnavailable mean: use HTTP.
@@ -285,134 +387,14 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 	owner := wsOwnerKey(baseURL, account, proxydial.ChoiceFor(ctx))
 	key := owner + "\x00" + bucket
 
-	m.mu.Lock()
-	m.initLocked()
-	if m.closed {
-		m.mu.Unlock()
-		return nil, WSInfo{}, ErrWSUnavailable
+	r, err := m.reserve(owner, key, account, s, bucket)
+	if err != nil {
+		return nil, WSInfo{}, err
 	}
-	if m.disabledLocked(owner) {
-		m.mu.Unlock()
-		return nil, WSInfo{}, ErrWSUnavailable
+	if r.evicted != nil {
+		m.closeTracked(r.evicted)
 	}
-	m.startJanitorLocked()
-	m.mu.Unlock()
-
-	var entry *wsManagerEntry
-	var conn *WSConn
-	var chain *WSChain
-	var reused bool
-	var connAge time.Duration
-	var reason string
-	var needsDial bool
-	var generation uint64
-	var evicted *WSConn
-	var lost *WSConn
-	var learnedLimit time.Duration
-
-	m.mu.Lock()
-	if m.closed {
-		m.mu.Unlock()
-		return nil, WSInfo{}, ErrWSUnavailable
-	}
-	if m.disabledLocked(owner) {
-		m.mu.Unlock()
-		return nil, WSInfo{}, ErrWSUnavailable
-	}
-	now := m.now()
-	entry = m.entries[key]
-	if entry != nil && entry.busy {
-		m.stats.Busy++
-		m.mu.Unlock()
-		return nil, WSInfo{}, ErrWSBusy
-	}
-	if entry != nil && entry.conn != nil {
-		limit, lowered := m.ageLimitLocked(owner, now)
-		switch {
-		case entry.conn.Err() != nil:
-			reason = "connection broken"
-			lost = entry.conn
-		case now.Sub(entry.dialedAt) > limit:
-			reason = "connection too old"
-			if lowered {
-				reason = "lowered age limit"
-				learnedLimit = limit
-				m.stats.Early++
-			}
-		case now.Sub(entry.lastUse) > m.maxIdle:
-			reason = "connection too old"
-		default:
-			conn = entry.conn
-			chain = entry.chain
-			reused = true
-			connAge = nonnegativeDuration(now.Sub(entry.dialedAt))
-		}
-	}
-	if conn == nil {
-		if entry != nil && entry.conn != nil {
-			evicted = entry.conn
-			m.closing++
-			entry.conn = nil
-			entry.chain = nil
-			entry.generation++
-		}
-		if entry == nil {
-			if len(m.entries) >= m.maxEntries {
-				if m.closing > 0 {
-					m.stats.Busy++
-					m.mu.Unlock()
-					return nil, WSInfo{}, ErrWSBusy
-				}
-				var oldest *wsManagerEntry
-				for _, candidate := range m.entries {
-					if candidate.busy {
-						continue
-					}
-					if oldest == nil || candidate.lastUse.Before(oldest.lastUse) {
-						oldest = candidate
-					}
-				}
-				if oldest == nil {
-					m.stats.Busy++
-					m.mu.Unlock()
-					if evicted != nil {
-						_ = evicted.Close()
-					}
-					return nil, WSInfo{}, ErrWSBusy
-				}
-				delete(m.entries, oldest.key)
-				oldest.generation++
-				evicted = oldest.conn
-				if evicted != nil {
-					m.closing++
-				}
-			} else if len(m.entries)+m.closing >= m.maxEntries {
-				m.stats.Busy++
-				m.mu.Unlock()
-				if evicted != nil {
-					m.closeTracked(evicted)
-				}
-				return nil, WSInfo{}, ErrWSBusy
-			}
-			entry = &wsManagerEntry{key: key, owner: owner, session: s, account: account, bucket: bucket}
-			m.entries[key] = entry
-		}
-		entry.busy = true
-		entry.generation++
-		generation = entry.generation
-		needsDial = true
-		m.stats.Dials++
-		m.dials.Add(1)
-	} else {
-		entry.busy = true
-		entry.generation++
-		generation = entry.generation
-	}
-	m.mu.Unlock()
-	if evicted != nil {
-		m.closeTracked(evicted)
-	}
-	m.noteLost(owner, lost)
+	m.noteLost(owner, r.lost)
 
 	snapshot := req // not modified by the caller while the exchange runs; the chain keeps only hashes
 	// One digest serves the delta decision and the chain kept after the reply.
@@ -420,46 +402,54 @@ func (m *WSManager) Call(ctx context.Context, baseURL string, s *oauth.Session, 
 	if digest == nil {
 		digest = NewDigest(req)
 	}
-	if needsDial {
-		dialStarted := m.now()
-		dialCtx, cancel := context.WithCancel(ctx)
-		stopManagerCancel := context.AfterFunc(m.ctx, cancel)
-		newConn, dialErr := DialWS(dialCtx, baseURL, s, WSHandshake{Request: snapshot, Routing: routingFrom(ctx)})
-		dialTime := nonnegativeDuration(m.now().Sub(dialStarted))
-		stopManagerCancel()
-		cancel()
-		if dialErr != nil {
-			dialErr = m.handleDialError(ctx, owner, dialErr)
-			m.failReservation(entry, generation)
-			m.dials.Done()
-			return nil, WSInfo{Mode: "full", Reason: reason, DialTime: dialTime}, dialErr
-		}
-		m.mu.Lock()
-		if m.closed || m.entries[key] != entry || !entry.busy || entry.generation != generation {
-			m.mu.Unlock()
-			_ = newConn.Close()
-			m.dials.Done()
-			if ctx.Err() != nil {
-				return nil, WSInfo{Mode: "full", DialTime: dialTime}, ctx.Err()
-			}
-			return nil, WSInfo{Mode: "full", DialTime: dialTime}, ErrWSUnavailable
-		}
-		conn = newConn
-		entry.conn = conn
-		entry.chain = nil
-		entry.dialedAt = m.now()
-		entry.lastUse = entry.dialedAt
-		m.mu.Unlock()
-		m.dials.Done()
-		if reason == "" {
-			reason = "new connection"
-		}
-		info := WSInfo{Mode: "full", Reused: false, Reason: reason, ConnAge: connAge, DialTime: dialTime, Limit: learnedLimit}
-		return m.send(ctx, entry, generation, conn, nil, snapshot, digest, info)
+	if r.needsDial {
+		return m.dialNew(ctx, baseURL, s, owner, key, r, snapshot, digest)
 	}
+	info := WSInfo{Mode: "full", Reused: r.reused, Reason: r.reason, ConnAge: r.connAge}
+	return m.send(ctx, r.entry, r.generation, r.conn, r.chain, snapshot, digest, info)
+}
 
-	info := WSInfo{Mode: "full", Reused: reused, Reason: reason, ConnAge: connAge}
-	return m.send(ctx, entry, generation, conn, chain, snapshot, digest, info)
+// dialNew dials a fresh connection for the reserved entry, installs it while
+// the entry is still ours, and sends the request on it. A failed dial reserves
+// nothing; a closed manager or a lost entry (Close during the dial) drops the
+// fresh connection instead.
+func (m *WSManager) dialNew(ctx context.Context, baseURL string, s *oauth.Session, owner, key string, r *wsReservation, snapshot *Request, digest *Digest) (*http.Response, WSInfo, error) {
+	entry, generation, reason, learnedLimit := r.entry, r.generation, r.reason, r.learnedLimit
+	dialStarted := m.now()
+	dialCtx, cancel := context.WithCancel(ctx)
+	stopManagerCancel := context.AfterFunc(m.ctx, cancel)
+	newConn, dialErr := DialWS(dialCtx, baseURL, s, WSHandshake{Request: snapshot, Routing: routingFrom(ctx)})
+	dialTime := nonnegativeDuration(m.now().Sub(dialStarted))
+	stopManagerCancel()
+	cancel()
+	if dialErr != nil {
+		dialErr = m.handleDialError(ctx, owner, dialErr)
+		m.failReservation(entry, generation)
+		m.dials.Done()
+		return nil, WSInfo{Mode: "full", Reason: reason, DialTime: dialTime}, dialErr
+	}
+	m.mu.Lock()
+	if m.closed || m.entries[key] != entry || !entry.busy || entry.generation != generation {
+		m.mu.Unlock()
+		_ = newConn.Close()
+		m.dials.Done()
+		if ctx.Err() != nil {
+			return nil, WSInfo{Mode: "full", DialTime: dialTime}, ctx.Err()
+		}
+		return nil, WSInfo{Mode: "full", DialTime: dialTime}, ErrWSUnavailable
+	}
+	conn := newConn
+	entry.conn = conn
+	entry.chain = nil
+	entry.dialedAt = m.now()
+	entry.lastUse = entry.dialedAt
+	m.mu.Unlock()
+	m.dials.Done()
+	if reason == "" {
+		reason = "new connection"
+	}
+	info := WSInfo{Mode: "full", Reused: false, Reason: reason, DialTime: dialTime, Limit: learnedLimit}
+	return m.send(ctx, entry, generation, conn, nil, snapshot, digest, info)
 }
 
 func (m *WSManager) send(ctx context.Context, entry *wsManagerEntry, generation uint64, conn *WSConn, chain *WSChain, req *Request, d *Digest, info WSInfo) (*http.Response, WSInfo, error) {

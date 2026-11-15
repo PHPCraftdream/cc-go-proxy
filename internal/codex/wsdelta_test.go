@@ -29,6 +29,16 @@ func wsUser(text string) string {
 	return `{"role":"user","content":` + string(b) + `}`
 }
 
+// A digest computed for another request has another item count; newChain must
+// not index it and reports no chain.
+func TestNewChainRejectsADigestOfAnotherRequest(t *testing.T) {
+	req := wsRequest(t, wsBody(wsUser("one")+","+wsUser("two"), ""))
+	other := wsRequest(t, wsBody(wsUser("other"), ""))
+	if chain := newChain(req, NewDigest(other), "id", nil); chain != nil {
+		t.Fatal("newChain accepted a digest of another request")
+	}
+}
+
 func TestWSChainToolLoopParallelCallsAndOutputs(t *testing.T) {
 	base := wsRequest(t, wsBody(wsUser("find"), `"tools":[{"name":"one","input_schema":{"type":"object"}},{"name":"two","input_schema":{"type":"object"}}],`))
 	output := []json.RawMessage{

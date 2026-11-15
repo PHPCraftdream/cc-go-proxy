@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -194,6 +195,37 @@ func TestMessagesParseFailureLogsErrorAndSizeNotBody(t *testing.T) {
 	}
 	if strings.Contains(log, "secret prompt") {
 		t.Errorf("the body was logged: %q", log)
+	}
+}
+
+// A rejected request carries its reason in the access line, token masked.
+func TestMessagesParseFailureReasonInAccessLog(t *testing.T) {
+	var buf bytes.Buffer
+	app := fiber.New()
+	app.Use(accessLog(&buf))
+	app.Post("/call/:token/v1/messages", func(c *fiber.Ctx) error { return handleMessages(c, &config.Config{}) })
+
+	old := logOut
+	var logBuf syncBuf
+	logOut = &logBuf
+	t.Cleanup(func() { logOut = old })
+
+	req := httptest.NewRequest(http.MethodPost, "/call/secret/v1/messages", strings.NewReader(`{not json`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	got := buf.String()
+	for _, want := range []string{" 400 - ", "POST /call/***/v1/messages: Invalid request body: "} {
+		if !strings.Contains(got, want) {
+			t.Errorf("access log %q lacks %q", got, want)
+		}
+	}
+	if strings.Contains(got, "secret") {
+		t.Errorf("token leaked: %q", got)
 	}
 }
 

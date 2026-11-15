@@ -46,26 +46,14 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 		if cfg.Debug {
 			fmt.Printf("[ERROR] Raw body: %s\n", string(c.Body()))
 		}
-		return c.Status(400).JSON(fiber.Map{
-			"type": "error",
-			"error": fiber.Map{
-				"type":    "invalid_request_error",
-				"message": fmt.Sprintf("Invalid request body: %v", err),
-			},
-		})
+		return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", fmt.Sprintf("Invalid request body: %v", err))
 	}
 
 	// Validate API key (if configured)
 	if cfg.AnthropicAPIKey != "" {
 		apiKey := ownString(c.Get("x-api-key"))
 		if apiKey != cfg.AnthropicAPIKey {
-			return c.Status(401).JSON(fiber.Map{
-				"type": "error",
-				"error": fiber.Map{
-					"type":    "authentication_error",
-					"message": "Invalid API key",
-				},
-			})
+			return anthropicError(c, fiber.StatusUnauthorized, "authentication_error", "Invalid API key")
 		}
 	}
 
@@ -75,13 +63,7 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 		c.Locals(localsModel, claudeReq.Model+" -> "+openaiReq.Model)
 	}
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"type": "error",
-			"error": fiber.Map{
-				"type":    "invalid_request_error",
-				"message": err.Error(),
-			},
-		})
+		return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", err.Error())
 	}
 
 	// Debug: Log converted OpenAI request
@@ -135,13 +117,7 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 	// Convert OpenAI response to Claude format
 	claudeResp, err := converter.ConvertResponse(openaiResp, claudeReq.Model)
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"type": "error",
-			"error": fiber.Map{
-				"type":    "api_error",
-				"message": fmt.Sprintf("Response conversion error: %v", err),
-			},
-		})
+		return anthropicError(c, fiber.StatusInternalServerError, "api_error", fmt.Sprintf("Response conversion error: %v", err))
 	}
 
 	// Debug: Log Claude response
@@ -238,91 +214,123 @@ func streamOpenAIResponse(w *bufio.Writer, resp *http.Response, providerModel st
 	return streamOpenAIToClaude(w, resp.Body, providerModel, cfg, startTime)
 }
 
-// streamOpenAIToClaude converts OpenAI streaming responses to Claude's SSE event format.
-//
-// It processes the OpenAI SSE stream chunk-by-chunk, generating the proper sequence of
-// Claude events: message_start, content_block_start, content_block_delta, content_block_stop,
-// message_delta, and message_stop.
-//
-// Handles:
-//   - Thinking blocks from reasoning models (OpenRouter's reasoning_details, OpenAI's reasoning_content)
-//   - Text content deltas
-//   - Tool call deltas (forwards each JSON argument fragment)
-//   - Token usage tracking and throughput calculation for simple log mode
-//
-// The function maintains state to track content block indices and tool call starts,
-// and ensures proper event ordering for Claude Code compatibility.
+// claudeStream holds the conversion state of one OpenAI → Claude SSE stream:
+// the indices of the content blocks, the tool calls seen so far, the usage and
+// whether a terminal marker (finish_reason or [DONE]) was reached.
+type claudeStream struct {
+	w             *bufio.Writer
+	cfg           *config.Config
+	providerModel string
+	startTime     time.Time
+
+	messageID        string
+	textBlockIndex   int // Text block is index 1 (thinking is 0)
+	toolBlockCounter int // Tool calls start at index 2
+	currentToolCalls map[int]*ToolCallState
+	finalStopReason  string
+	usageData        map[string]interface{}
+
+	thinkingBlockIndex      int // Thinking block is always index 0
+	thinkingBlockStarted    bool
+	thinkingBlockHasContent bool
+	textBlockStarted        bool // Track if we've sent text block_start
+	terminal                bool
+	aborted                 bool // an error event ended the stream: nothing follows it
+}
+
 func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel string, cfg *config.Config, startTime time.Time) error {
 	if cfg.Debug {
 		fmt.Printf("[DEBUG] streamOpenAIToClaude: Starting conversion\n")
 	}
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // Increase buffer size
-
-	// State variables
-	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
-	textBlockIndex := 1   // Text block is index 1 (thinking is 0)
-	toolBlockCounter := 2 // Tool calls start at index 2
-	currentToolCalls := make(map[int]*ToolCallState)
-	finalStopReason := "end_turn"
-	usageData := map[string]interface{}{
-		"input_tokens":                0,
-		"output_tokens":               0,
-		"cache_creation_input_tokens": 0,
-		"cache_read_input_tokens":     0,
-		"cache_creation": map[string]interface{}{
-			"ephemeral_5m_input_tokens": 0,
-			"ephemeral_1h_input_tokens": 0,
+	s := &claudeStream{
+		w:                w,
+		cfg:              cfg,
+		providerModel:    providerModel,
+		startTime:        startTime,
+		messageID:        fmt.Sprintf("msg_%d", time.Now().UnixNano()),
+		textBlockIndex:   1,
+		toolBlockCounter: 2,
+		currentToolCalls: make(map[int]*ToolCallState),
+		finalStopReason:  "end_turn",
+		usageData: map[string]interface{}{
+			"input_tokens":                0,
+			"output_tokens":               0,
+			"cache_creation_input_tokens": 0,
+			"cache_read_input_tokens":     0,
+			"cache_creation": map[string]interface{}{
+				"ephemeral_5m_input_tokens": 0,
+				"ephemeral_1h_input_tokens": 0,
+			},
 		},
 	}
+	return s.run(bufio.NewScanner(reader))
+}
 
-	// Thinking block tracking (to show thinking indicator in Claude Code)
-	thinkingBlockIndex := 0 // Thinking block is always index 0
-	thinkingBlockStarted := false
-	thinkingBlockHasContent := false
-	textBlockStarted := false // Track if we've sent text block_start
-	startThinkingBlock := func(thinking string) error {
-		if thinking == "" {
-			return nil
-		}
-		if !thinkingBlockStarted {
-			if err := writeSSEEvent(w, "content_block_start", map[string]interface{}{
-				"type":  "content_block_start",
-				"index": thinkingBlockIndex,
-				"content_block": map[string]interface{}{
-					"type":     "thinking",
-					"thinking": "",
-				},
-			}); err != nil {
-				return err
-			}
-			thinkingBlockStarted = true
-			if err := w.Flush(); err != nil {
-				return err
-			}
-		}
-		if err := writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-			"type":  "content_block_delta",
-			"index": thinkingBlockIndex,
-			"delta": map[string]interface{}{
-				"type":     "thinking_delta",
-				"thinking": thinking,
-			},
-		}); err != nil {
-			return err
-		}
-		thinkingBlockHasContent = true
-		return w.Flush()
-	}
+// run reads the OpenAI SSE stream line by line and emits the Claude events.
+func (s *claudeStream) run(scanner *bufio.Scanner) error {
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024) // Increase buffer size
 
 	// Send initial SSE events
-	if err := writeSSEEvent(w, "message_start", map[string]interface{}{
+	if err := s.writeHeader(); err != nil {
+		return err
+	}
+
+	// Process streaming chunks
+	for scanner.Scan() {
+		line := scanner.Bytes()
+
+		// Skip empty lines and comments
+		if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) {
+			continue
+		}
+
+		// Parse data lines and stop only on the exact [DONE] payload.
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+
+		dataJSON := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if bytes.Equal(dataJSON, []byte("[DONE]")) {
+			s.terminal = true
+			break
+		}
+
+		var chunk map[string]interface{}
+		if err := json.Unmarshal(dataJSON, &chunk); err != nil {
+			continue
+		}
+
+		// Log every chunk to see what OpenRouter is sending
+		if s.cfg.Debug {
+			fmt.Printf("[DEBUG] Raw chunk from OpenRouter: %s\n", dataJSON)
+		}
+
+		if err := s.handleChunk(chunk); err != nil || s.aborted {
+			return err
+		}
+
+		// Continue processing to capture usage chunk (don't break)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return writeSSEError(s.w, fmt.Sprintf("stream read error: %v", err))
+	}
+	if !s.terminal {
+		return writeSSEError(s.w, "stream ended before a terminal marker")
+	}
+
+	return s.finish()
+}
+
+// writeHeader sends message_start and ping, flushed before the first read.
+func (s *claudeStream) writeHeader() error {
+	if err := writeSSEEvent(s.w, "message_start", map[string]interface{}{
 		"type": "message_start",
 		"message": map[string]interface{}{
-			"id":            messageID,
+			"id":            s.messageID,
 			"type":          "message",
 			"role":          "assistant",
-			"model":         providerModel,
+			"model":         s.providerModel,
 			"content":       []interface{}{},
 			"stop_reason":   nil,
 			"stop_sequence": nil,
@@ -341,348 +349,376 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 		return err
 	}
 
-	if err := writeSSEEvent(w, "ping", map[string]interface{}{
+	if err := writeSSEEvent(s.w, "ping", map[string]interface{}{
 		"type": "ping",
 	}); err != nil {
 		return err
 	}
 
-	if err := w.Flush(); err != nil {
-		return err
+	return s.w.Flush()
+}
+
+// handleChunk applies one OpenAI chunk to the state and emits its Claude events.
+func (s *claudeStream) handleChunk(chunk map[string]interface{}) error {
+	// Handle usage data
+	if usage, ok := chunk["usage"].(map[string]interface{}); ok {
+		s.applyUsage(usage)
 	}
 
-	// Process streaming chunks
-	terminal := false
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	// Extract delta from choices
+	choices, ok := chunk["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return nil
+	}
 
-		// Skip empty lines and comments
-		if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) {
-			continue
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		s.aborted = true
+		return writeSSEError(s.w, fmt.Sprintf("invalid stream choice: expected object, got %T", choices[0]))
+	}
+
+	if finishReason, hasFinishReason := choice["finish_reason"].(string); hasFinishReason && finishReason != "" {
+		s.terminal = true
+		switch finishReason {
+		case "length":
+			s.finalStopReason = "max_tokens"
+		case "tool_calls", "function_call":
+			s.finalStopReason = "tool_use"
+		case "stop":
+			s.finalStopReason = "end_turn"
+		default:
+			s.finalStopReason = "end_turn"
 		}
+	}
 
-		// Parse data lines and stop only on the exact [DONE] payload.
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
+	delta, ok := choice["delta"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Handle reasoning delta (thinking blocks)
+	// Support both OpenRouter and OpenAI formats:
+	// - OpenRouter: delta.reasoning_details (array)
+	// - OpenAI o1/o3: delta.reasoning_content (string)
+
+	// First, check for OpenAI's reasoning_content format (o1/o3 models)
+	if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
+		if err := s.startThinkingBlock(reasoningContent); err != nil {
+			return err
 		}
+	}
 
-		dataJSON := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if bytes.Equal(dataJSON, []byte("[DONE]")) {
-			terminal = true
-			break
-		}
+	// Then, check for OpenRouter's reasoning_details format
+	// Only process reasoning_details if we haven't already processed reasoning field
+	if reasoningDetailsRaw, ok := delta["reasoning_details"]; ok && delta["reasoning"] == nil {
+		if reasoningDetails, ok := reasoningDetailsRaw.([]interface{}); ok && len(reasoningDetails) > 0 {
+			for _, detailRaw := range reasoningDetails {
+				if detail, ok := detailRaw.(map[string]interface{}); ok {
+					// Extract reasoning text from the detail
+					thinkingText := ""
+					detailType, _ := detail["type"].(string)
 
-		var chunk map[string]interface{}
-		if err := json.Unmarshal(dataJSON, &chunk); err != nil {
-			continue
-		}
-
-		// Log every chunk to see what OpenRouter is sending
-		if cfg.Debug {
-			fmt.Printf("[DEBUG] Raw chunk from OpenRouter: %s\n", dataJSON)
-		}
-
-		// Handle usage data
-		if usage, ok := chunk["usage"].(map[string]interface{}); ok {
-			if cfg.Debug {
-				usageJSON, _ := json.Marshal(usage)
-				fmt.Printf("[DEBUG] Received usage from OpenAI: %s\n", string(usageJSON))
-			}
-
-			// Convert float64 to int for token counts (JSON unmarshals numbers as float64)
-			inputTokens := 0
-			outputTokens := 0
-			if val, ok := usage["prompt_tokens"].(float64); ok {
-				inputTokens = int(val)
-			}
-			if val, ok := usage["completion_tokens"].(float64); ok {
-				outputTokens = int(val)
-			}
-
-			usageData = map[string]interface{}{
-				"input_tokens":  inputTokens,
-				"output_tokens": outputTokens,
-			}
-
-			// Add cache metrics if present
-			if promptTokensDetails, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
-				if cachedTokens, ok := promptTokensDetails["cached_tokens"].(float64); ok && cachedTokens > 0 {
-					usageData["cache_read_input_tokens"] = int(cachedTokens)
-				}
-			}
-			if cfg.Debug {
-				usageDataJSON, _ := json.Marshal(usageData)
-				fmt.Printf("[DEBUG] Accumulated usageData: %s\n", string(usageDataJSON))
-			}
-		}
-
-		// Extract delta from choices
-		choices, ok := chunk["choices"].([]interface{})
-		if !ok || len(choices) == 0 {
-			continue
-		}
-
-		choice, ok := choices[0].(map[string]interface{})
-		if !ok {
-			return writeSSEError(w, fmt.Sprintf("invalid stream choice: expected object, got %T", choices[0]))
-		}
-
-		finishReason, hasFinishReason := choice["finish_reason"].(string)
-		if hasFinishReason && finishReason != "" {
-			terminal = true
-			switch finishReason {
-			case "length":
-				finalStopReason = "max_tokens"
-			case "tool_calls", "function_call":
-				finalStopReason = "tool_use"
-			case "stop":
-				finalStopReason = "end_turn"
-			default:
-				finalStopReason = "end_turn"
-			}
-		}
-
-		delta, ok := choice["delta"].(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		// Handle reasoning delta (thinking blocks)
-		// Support both OpenRouter and OpenAI formats:
-		// - OpenRouter: delta.reasoning_details (array)
-		// - OpenAI o1/o3: delta.reasoning_content (string)
-
-		// First, check for OpenAI's reasoning_content format (o1/o3 models)
-		if reasoningContent, ok := delta["reasoning_content"].(string); ok && reasoningContent != "" {
-			if err := startThinkingBlock(reasoningContent); err != nil {
-				return err
-			}
-		}
-
-		// Then, check for OpenRouter's reasoning_details format
-		// Only process reasoning_details if we haven't already processed reasoning field
-		if reasoningDetailsRaw, ok := delta["reasoning_details"]; ok && delta["reasoning"] == nil {
-			if reasoningDetails, ok := reasoningDetailsRaw.([]interface{}); ok && len(reasoningDetails) > 0 {
-				for _, detailRaw := range reasoningDetails {
-					if detail, ok := detailRaw.(map[string]interface{}); ok {
-						// Extract reasoning text from the detail
-						thinkingText := ""
-						detailType, _ := detail["type"].(string)
-
-						switch detailType {
-						case "reasoning.text":
-							if text, ok := detail["text"].(string); ok {
-								thinkingText = text
-							}
-						case "reasoning.summary":
-							if summary, ok := detail["summary"].(string); ok {
-								thinkingText = summary
-							}
-						case "reasoning.encrypted":
-							// Skip encrypted/redacted reasoning in streaming
-							continue
+					switch detailType {
+					case "reasoning.text":
+						if text, ok := detail["text"].(string); ok {
+							thinkingText = text
 						}
-
-						if thinkingText != "" {
-							if err := startThinkingBlock(thinkingText); err != nil {
-								return err
-							}
+					case "reasoning.summary":
+						if summary, ok := detail["summary"].(string); ok {
+							thinkingText = summary
 						}
-					}
-				}
-			}
-		}
-
-		// Handle reasoning field directly (simpler format from some models)
-		if reasoning, ok := delta["reasoning"].(string); ok && reasoning != "" {
-			if err := startThinkingBlock(reasoning); err != nil {
-				return err
-			}
-		}
-
-		// Handle text delta
-		if content, ok := delta["content"].(string); ok && content != "" {
-			// Send content_block_start for text block on first text delta
-			if !textBlockStarted {
-				if err := writeSSEEvent(w, "content_block_start", map[string]interface{}{
-					"type":  "content_block_start",
-					"index": textBlockIndex,
-					"content_block": map[string]interface{}{
-						"type": "text",
-						"text": "",
-					},
-				}); err != nil {
-					return err
-				}
-				textBlockStarted = true
-				if err := w.Flush(); err != nil {
-					return err
-				}
-			}
-
-			if err := writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-				"type":  "content_block_delta",
-				"index": textBlockIndex,
-				"delta": map[string]interface{}{
-					"type": "text_delta",
-					"text": content,
-				},
-			}); err != nil {
-				return err
-			}
-			if err := w.Flush(); err != nil {
-				return err
-			}
-		}
-
-		// Handle tool call deltas
-		if toolCallsRaw, ok := delta["tool_calls"]; ok {
-			// Debug: Log raw tool_calls from provider
-			if cfg.Debug {
-				toolCallsJSON, _ := json.Marshal(toolCallsRaw)
-				fmt.Printf("[DEBUG] Raw tool_calls delta: %s\n", string(toolCallsJSON))
-			}
-
-			toolCalls, ok := toolCallsRaw.([]interface{})
-			if ok && len(toolCalls) > 0 {
-				for _, tcRaw := range toolCalls {
-					tcDelta, ok := tcRaw.(map[string]interface{})
-					if !ok {
+					case "reasoning.encrypted":
+						// Skip encrypted/redacted reasoning in streaming
 						continue
 					}
 
-					// Get tool call index
-					tcIndex := 0
-					if idx, ok := tcDelta["index"].(float64); ok {
-						tcIndex = int(idx)
-					}
-
-					// Initialize tool call tracking if not exists
-					if _, exists := currentToolCalls[tcIndex]; !exists {
-						currentToolCalls[tcIndex] = &ToolCallState{
-							ID:          "",
-							Name:        "",
-							ClaudeIndex: 0,
-							Started:     false,
-						}
-					}
-
-					toolCall := currentToolCalls[tcIndex]
-
-					// Update tool call ID if provided
-					if id, ok := tcDelta["id"].(string); ok {
-						toolCall.ID = id
-					}
-
-					// Update function name
-					if functionData, ok := tcDelta["function"].(map[string]interface{}); ok {
-						if name, ok := functionData["name"].(string); ok {
-							toolCall.Name = name
-						}
-
-						// Start content block when we have complete initial data
-						if toolCall.ID != "" && toolCall.Name != "" && !toolCall.Started {
-							toolBlockCounter++
-							claudeIndex := textBlockIndex + toolBlockCounter
-							toolCall.ClaudeIndex = claudeIndex
-							toolCall.Started = true
-
-							if err := writeSSEEvent(w, "content_block_start", map[string]interface{}{
-								"type":  "content_block_start",
-								"index": claudeIndex,
-								"content_block": map[string]interface{}{
-									"type":  "tool_use",
-									"id":    toolCall.ID,
-									"name":  toolCall.Name,
-									"input": map[string]interface{}{},
-								},
-							}); err != nil {
-								return err
-							}
-							if err := w.Flush(); err != nil {
-								return err
-							}
-						}
-
-						// Handle function arguments
-						if args, ok := functionData["arguments"].(string); ok && toolCall.Started && args != "" {
-							if err := writeSSEEvent(w, "content_block_delta", map[string]interface{}{
-								"type":  "content_block_delta",
-								"index": toolCall.ClaudeIndex,
-								"delta": map[string]interface{}{
-									"type":         "input_json_delta",
-									"partial_json": args,
-								},
-							}); err != nil {
-								return err
-							}
-							if err := w.Flush(); err != nil {
-								return err
-							}
+					if thinkingText != "" {
+						if err := s.startThinkingBlock(thinkingText); err != nil {
+							return err
 						}
 					}
 				}
 			}
 		}
-
-		// Continue processing to capture usage chunk (don't break)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return writeSSEError(w, fmt.Sprintf("stream read error: %v", err))
-	}
-	if !terminal {
-		return writeSSEError(w, "stream ended before a terminal marker")
+	// Handle reasoning field directly (simpler format from some models)
+	if reasoning, ok := delta["reasoning"].(string); ok && reasoning != "" {
+		if err := s.startThinkingBlock(reasoning); err != nil {
+			return err
+		}
 	}
 
-	// Send final SSE events
+	// Handle text delta
+	if content, ok := delta["content"].(string); ok && content != "" {
+		if err := s.writeTextDelta(content); err != nil {
+			return err
+		}
+	}
 
-	// Send content_block_stop for text block if it was started
-	if textBlockStarted {
-		if err := writeSSEEvent(w, "content_block_stop", map[string]interface{}{
-			"type":  "content_block_stop",
-			"index": textBlockIndex,
+	// Handle tool call deltas
+	if toolCallsRaw, ok := delta["tool_calls"]; ok {
+		if err := s.handleToolCalls(toolCallsRaw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyUsage replaces the usage data with the token counts of the chunk.
+func (s *claudeStream) applyUsage(usage map[string]interface{}) {
+	if s.cfg.Debug {
+		usageJSON, _ := json.Marshal(usage)
+		fmt.Printf("[DEBUG] Received usage from OpenAI: %s\n", string(usageJSON))
+	}
+
+	// Convert float64 to int for token counts (JSON unmarshals numbers as float64)
+	inputTokens := 0
+	outputTokens := 0
+	if val, ok := usage["prompt_tokens"].(float64); ok {
+		inputTokens = int(val)
+	}
+	if val, ok := usage["completion_tokens"].(float64); ok {
+		outputTokens = int(val)
+	}
+
+	s.usageData = map[string]interface{}{
+		"input_tokens":  inputTokens,
+		"output_tokens": outputTokens,
+	}
+
+	// Add cache metrics if present
+	if promptTokensDetails, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
+		if cachedTokens, ok := promptTokensDetails["cached_tokens"].(float64); ok && cachedTokens > 0 {
+			s.usageData["cache_read_input_tokens"] = int(cachedTokens)
+		}
+	}
+	if s.cfg.Debug {
+		usageDataJSON, _ := json.Marshal(s.usageData)
+		fmt.Printf("[DEBUG] Accumulated usageData: %s\n", string(usageDataJSON))
+	}
+}
+
+// startThinkingBlock sends the thinking block start once, then a thinking_delta.
+func (s *claudeStream) startThinkingBlock(thinking string) error {
+	if thinking == "" {
+		return nil
+	}
+	if !s.thinkingBlockStarted {
+		if err := writeSSEEvent(s.w, "content_block_start", map[string]interface{}{
+			"type":  "content_block_start",
+			"index": s.thinkingBlockIndex,
+			"content_block": map[string]interface{}{
+				"type":     "thinking",
+				"thinking": "",
+			},
 		}); err != nil {
 			return err
 		}
-		if err := w.Flush(); err != nil {
+		s.thinkingBlockStarted = true
+		if err := s.w.Flush(); err != nil {
+			return err
+		}
+	}
+	if err := writeSSEEvent(s.w, "content_block_delta", map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": s.thinkingBlockIndex,
+		"delta": map[string]interface{}{
+			"type":     "thinking_delta",
+			"thinking": thinking,
+		},
+	}); err != nil {
+		return err
+	}
+	s.thinkingBlockHasContent = true
+	return s.w.Flush()
+}
+
+// writeTextDelta sends the text block start once, then a text_delta.
+func (s *claudeStream) writeTextDelta(content string) error {
+	// Send content_block_start for text block on first text delta
+	if !s.textBlockStarted {
+		if err := writeSSEEvent(s.w, "content_block_start", map[string]interface{}{
+			"type":  "content_block_start",
+			"index": s.textBlockIndex,
+			"content_block": map[string]interface{}{
+				"type": "text",
+				"text": "",
+			},
+		}); err != nil {
+			return err
+		}
+		s.textBlockStarted = true
+		if err := s.w.Flush(); err != nil {
+			return err
+		}
+	}
+
+	if err := writeSSEEvent(s.w, "content_block_delta", map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": s.textBlockIndex,
+		"delta": map[string]interface{}{
+			"type": "text_delta",
+			"text": content,
+		},
+	}); err != nil {
+		return err
+	}
+	return s.w.Flush()
+}
+
+// handleToolCalls applies the tool call deltas of a chunk. Only a non-empty
+// array is processed.
+func (s *claudeStream) handleToolCalls(toolCallsRaw interface{}) error {
+	// Debug: Log raw tool_calls from provider
+	if s.cfg.Debug {
+		toolCallsJSON, _ := json.Marshal(toolCallsRaw)
+		fmt.Printf("[DEBUG] Raw tool_calls delta: %s\n", string(toolCallsJSON))
+	}
+
+	toolCalls, ok := toolCallsRaw.([]interface{})
+	if ok && len(toolCalls) > 0 {
+		for _, tcRaw := range toolCalls {
+			tcDelta, ok := tcRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			// Get tool call index
+			tcIndex := 0
+			if idx, ok := tcDelta["index"].(float64); ok {
+				tcIndex = int(idx)
+			}
+
+			// Initialize tool call tracking if not exists
+			if _, exists := s.currentToolCalls[tcIndex]; !exists {
+				s.currentToolCalls[tcIndex] = &ToolCallState{
+					ID:          "",
+					Name:        "",
+					ClaudeIndex: 0,
+					Started:     false,
+				}
+			}
+
+			toolCall := s.currentToolCalls[tcIndex]
+
+			// Update tool call ID if provided
+			if id, ok := tcDelta["id"].(string); ok {
+				toolCall.ID = id
+			}
+
+			// Update function name
+			if functionData, ok := tcDelta["function"].(map[string]interface{}); ok {
+				if name, ok := functionData["name"].(string); ok {
+					toolCall.Name = name
+				}
+
+				// Start content block when we have complete initial data
+				if toolCall.ID != "" && toolCall.Name != "" && !toolCall.Started {
+					if err := s.startToolBlock(toolCall); err != nil {
+						return err
+					}
+				}
+
+				// Handle function arguments
+				if args, ok := functionData["arguments"].(string); ok && toolCall.Started && args != "" {
+					if err := s.writeToolArguments(toolCall, args); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// startToolBlock assigns the next Claude index and opens the tool_use block.
+func (s *claudeStream) startToolBlock(toolCall *ToolCallState) error {
+	s.toolBlockCounter++
+	claudeIndex := s.textBlockIndex + s.toolBlockCounter
+	toolCall.ClaudeIndex = claudeIndex
+	toolCall.Started = true
+
+	if err := writeSSEEvent(s.w, "content_block_start", map[string]interface{}{
+		"type":  "content_block_start",
+		"index": claudeIndex,
+		"content_block": map[string]interface{}{
+			"type":  "tool_use",
+			"id":    toolCall.ID,
+			"name":  toolCall.Name,
+			"input": map[string]interface{}{},
+		},
+	}); err != nil {
+		return err
+	}
+	return s.w.Flush()
+}
+
+// writeToolArguments forwards one argument JSON fragment.
+func (s *claudeStream) writeToolArguments(toolCall *ToolCallState, args string) error {
+	if err := writeSSEEvent(s.w, "content_block_delta", map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": toolCall.ClaudeIndex,
+		"delta": map[string]interface{}{
+			"type":         "input_json_delta",
+			"partial_json": args,
+		},
+	}); err != nil {
+		return err
+	}
+	return s.w.Flush()
+}
+
+// finish closes the open content blocks and the message.
+func (s *claudeStream) finish() error {
+	// Send final SSE events
+
+	// Send content_block_stop for text block if it was started
+	if s.textBlockStarted {
+		if err := writeSSEEvent(s.w, "content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": s.textBlockIndex,
+		}); err != nil {
+			return err
+		}
+		if err := s.w.Flush(); err != nil {
 			return err
 		}
 	}
 
 	// Send content_block_stop for each tool call
-	for _, toolData := range currentToolCalls {
+	for _, toolData := range s.currentToolCalls {
 		// Check both Started AND claude_index is not None
 		if toolData.Started && toolData.ClaudeIndex != 0 {
-			if err := writeSSEEvent(w, "content_block_stop", map[string]interface{}{
+			if err := writeSSEEvent(s.w, "content_block_stop", map[string]interface{}{
 				"type":  "content_block_stop",
 				"index": toolData.ClaudeIndex,
 			}); err != nil {
 				return err
 			}
-			if err := w.Flush(); err != nil {
+			if err := s.w.Flush(); err != nil {
 				return err
 			}
 		}
 	}
 
 	// Send content_block_stop for thinking block if it had content
-	if thinkingBlockStarted && thinkingBlockHasContent {
-		if err := writeSSEEvent(w, "content_block_stop", map[string]interface{}{
+	if s.thinkingBlockStarted && s.thinkingBlockHasContent {
+		if err := writeSSEEvent(s.w, "content_block_stop", map[string]interface{}{
 			"type":  "content_block_stop",
-			"index": thinkingBlockIndex,
+			"index": s.thinkingBlockIndex,
 		}); err != nil {
 			return err
 		}
-		if err := w.Flush(); err != nil {
+		if err := s.w.Flush(); err != nil {
 			return err
 		}
 	}
 
 	// Debug: Check if usage data was received
-	if cfg.Debug {
-		inputTokens, _ := usageData["input_tokens"].(int)
-		outputTokens, _ := usageData["output_tokens"].(int)
+	if s.cfg.Debug {
+		inputTokens, _ := s.usageData["input_tokens"].(int)
+		outputTokens, _ := s.usageData["output_tokens"].(int)
 		if inputTokens == 0 && outputTokens == 0 {
 			fmt.Printf("[DEBUG] OpenRouter streaming: Usage data unavailable (expected limitation of streaming API)\n")
 		}
@@ -690,75 +726,79 @@ func streamOpenAIToClaude(w *bufio.Writer, reader io.Reader, providerModel strin
 
 	// Send message_delta with stop_reason and accumulated usage data
 	// NOTE: We send the actual accumulated usage to fix the "0 tokens" issue in Claude Code
-	if cfg.Debug {
-		usageDataJSON, _ := json.Marshal(usageData)
+	if s.cfg.Debug {
+		usageDataJSON, _ := json.Marshal(s.usageData)
 		fmt.Printf("[DEBUG] Sending message_delta with usageData: %s\n", string(usageDataJSON))
 	}
-	if err := writeSSEEvent(w, "message_delta", map[string]interface{}{
+	if err := writeSSEEvent(s.w, "message_delta", map[string]interface{}{
 		"type": "message_delta",
 		"delta": map[string]interface{}{
-			"stop_reason":   finalStopReason,
+			"stop_reason":   s.finalStopReason,
 			"stop_sequence": nil,
 		},
-		"usage": usageData,
+		"usage": s.usageData,
 	}); err != nil {
 		return err
 	}
-	if err := w.Flush(); err != nil {
+	if err := s.w.Flush(); err != nil {
 		return err
 	}
 
 	// Send message_stop
-	if err := writeSSEEvent(w, "message_stop", map[string]interface{}{
+	if err := writeSSEEvent(s.w, "message_stop", map[string]interface{}{
 		"type": "message_stop",
 	}); err != nil {
 		return err
 	}
-	if err := w.Flush(); err != nil {
+	if err := s.w.Flush(); err != nil {
 		return err
 	}
 
-	// Simple log: one-line summary
-	if cfg.SimpleLog {
-		inputTokens := 0
-		outputTokens := 0
+	s.simpleLog()
+	return nil
+}
 
-		// Try to extract tokens from various possible formats
-		if val, ok := usageData["input_tokens"].(int); ok {
-			inputTokens = val
-		} else if val, ok := usageData["input_tokens"].(float64); ok {
-			inputTokens = int(val)
-		}
+// simpleLog prints the one-line summary of the stream.
+func (s *claudeStream) simpleLog() {
+	if !s.cfg.SimpleLog {
+		return
+	}
+	inputTokens := 0
+	outputTokens := 0
 
-		if val, ok := usageData["output_tokens"].(int); ok {
-			outputTokens = val
-		} else if val, ok := usageData["output_tokens"].(float64); ok {
-			outputTokens = int(val)
-		}
-
-		// Debug: show what we actually have in usageData
-		if cfg.Debug {
-			fmt.Printf("[DEBUG] usageData: %+v\n", usageData)
-		}
-
-		// Calculate tokens per second
-		duration := time.Since(startTime).Seconds()
-		tokensPerSec := 0.0
-		if duration > 0 && outputTokens > 0 {
-			tokensPerSec = float64(outputTokens) / duration
-		}
-
-		timestamp := time.Now().Format("15:04:05")
-		fmt.Printf("[%s] [REQ] %s model=%s in=%d out=%d tok/s=%.1f\n",
-			timestamp,
-			cfg.OpenAIBaseURL,
-			providerModel,
-			inputTokens,
-			outputTokens,
-			tokensPerSec)
+	// Try to extract tokens from various possible formats
+	if val, ok := s.usageData["input_tokens"].(int); ok {
+		inputTokens = val
+	} else if val, ok := s.usageData["input_tokens"].(float64); ok {
+		inputTokens = int(val)
 	}
 
-	return nil
+	if val, ok := s.usageData["output_tokens"].(int); ok {
+		outputTokens = val
+	} else if val, ok := s.usageData["output_tokens"].(float64); ok {
+		outputTokens = int(val)
+	}
+
+	// Debug: show what we actually have in usageData
+	if s.cfg.Debug {
+		fmt.Printf("[DEBUG] usageData: %+v\n", s.usageData)
+	}
+
+	// Calculate tokens per second
+	duration := time.Since(s.startTime).Seconds()
+	tokensPerSec := 0.0
+	if duration > 0 && outputTokens > 0 {
+		tokensPerSec = float64(outputTokens) / duration
+	}
+
+	timestamp := time.Now().Format("15:04:05")
+	fmt.Printf("[%s] [REQ] %s model=%s in=%d out=%d tok/s=%.1f\n",
+		timestamp,
+		s.cfg.OpenAIBaseURL,
+		s.providerModel,
+		inputTokens,
+		outputTokens,
+		tokensPerSec)
 }
 
 // writeSSEEvent writes a Server-Sent Event.
