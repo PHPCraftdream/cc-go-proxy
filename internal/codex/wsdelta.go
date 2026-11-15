@@ -270,10 +270,10 @@ func decodeInputItem(item any, target any) bool {
 
 func validDeltaItem(item any) bool {
 	typ, role, _, _ := ItemParts(item)
-	switch {
-	case typ == "function_call_output":
+	switch typ {
+	case "function_call_output":
 		return true
-	case typ == "message":
+	case "message":
 		return role == "user"
 	}
 	return false
