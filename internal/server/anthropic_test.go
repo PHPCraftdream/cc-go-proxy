@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
@@ -131,6 +134,11 @@ func TestEffortMapFor(t *testing.T) {
 }
 
 func TestForwardAnthropicStreamsAndAuthenticates(t *testing.T) {
+	old := logOut
+	var buf syncBuf
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+
 	var mu sync.Mutex
 	var gotAuth, gotVersion, gotBeta, gotPath string
 	var gotBody map[string]any
@@ -156,6 +164,9 @@ func TestForwardAnthropicStreamsAndAuthenticates(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(buf.String(), "stream failed") {
+		t.Errorf("a clean stream was logged: %q", buf.String())
+	}
 	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") || resp.Header.Get("Request-Id") != "req-1" {
 		t.Errorf("status=%d headers=%v", resp.StatusCode, resp.Header)
 	}
@@ -289,6 +300,83 @@ func TestAnthropicCountTokensFallsBackToEstimate(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if err := json.Unmarshal(b, &out); err != nil || resp.StatusCode != 200 || out["input_tokens"] < 10 {
 		t.Errorf("status=%d body=%s err=%v", resp.StatusCode, b, err)
+	}
+}
+
+func TestCopySSE(t *testing.T) {
+	var mu sync.Mutex
+	var errs []error
+	onErr := func(err error) {
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
+	}
+	discard := bufio.NewWriter(io.Discard)
+
+	// A normal end stays silent.
+	errs = nil
+	copySSE(discard, strings.NewReader("event: x\ndata: {}\n\n"), onErr)
+	if len(errs) != 0 {
+		t.Errorf("a clean end logged %v", errs)
+	}
+
+	// A stream the provider breaks is reported.
+	errs = nil
+	copySSE(discard, io.MultiReader(strings.NewReader("data: one\n\n"), iotest.ErrReader(errors.New("boom"))), onErr)
+	if len(errs) != 1 || errs[0].Error() != "boom" {
+		t.Errorf("broken stream logged %v, want boom", errs)
+	}
+
+	// A client that left (the write fails) stays silent, even though a read
+	// error follows.
+	errs = nil
+	w := &failSecondWrite{}
+	copySSE(bufio.NewWriterSize(w, 1), io.MultiReader(strings.NewReader("data: one\n\n"), strings.NewReader("data: two\n\n"), iotest.ErrReader(errors.New("boom"))), onErr)
+	if len(errs) != 0 {
+		t.Errorf("a client that left logged %v", errs)
+	}
+}
+
+type failSecondWrite struct{ n int }
+
+func (w *failSecondWrite) Write(p []byte) (int, error) {
+	w.n++
+	if w.n > 1 {
+		return 0, errors.New("client gone")
+	}
+	return len(p), nil
+}
+
+// A stream the provider breaks mid-reply is logged; the access line already
+// said 200, so this is the only trace.
+func TestForwardAnthropicLogsAStreamTheProviderBroke(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: message_start\ndata: {\"type\":\"message_start\"}\n\n")
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // cut the chunked stream: the proxy reads an unexpected EOF
+	}))
+	defer upstream.Close()
+
+	old := logOut
+	var buf syncBuf
+	logOut = &buf
+	t.Cleanup(func() { logOut = old })
+
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(sampleRequest))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := compatApp(compatConfig(upstream.URL, nil)).Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	log := buf.String()
+	for _, want := range []string{"stream failed after", "[zai]", "claude-sonnet-5-5 -> glm-5.3-flash"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log = %q, want it to name the broken stream (%q)", log, want)
+		}
 	}
 }
 

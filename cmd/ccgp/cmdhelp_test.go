@@ -63,6 +63,9 @@ func TestCommandHelpMentionsSynopsisFlags(t *testing.T) {
 		"--update":      {"--check"},
 		"--login":       {"--device", "claude"},
 		"--serve":       {"-d", "-s"},
+		"--send":        {"[--fork] [--force]", "--fork --force"},
+		"--import":      {"[--fork] [--force]", "--fork --force"},
+		"--export":      {"[--fork] [--force]", "--fork --force"},
 	}
 	for name, flags := range want {
 		text := commandHelp[name]
@@ -169,5 +172,19 @@ func TestRunPrintsCommandHelp(t *testing.T) {
 	}
 	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
 		t.Errorf("config file was created; the command ran instead of printing help (stat err %v)", err)
+	}
+}
+
+// --fork and --force work together; no text offers them as alternatives.
+func TestNoHelpOffersForkAndForceAsAlternatives(t *testing.T) {
+	for _, c := range commands() {
+		if strings.Contains(c.args, "[--fork|--force]") {
+			t.Errorf("%s: synopsis offers --fork and --force as alternatives: %q", c.name, c.args)
+		}
+	}
+	for name, text := range commandHelp {
+		if strings.Contains(text, "[--fork|--force]") {
+			t.Errorf("%s: help offers --fork and --force as alternatives", name)
+		}
 	}
 }

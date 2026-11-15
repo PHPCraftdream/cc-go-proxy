@@ -379,3 +379,89 @@ func TestProgressWhileStrippingThinking(t *testing.T) {
 		t.Error("thinking block survived")
 	}
 }
+
+// A plain sidecar place wrote is not read again: it is recognised by its size
+// and time. A stripped one is never trusted that way.
+func TestUnchangedSidecarsAreNotReadAgain(t *testing.T) {
+	// corrupt rewrites the destination copy with other content of the same
+	// length and the source's time: indistinguishable from the copy without
+	// reading it.
+	corrupt := func(t *testing.T, srcFile, dstFile string) {
+		t.Helper()
+		b, err := os.ReadFile(srcFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rot := append([]byte(nil), b...)
+		rot[0] ^= 0xff
+		info, err := os.Stat(srcFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dstFile, rot, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dstFile, info.ModTime(), info.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("a plain sidecar is skipped, even by --force", func(t *testing.T) {
+		src, dst := t.TempDir(), t.TempDir()
+		srcFile := filepath.Join(src, "projects", "a", sid, "tool-results", "r.txt")
+		dstFile := filepath.Join(dst, "projects", "a", sid, "tool-results", "r.txt")
+		put(t, filepath.Join(src, "projects", "a", sid+".jsonl"), entry(sid, "one"), t0)
+		put(t, srcFile, "the result", t0)
+		res, err := Copy(src, dst, 1, Options{})
+		if err != nil || len(res) != 1 || res[0].Status != Copied || res[0].Files != 1 {
+			t.Fatalf("first copy = %+v, %v", res, err)
+		}
+
+		if res, _ = Copy(src, dst, 1, Options{}); res[0].Status != Unchanged || res[0].Files != 0 {
+			t.Fatalf("a rerun over the unchanged session = %+v, want no sidecar written", res[0])
+		}
+		// Same size, same time, other content: the copy is trusted, not read,
+		// so even --force leaves the disguised content alone.
+		corrupt(t, srcFile, dstFile)
+		if res, _ = Copy(src, dst, 1, Options{Force: true}); res[0].Status != Unchanged || res[0].Files != 0 {
+			t.Fatalf("a forced rerun over the disguised sidecar = %+v, want it unread", res[0])
+		}
+		if got := read(t, dstFile); got == "the result" {
+			t.Error("the disguised sidecar was read and written again")
+		}
+		// Its time gives it away: the full comparison runs, and --force
+		// replaces it.
+		mtime := t0.Add(time.Minute)
+		if err := os.Chtimes(dstFile, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		if res, _ = Copy(src, dst, 1, Options{Force: true}); res[0].Files != 1 {
+			t.Fatalf("a forced rerun = %+v, want the sidecar replaced", res[0])
+		}
+		if got := read(t, dstFile); got != "the result" {
+			t.Errorf("sidecar = %q, want the source's content", got)
+		}
+	})
+
+	t.Run("a stripped sidecar is read again", func(t *testing.T) {
+		src, dst := t.TempDir(), t.TempDir()
+		srcFile := filepath.Join(src, "projects", "a", sid, "subagents", "ag.jsonl")
+		dstFile := filepath.Join(dst, "projects", "a", sid, "subagents", "ag.jsonl")
+		put(t, filepath.Join(src, "projects", "a", sid+".jsonl"), entry(sid, "one"), t0)
+		put(t, srcFile, entry(sid, "agent"), t0)
+		if res, err := Copy(src, dst, 1, Options{StripThinking: true}); err != nil || res[0].Files != 1 {
+			t.Fatalf("first copy = %+v, %v", res, err)
+		}
+
+		// The copy of a stripped file is not trusted by size and time: it is
+		// compared in full, and --force replaces it.
+		corrupt(t, srcFile, dstFile)
+		res, _ := Copy(src, dst, 1, Options{StripThinking: true, Force: true})
+		if res[0].Status != Unchanged || res[0].Files != 1 {
+			t.Fatalf("a forced rerun = %+v, want the stripped sidecar compared and replaced", res[0])
+		}
+		if got := read(t, dstFile); got != entry(sid, "agent") {
+			t.Errorf("sidecar = %q, want the source's content", got)
+		}
+	})
+}

@@ -83,7 +83,8 @@ type Options struct {
 	// one every time, so a rerun extends it), leaving the destination alone.
 	Fork bool
 	// Force replaces a destination that diverged or is ahead of the source; the
-	// old file is kept next to it as <name>.bak-<time>. Excludes Fork.
+	// old file is kept next to it as <name>.bak-<time>. With Fork both work:
+	// the fork is written afresh, the original stays.
 	Force bool
 	// rewrite gives a fork its own ids, in the files and their names.
 	rewrite *forkIDs
@@ -382,7 +383,13 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		if opt.rewrite != nil {
 			rel = opt.rewrite.name(rel)
 		}
-		jobs = append(jobs, job{p, filepath.Join(dstSide, rel)})
+		to := filepath.Join(dstSide, rel)
+		// A plain copy place wrote earlier is there by its size and time; it
+		// is not read again (the rule of file-history, sameFile).
+		if plainCopy(p, opt) && sameFile(d, to) {
+			return nil
+		}
+		jobs = append(jobs, job{p, to})
 		return nil
 	})
 	if err != nil {
@@ -433,6 +440,21 @@ func copySession(dstDir string, s Session, opt Options) Result {
 // sidecarWorkers is how many files of a session's folder are copied at once:
 // creating a file costs more than writing a small one.
 const sidecarWorkers = 16
+
+// plainCopy reports whether the file is copied byte for byte: jsonl files
+// lose their thinking blocks (Options.StripThinking) and, with Options.home
+// set, say where they were relocated to, and jsonl, json, text and Markdown
+// files get a fork's ids (Options.rewrite). The rest are untouched.
+func plainCopy(path string, opt Options) bool {
+	jsonl := strings.HasSuffix(path, ".jsonl")
+	if jsonl && (opt.StripThinking || opt.home != "") {
+		return false
+	}
+	if opt.rewrite == nil {
+		return true
+	}
+	return !jsonl && !rewritable(path)
+}
 
 // idElsewhere names the project folder of configDir, other than project, that
 // holds the transcript of id, when project itself does not; "" otherwise.

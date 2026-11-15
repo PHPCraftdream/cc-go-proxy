@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -134,7 +136,7 @@ func parseSendCommand(kind string, args []string) (from, to string, count int, e
 
 func parseSendArgs(args []string) (from, to string, count int, err error) {
 	if len(args) < 2 || len(args) > 3 {
-		return "", "", 0, fmt.Errorf("usage: ccgp --send <from> <to> [count] [--fork|--force]   (from/to: \"claude\" or a profile; count: how many latest sessions of the current directory, default %d)", defaultSessionCount)
+		return "", "", 0, fmt.Errorf("usage: ccgp --send <from> <to> [count] [--fork] [--force]   (from/to: \"claude\" or a profile; count: how many latest sessions of the current directory, default %d)", defaultSessionCount)
 	}
 	count = defaultSessionCount
 	if len(args) == 3 {
@@ -149,7 +151,7 @@ func parseSendArgs(args []string) (from, to string, count int, err error) {
 
 func parseSessionArgs(kind string, args []string) (profile string, count int, err error) {
 	if len(args) < 1 || len(args) > 2 {
-		return "", 0, fmt.Errorf("usage: ccgp --%s <profile> [count] [--fork|--force]   (count: how many latest sessions of the current directory, default %d)", kind, defaultSessionCount)
+		return "", 0, fmt.Errorf("usage: ccgp --%s <profile> [count] [--fork] [--force]   (count: how many latest sessions of the current directory, default %d)", kind, defaultSessionCount)
 	}
 	count = defaultSessionCount
 	if len(args) == 2 {
@@ -397,23 +399,44 @@ func seedProfileSessions(w io.Writer, cfg *config.Config, profile string) {
 // without one in Claude, is left alone.
 func seedFirstSession(w io.Writer, src, dst endpoint, cwd string) {
 	project := projectDirName(cwd)
-	has := func(dir string) (bool, error) {
-		list, err := sessions.List(dir)
-		for _, s := range list {
-			if strings.EqualFold(s.Project, project) {
-				return true, err
-			}
-		}
-		return false, err
-	}
-	if have, err := has(dst.dir); err != nil || have {
+	if has, err := projectHasSession(dst.dir, project); err != nil || has {
 		return
 	}
-	if found, err := has(src.dir); err != nil || !found {
+	if found, err := projectHasSession(src.dir, project); err != nil || !found {
 		return
 	}
-	opt := sessions.Options{StripThinking: stripThinkingBetween(src, dst), Project: project}
+	// Within: a session begun in another directory is copied as ccgp --send
+	// copies it, saying where it lives now.
+	opt := sessions.Options{StripThinking: stripThinkingBetween(src, dst), Project: project, Within: cwd}
 	if err := copySessions(w, "first launch of "+dst.label, src, dst, 1, opt); err != nil {
 		_, _ = fmt.Fprintf(w, "first launch: sessions not copied: %v\n", err)
 	}
+}
+
+// projectHasSession reports whether dir's Claude Code holds a session of the
+// project folder name: that one projects/ folder, no transcript opened.
+func projectHasSession(dir, project string) (bool, error) {
+	root := filepath.Join(dir, "projects")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.EqualFold(e.Name(), project) {
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(root, e.Name()))
+		if err != nil {
+			return false, err
+		}
+		for _, f := range files {
+			if f.Type().IsRegular() && strings.HasSuffix(f.Name(), ".jsonl") {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }

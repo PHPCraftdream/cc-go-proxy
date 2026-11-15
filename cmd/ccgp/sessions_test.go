@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -391,5 +392,68 @@ func TestCopySessionsReportsTheFailedEnd(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(dst.dir, "projects", "D--proj", "s1.jsonl"))
 	if err != nil || string(got) != reply {
 		t.Errorf("transcript %q, %v", got, err)
+	}
+}
+
+// A session begun in another directory is seeded the way ccgp --send copies
+// it: it says where it lives now, or /resume here does not list it.
+func TestSeedFirstSessionSaysWhereABegunElsewhereSessionLives(t *testing.T) {
+	cwd := filepath.Join(t.TempDir(), "work")
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	project := projectDirName(cwd)
+	src, dst := endpoint{dir: t.TempDir(), label: "claude"}, endpoint{dir: t.TempDir(), provider: "codex", label: "codex"}
+	cwdLine := func(dir string) string {
+		c, _ := json.Marshal(dir)
+		return `{"type":"user","sessionId":"s1","cwd":` + string(c) + `}` + "\n"
+	}
+	body := cwdLine(other) + `{"type":"last-prompt","lastPrompt":"one","leafUuid":"aaaaaaaa-0000-4000-8000-000000000001","sessionId":"s1"}` + "\n"
+	writeSession(t, src.dir, project, "s1", body)
+
+	var out bytes.Buffer
+	seedFirstSession(&out, src, dst, cwd)
+	b, err := os.ReadFile(filepath.Join(dst.dir, "projects", project, "s1.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := json.Marshal(cwd)
+	want := `{"type":"relocated","relocatedCwd":` + string(home) + `,"sessionId":"s1"}` + "\n"
+	if !strings.Contains(string(b), want) {
+		t.Errorf("the copy does not say it lives in %s:\n%s", cwd, b)
+	}
+}
+
+func TestProjectHasSessionLooksAtOneFolder(t *testing.T) {
+	if has, err := projectHasSession(filepath.Join(t.TempDir(), "missing"), "D--x"); err != nil || has {
+		t.Errorf("a home without projects: %v, %v", has, err)
+	}
+	dir := t.TempDir()
+	writeSession(t, dir, "D--other", "a", "{}\n")
+	if has, err := projectHasSession(dir, "D--x"); err != nil || has {
+		t.Errorf("another folder's session: %v, %v", has, err)
+	}
+	writeSession(t, dir, "D--x", "s1", "{}\n")
+	if has, err := projectHasSession(dir, "D--x"); err != nil || !has {
+		t.Errorf("the folder's own session: %v, %v", has, err)
+	}
+	if has, err := projectHasSession(dir, strings.ToUpper("D--x")); err != nil || !has {
+		t.Errorf("the folder name is matched without regard to case: %v, %v", has, err)
+	}
+	// A plain file named like the project is not a session folder.
+	if err := os.WriteFile(filepath.Join(dir, "projects", "D--y"), []byte("a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := projectHasSession(dir, "D--y"); err != nil || has {
+		t.Errorf("a file named like the project: %v, %v", has, err)
+	}
+	// A sidecar directory without transcripts is not a session either.
+	side := filepath.Join(dir, "projects", "D--z", "s1")
+	if err := os.MkdirAll(side, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(side, "r.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := projectHasSession(dir, "D--z"); err != nil || has {
+		t.Errorf("a folder with sidecars only: %v, %v", has, err)
 	}
 }

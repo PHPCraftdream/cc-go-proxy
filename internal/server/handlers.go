@@ -41,9 +41,11 @@ func handleMessages(c *fiber.Ctx, cfg *config.Config) error {
 	// Parse Claude request
 	var claudeReq models.ClaudeRequest
 	if err := c.BodyParser(&claudeReq); err != nil {
-		// Log the error and raw body for debugging
-		fmt.Printf("[ERROR] Failed to parse request body: %v\n", err)
-		fmt.Printf("[ERROR] Raw body: %s\n", string(c.Body()))
+		// The error and the size only; the body itself is debug output.
+		_, _ = fmt.Fprintf(logOut, "[ERROR] Failed to parse request body: %v (body: %d bytes)\n", err, len(c.Body()))
+		if cfg.Debug {
+			fmt.Printf("[ERROR] Raw body: %s\n", string(c.Body()))
+		}
 		return c.Status(400).JSON(fiber.Map{
 			"type": "error",
 			"error": fiber.Map{
