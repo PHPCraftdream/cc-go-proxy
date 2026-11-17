@@ -109,12 +109,12 @@ profiles: [
         models: [
             {
                 match: *fable*
-                model: gpt-6-astra
+                model: gpt-6.2-astra
                 context_window: 922000
             }
             {
                 match: *opus*
-                model: gpt-6.1-sol
+                model: gpt-6.2-sol
                 context_window: 922000
             }
             {

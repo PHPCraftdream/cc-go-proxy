@@ -17,7 +17,10 @@ import (
 )
 
 // catalogClientVersion selects the model catalog revision (Codex CLI version).
-const catalogClientVersion = "0.159.0"
+// The backend lists a new model generation only to a client at least as new as
+// the one that introduced it (gpt-6.2-* needs 0.169.0): raise it with each
+// Codex CLI release that brings models.
+const catalogClientVersion = "0.169.0"
 
 // Model is one entry of the account's Codex model catalog.
 type Model struct {

@@ -43,7 +43,7 @@ curl -s http://127.0.0.1:60093/call/$TOKEN/
 ```
 
 ```json
-{"version":"0.1.0","profile":"codex","provider":"codex","type":"codex","models":[{"match":"*opus*","model":"gpt-6.1-sol","context_window":922000}],"default":""}
+{"version":"0.1.0","profile":"codex","provider":"codex","type":"codex","models":[{"match":"*opus*","model":"gpt-6.2-sol","context_window":922000}],"default":""}
 ```
 
 The profile name, its provider and type, its model rules and `default_model`. It exposes the routing config, which is
@@ -56,7 +56,7 @@ curl -s "http://127.0.0.1:60093/call/$TOKEN/model?requested=claude-opus-4-1"
 ```
 
 ```json
-{"kind":"ccgp:model-route:v1","requestedModel":"claude-opus-4-1","backendModel":"gpt-6.1-sol"}
+{"kind":"ccgp:model-route:v1","requestedModel":"claude-opus-4-1","backendModel":"gpt-6.2-sol"}
 ```
 
 Resolves a Claude model name with the same rules inference uses (profile rules, then `default_model`, then the tier
