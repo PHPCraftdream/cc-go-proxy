@@ -360,6 +360,69 @@ func TestReplaceBinaryWindowsPath(t *testing.T) {
 	}
 }
 
+// A .old that cannot be removed (a process of an earlier update holds it open;
+// here a non-empty directory stands in) must not block the update: the current
+// file goes aside under another name, and leftovers of earlier updates go.
+func TestReplaceBinaryWindowsPathBusyOld(t *testing.T) {
+	dir := t.TempDir()
+	writeExe(t, filepath.Join(dir, "ccgp"), "old")
+	busy := filepath.Join(dir, "ccgp.old")
+	if err := os.Mkdir(busy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExe(t, filepath.Join(busy, "held"), "held")
+	stale := filepath.Join(dir, "ccgp.old-20200101-000000.000")
+	writeExe(t, stale, "stale")
+	other := filepath.Join(dir, "ccgpy.old-20200101-000000.000")
+	writeExe(t, other, "other binary's leftover")
+
+	if err := replaceBinary(dir, "ccgp", []byte("new"), "windows"); err != nil {
+		t.Fatalf("replaceBinary: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "ccgp"))
+	if err != nil || string(got) != "new" {
+		t.Errorf("ccgp = %q, %v; want \"new\"", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(busy, "held")); err != nil {
+		t.Errorf("the busy .old was touched: %v", err)
+	}
+	if _, err := os.Stat(stale); err == nil {
+		t.Error("the stale ccgp.old-* was not removed")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("another binary's leftover was removed: %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "ccgp.old-*")); len(left) != 0 {
+		t.Errorf("aside file left behind: %v", left)
+	}
+}
+
+// With a busy .old a failed final rename still rolls the old file back.
+func TestReplaceBinaryWindowsPathBusyOldRollback(t *testing.T) {
+	dir := t.TempDir()
+	writeExe(t, filepath.Join(dir, "ccgp"), "old")
+	busy := filepath.Join(dir, "ccgp.old")
+	if err := os.Mkdir(busy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExe(t, filepath.Join(busy, "held"), "held")
+	calls := 0
+	fail := func(from, to string) error {
+		calls++
+		if calls == 2 {
+			return fmt.Errorf("rename blocked")
+		}
+		return os.Rename(from, to)
+	}
+	if err := installBinary(dir, "ccgp", []byte("new"), "windows", fail); err == nil {
+		t.Fatal("want error from failing rename")
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "ccgp"))
+	if err != nil || string(got) != "old" {
+		t.Errorf("ccgp = %q, %v; want rollback to \"old\"", got, err)
+	}
+}
+
 // updateServer serves /latest (302), the archive and SHA256SUMS for ver,
 // built for the platform the tests run on (production uses runtime values).
 func updateServer(t *testing.T, ver string, ccgp, ccgpy []byte, sumsOverride string) *httptest.Server {

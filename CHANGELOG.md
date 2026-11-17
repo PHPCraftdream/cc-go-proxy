@@ -9,6 +9,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Fixed
+- `ccgp --update` no longer fails on Windows with `cannot move the old binary aside: Access is denied` when a process
+  started before the previous update (an open Claude Code session) still holds `ccgp.exe.old`: the current binary then
+  goes aside as `ccgp.exe.old-<time>`, and leftovers of earlier updates are removed once nothing holds them.
+
 ## [0.2.1] - 2026-11-17
 
 ### Changed
