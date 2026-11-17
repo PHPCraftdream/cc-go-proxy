@@ -11,9 +11,8 @@ name: Release
 # npm publishing is off until the repository variable NPM_PUBLISH is 'true'
 # (gh variable set NPM_PUBLISH --body true); the job then only builds and dry-runs.
 #
-# npm authentication, no workflow edit needed to switch:
-#   * the NPM_TOKEN secret exists  -> publish with that token;
-#   * the secret does not exist    -> publish with npm Trusted Publishing (OIDC).
+# npm authentication: Trusted Publishing (OIDC) only. A stored token is never used:
+# a release that finds an NPM_TOKEN secret stops before publishing anything.
 # See docs/releasing.md.
 
 on:
@@ -316,14 +315,16 @@ jobs:
       if: env.PUBLISH != 'true'
       run: node scripts/npm/publish.mjs npm-dist --dry-run
 
-    - name: Publish with NPM_TOKEN
+    # Releases go out only through Trusted Publishing. A leftover or re-added token
+    # secret is an error, not a fallback: delete it (docs/releasing.md).
+    - name: Refuse a stored npm token
       if: env.PUBLISH == 'true' && vars.NPM_PUBLISH == 'true' && env.HAS_NPM_TOKEN == 'true'
-      env:
-        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      run: node scripts/npm/publish.mjs npm-dist
+      run: |
+        echo "::error::the NPM_TOKEN secret exists: releases publish only through npm Trusted Publishing; delete the secret and revoke the token"
+        exit 1
 
-    # Without the secret npm exchanges the job's OIDC identity for a short-lived
-    # publish credential. Each package needs a Trusted Publisher on npmjs.com.
+    # npm exchanges the job's OIDC identity for a short-lived publish credential.
+    # Each package needs a Trusted Publisher on npmjs.com (scripts/npm/trust.mjs).
     - name: Publish with Trusted Publishing (OIDC)
       if: env.PUBLISH == 'true' && vars.NPM_PUBLISH == 'true' && env.HAS_NPM_TOKEN != 'true'
       run: node scripts/npm/publish.mjs npm-dist
