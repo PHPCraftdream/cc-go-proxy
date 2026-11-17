@@ -9,16 +9,14 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
-### Changed
-- Releases publish to npm only through Trusted Publishing. The release workflow has no token step and stops before
-  publishing when an `NPM_TOKEN` secret exists; `scripts/npm/publish.mjs` refuses to run while a token is set in the
-  environment. See [docs/releasing.md](docs/releasing.md).
-
-## [0.2.0] - 2026-11-17
+## [0.2.1] - 2026-11-17
 
 ### Changed
 - Fable and Opus now map to `gpt-6.2-astra` and `gpt-6.2-sol` (Sonnet stays on `gpt-6.1-terra`, Haiku on `gpt-6-luna`):
   the default config template and the docs name them, and `ccgp --models apply` / `ccgp --login` pick them.
+- Releases publish to npm only through Trusted Publishing. The release workflow has no token step and stops before
+  publishing when an `NPM_TOKEN` secret exists; `scripts/npm/publish.mjs` refuses to run while a token is set in the
+  environment. See [docs/releasing.md](docs/releasing.md).
 
 ### Fixed
 - The Codex model catalog is requested as Codex CLI 0.169.0 (was 0.159.0). The backend lists a model generation only
@@ -594,6 +592,6 @@ First release of ccgp as an independent project.
 - Parallel requests no longer share one connection: they are spread over 7 connections per backend, so one
   busy connection does not slow down the others.
 
-[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.2.1
 [0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0
