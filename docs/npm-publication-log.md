@@ -181,6 +181,15 @@ its test, release notes, README, CLI help and docs. **Nothing is published**; no
 the installer examples and the CI install check follow it (the check now asks for the newest published release
 instead of a fixed version). The sections above are history and keep the numbers of their day.
 
+## 2026-11-17: 0.2.0 went out with a token, 0.2.1 replaces it
+
+- `v0.2.0` published the seven packages with the `NPM_TOKEN` secret: deleting the secret a few minutes before the
+  npm job started was too late, the job had already received it. The Trusted Publisher configurations of the packages
+  were therefore never validated by a publish, and npm lets an unvalidated configuration expire.
+- Decision: `v0.2.1` publishes through Trusted Publishing only (the workflow has no token step), which validates all
+  seven configurations; `v0.2.0` is then removed (GitHub Release and tag, `npm unpublish` of the seven versions by the
+  owner with 2FA). A deleted npm version number cannot be published again, hence 0.2.1 and not a second 0.2.0.
+
 ## Lessons for the next release
 
 - A free name on `npm view` is not proof that npm accepts it: the similarity rule ("too similar to `ncp`") and the spam
