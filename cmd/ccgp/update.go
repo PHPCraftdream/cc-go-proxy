@@ -315,8 +315,9 @@ func readCapped(r io.Reader, name string, max int64) ([]byte, error) {
 // replaceBinary installs content as dir/name, next to the running executable.
 // On Unix the file is written as <name>.new and renamed over the target. On
 // Windows a running exe cannot be overwritten but can be renamed away: the
-// current file moves to <name>.old and the new file takes its place; a failed
-// final rename rolls the old file back.
+// current file moves to <name>.old (<name>.old-<time> when a running process of
+// an earlier update still holds the .old) and the new file takes its place; a
+// failed final rename rolls the old file back.
 func replaceBinary(dir, name string, content []byte, goos string) error {
 	return installBinary(dir, name, content, goos, os.Rename)
 }
@@ -337,19 +338,32 @@ func installBinary(dir, name string, content []byte, goos string, rename func(fr
 		return fmt.Errorf("cannot make %s executable: %w", newPath, err)
 	}
 	if goos == "windows" {
-		_ = os.Remove(oldPath)
-		if err := rename(filepath.Join(dir, name), oldPath); err != nil {
+		// Leftovers of earlier updates whose processes have ended since.
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), name+".old-") {
+				_ = os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+		// A process started before the last update keeps its <name>.old open, so
+		// it cannot be removed or renamed over: the current file then goes aside
+		// under a name of its own.
+		asidePath := oldPath
+		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+			asidePath = oldPath + time.Now().Format("-20060102-150405.000")
+		}
+		if err := rename(filepath.Join(dir, name), asidePath); err != nil {
 			_ = os.Remove(newPath)
 			return fmt.Errorf("cannot move the old binary aside: %w", err)
 		}
 		if err := rename(newPath, filepath.Join(dir, name)); err != nil {
-			if backErr := rename(oldPath, filepath.Join(dir, name)); backErr != nil {
+			if backErr := rename(asidePath, filepath.Join(dir, name)); backErr != nil {
 				return fmt.Errorf("install failed (%v) and the backup could not be restored (%v)", err, backErr)
 			}
 			_ = os.Remove(newPath)
 			return fmt.Errorf("cannot replace %s: %w", name, err)
 		}
-		_ = os.Remove(oldPath)
+		_ = os.Remove(asidePath)
 		return nil
 	}
 	if err := rename(newPath, filepath.Join(dir, name)); err != nil {
