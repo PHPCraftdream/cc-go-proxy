@@ -9,6 +9,18 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-17
+
+### Changed
+- Fable and Opus now map to `gpt-6.2-astra` and `gpt-6.2-sol` (Sonnet stays on `gpt-6.1-terra`, Haiku on `gpt-6-luna`):
+  the default config template and the docs name them, and `ccgp --models apply` / `ccgp --login` pick them.
+
+### Fixed
+- The Codex model catalog is requested as Codex CLI 0.169.0 (was 0.159.0). The backend lists a model generation only
+  to a client at least as new as the one that introduced it, so `gpt-6.2-astra` and `gpt-6.2-sol` were missing from
+  `ccgp --models` and from the managed mapping. After updating, run `ccgp --models apply codex` to move an existing
+  config to them.
+
 ## [0.1.0] - 2026-11-15
 
 First release of ccgp as an independent project.
@@ -577,5 +589,6 @@ First release of ccgp as an independent project.
 - Parallel requests no longer share one connection: they are spread over 7 connections per backend, so one
   busy connection does not slow down the others.
 
-[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0

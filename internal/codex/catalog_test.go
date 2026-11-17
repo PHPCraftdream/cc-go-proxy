@@ -1,8 +1,13 @@
 package codex
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
 func TestParseCatalog(t *testing.T) {
@@ -77,6 +82,50 @@ func TestPickCatalogWithTerra(t *testing.T) {
 	}
 	if sel.Fable != "gpt-6-astra" || sel.Opus != "gpt-6.1-sol" || sel.Sonnet != "gpt-6.1-terra" || sel.Haiku != "gpt-6-luna" {
 		t.Errorf("tiers = %+v", sel)
+	}
+}
+
+// The catalog of 2026-11-17: gpt-6.2 astra and sol are new, terra and luna stay.
+func TestPickCatalogWith62(t *testing.T) {
+	sel, err := Pick([]Model{
+		m("gpt-6.2-sol", 500_000, false),
+		m("gpt-6.2-astra", 500_000, false),
+		m("gpt-6.1-terra", 500_000, false),
+		m("gpt-6.1-sol", 500_000, false),
+		m("gpt-6-astra", 272_000, false),
+		m("gpt-6-luna", 272_000, false),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Fable != "gpt-6.2-astra" || sel.Opus != "gpt-6.2-sol" || sel.Sonnet != "gpt-6.1-terra" || sel.Haiku != "gpt-6-luna" {
+		t.Errorf("tiers = %+v", sel)
+	}
+}
+
+// The backend lists gpt-6.2 only to a client new enough: the catalog request
+// must carry a version that is, in the query and the header alike.
+func TestFetchCatalogSendsClientVersion(t *testing.T) {
+	var query, header string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query, header = r.URL.Query().Get("client_version"), r.Header.Get("version")
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-6.2-sol"}]}`))
+	}))
+	defer srv.Close()
+	old := HTTPClient
+	HTTPClient = &http.Client{}
+	defer func() { HTTPClient = old }()
+
+	ms, err := FetchCatalog(context.Background(), srv.URL, &oauth.Tokens{AccessToken: "t"})
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("FetchCatalog = %v, %v", ms, err)
+	}
+	if query != catalogClientVersion || header != catalogClientVersion {
+		t.Errorf("client_version = %q, version header = %q, want %q", query, header, catalogClientVersion)
+	}
+	got, ok := parseVersion(catalogClientVersion)
+	if !ok || cmpVersion(got, []int{0, 169, 0}) < 0 {
+		t.Errorf("catalogClientVersion %q is older than 0.169.0, which brought gpt-6.2", catalogClientVersion)
 	}
 }
 
