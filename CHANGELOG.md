@@ -9,7 +9,7 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
-## [0.1.1] - 2026-11-17
+## [0.2.0] - 2026-11-17
 
 ### Changed
 - Fable and Opus now map to `gpt-6.2-astra` and `gpt-6.2-sol` (Sonnet stays on `gpt-6.1-terra`, Haiku on `gpt-6-luna`):
@@ -589,6 +589,6 @@ First release of ccgp as an independent project.
 - Parallel requests no longer share one connection: they are spread over 7 connections per backend, so one
   busy connection does not slow down the others.
 
-[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.1...HEAD
-[0.1.1]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.1.1
+[Unreleased]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PHPCraftdream/cc-go-proxy/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/PHPCraftdream/cc-go-proxy/releases/tag/v0.1.0
