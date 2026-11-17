@@ -37,3 +37,10 @@ test('matches the workflow: file name, environment, package name', () => {
   assert.match(wf, /^\s+NPM_NAME: '@cc-go-proxy\/ccgp'/m);
   assert.match(wf, /id-token: write\s+# npm provenance and Trusted Publishing/);
 });
+
+// A release must never publish with a stored token.
+test('the workflow gives no step a token', () => {
+  const wf = readFileSync(join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
+  assert.doesNotMatch(wf, /NODE_AUTH_TOKEN:/);
+  assert.match(wf, /Refuse a stored npm token/);
+});

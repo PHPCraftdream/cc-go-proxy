@@ -5,9 +5,9 @@
 //
 //   node scripts/npm/publish.mjs <out-dir> [--dry-run]
 //
-// Authentication is not handled here, so the same script serves both modes:
-//   * NODE_AUTH_TOKEN set to a real token -> token publishing;
-//   * otherwise npm uses the OIDC identity of the job (Trusted Publishing).
+// Authentication is npm Trusted Publishing (the OIDC identity of the job). The script
+// refuses to publish while a token is set in the environment, so a token can never
+// be what publishes a release (the actions/setup-node placeholder is not a token).
 // A version that is already on the registry is skipped, so a failed run can be repeated.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -29,12 +29,29 @@ export function publishRank(pkg) {
   return (pkg.os ?? []).includes('win32') ? 0 : 1;
 }
 
+// storedToken names the environment variable that holds an npm token, or "".
+// actions/setup-node exports NODE_AUTH_TOKEN as a placeholder of X and dashes.
+export function storedToken(env) {
+  const placeholder = /^X+(-X+)*$/;
+  for (const name of ['NODE_AUTH_TOKEN', 'NPM_TOKEN']) {
+    const v = (env[name] ?? '').trim();
+    if (v && !placeholder.test(v)) return name;
+  }
+  return '';
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
   const outDir = args.find((a) => !a.startsWith('--'));
   if (!outDir) {
     console.error('usage: publish.mjs <out-dir> [--dry-run]');
+    process.exit(2);
+  }
+
+  const token = storedToken(process.env);
+  if (token && !dryRun) {
+    console.error(`::error::${token} is set: releases publish only through npm Trusted Publishing, never with a token`);
     process.exit(2);
   }
 

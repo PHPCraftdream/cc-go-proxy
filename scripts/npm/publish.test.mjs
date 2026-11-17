@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { PLATFORMS } from './build.mjs';
-import { alreadyPublished, publishRank } from './publish.mjs';
+import { alreadyPublished, publishRank, storedToken } from './publish.mjs';
 
 test('Windows packages go first, the main package last', () => {
   const platform = PLATFORMS.map((p) => ({ name: `x-${p.id}`, os: [p.os], cpu: [p.cpu] }));
@@ -28,4 +28,12 @@ test('other refusals are failures', () => {
   assert.ok(!alreadyPublished('npm error 403 403 Forbidden - PUT https://registry.npmjs.org/ccgp - Package name too similar to existing package ncp'));
   assert.ok(!alreadyPublished('npm error code E401'));
   assert.ok(!alreadyPublished(''));
+});
+
+test('a token in the environment is found, the setup-node placeholder is not', () => {
+  assert.equal(storedToken({}), '');
+  assert.equal(storedToken({ NODE_AUTH_TOKEN: 'XXXXX-XXXXX-XXXXX-XXXXX' }), '');
+  assert.equal(storedToken({ NODE_AUTH_TOKEN: 'npm_abc123' }), 'NODE_AUTH_TOKEN');
+  assert.equal(storedToken({ NPM_TOKEN: 'npm_abc123' }), 'NPM_TOKEN');
+  assert.equal(storedToken({ NODE_AUTH_TOKEN: '  ' }), '');
 });

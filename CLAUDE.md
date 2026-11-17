@@ -55,8 +55,8 @@ Guidance for Claude Code when working in this repository.
   nielspeter/claude-code-proxy stays credited. Dependencies must be permissive (allowlist in
   `.github/workflows/licenses.yml`).
 - A release is a tag `vX.Y.Z` on main; `.github/workflows/release.yml` builds, publishes and
-  sets the version via ldflags. Do not tag or bump versions unless the user asks. Process and npm
-  token / Trusted Publishing setup: `docs/releasing.md`.
+  sets the version via ldflags. Do not tag or bump versions unless the user asks. npm is published only through
+  Trusted Publishing, never with a token (no `NPM_TOKEN` secret may exist). Process and setup: `docs/releasing.md`.
 - Keep the README's first line (fork notice) and `CHANGELOG.md` `## [Unreleased]` up to date.
 
 ## Gotchas

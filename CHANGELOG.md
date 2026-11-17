@@ -9,6 +9,11 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Changed
+- Releases publish to npm only through Trusted Publishing. The release workflow has no token step and stops before
+  publishing when an `NPM_TOKEN` secret exists; `scripts/npm/publish.mjs` refuses to run while a token is set in the
+  environment. See [docs/releasing.md](docs/releasing.md).
+
 ## [0.2.0] - 2026-11-17
 
 ### Changed

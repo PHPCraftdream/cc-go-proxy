@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Sets up npm Trusted Publishing for every package of a release: the main one
 // and the six platform ones, all bound to release.yml in the npm environment.
-// Run once after the first (token) release, logged in to npm as the owner:
+// Run once for the packages, logged in to npm as the owner:
 //
 //   npm login
 //   node scripts/npm/trust.mjs --dry-run     # show what would be set
 //   node scripts/npm/trust.mjs               # set it (npm asks for 2FA)
 //   node scripts/npm/trust.mjs --list        # show what is set
 //
-// Then delete the NPM_TOKEN secret and revoke the token (docs/releasing.md).
+// Releases publish only through it; no NPM_TOKEN secret may exist (docs/releasing.md).
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -59,48 +59,21 @@ npm audit signatures          # after npm install: checks registry signatures an
 proxy serves the tag. Such a build reports the default version compiled into the source; use a release archive or the
 npm package when the exact version matters.
 
-## npm: publish with a token now, Trusted Publishing later
+## npm: Trusted Publishing only
 
-The npm job needs no edit to switch. It looks at one thing:
+Releases publish to npm through **npm Trusted Publishing**: the npm job exchanges its GitHub OIDC identity for a
+short-lived publish credential. A stored token is never used:
 
-| Secret `NPM_TOKEN` | The job publishes with |
-| --- | --- |
-| exists | that token (`NODE_AUTH_TOKEN`), plus provenance |
-| does not exist | **npm Trusted Publishing**: an OIDC identity of the job, no stored credential |
+- the workflow has no token step, and a release that finds an `NPM_TOKEN` secret stops before publishing
+  (`Refuse a stored npm token`);
+- `scripts/npm/publish.mjs` refuses to run while `NODE_AUTH_TOKEN` (anything but the setup-node placeholder) or
+  `NPM_TOKEN` is set.
 
-### 1. First release, with a token
+### Set it up once per package
 
-npm lets you add a Trusted Publisher in the settings of a package that already exists, so the first publish of each
-new package name needs a token.
-
-1. [npmjs.com](https://www.npmjs.com) → *Access Tokens* → *Generate New Token* → **Granular access token**:
-   permission *Read and write*, packages *All packages* (none exists yet), the shortest expiry that suits you.
-   Publishing from CI needs a token that may bypass 2FA.
-2. Store it as the secret **`NPM_TOKEN`**; `gh` asks for the value without echoing it or keeping it in the shell
-   history:
-   ```sh
-   gh secret set NPM_TOKEN -R PHPCraftdream/cc-go-proxy             # repository secret
-   gh secret set NPM_TOKEN -R PHPCraftdream/cc-go-proxy --env npm   # or: only the npm job sees it
-   ```
-   The environment variant needs the `npm` environment to exist (*Settings → Environments*); there you can also
-   require a reviewer for every publish.
-3. Push the tag. Seven packages appear, all in the npm organization `cc-go-proxy`: `@cc-go-proxy/ccgp` and
-   `@cc-go-proxy/ccgp-linux-x64`, `-linux-arm64`, `-darwin-x64`, `-darwin-arm64`, `-w32-x64`, `-w32-arm64`. (The
-   bare name `ccgp` is refused by npm as too similar to `ncp`, which a scope avoids; npm's spam filter refused names
-   ending in `-win32-<cpu>`, hence `w32`; the commands are still `ccgp` and `ccgpy`.) Scoped packages are published
-   with `--access public` (`publish.mjs` passes it).
-
-The token of step 1 must belong to a member of the organization with write access to its packages (in a granular
-token pick the organization `cc-go-proxy` or *All packages*).
-
-To publish under another name or scope, change `NPM_NAME` at the top of `release.yml` (for example
-`@yourscope/ccgp`; the platform packages follow as `@yourscope/ccgp-<os>-<cpu>`, with `w32` for Windows). The build
-puts a scoped package in the directory `yourscope__ccgp`, so the output stays flat. The unscoped
-`cc-go-proxy-*` names of the first attempts are left alone (see [npm-publication-log.md](npm-publication-log.md)).
-
-### 2. Switch to Trusted Publishing
-
-One command does it for all seven packages (npm 11.10 or newer, logged in as the owner; npm asks for 2FA):
+A package must exist before a Trusted Publisher can be added; the first version of a new package name is published by
+hand with your own npm login (2FA), never with a stored token. Then, logged in as an owner of the organization
+(npm 11.10 or newer; npm asks for 2FA):
 
 ```sh
 npm login
@@ -109,7 +82,8 @@ node scripts/npm/trust.mjs             # set it: npm trust github <package> --fi
 node scripts/npm/trust.mjs --list      # check
 ```
 
-Or by hand, for **each of the seven packages**: npmjs.com → the package → *Settings* → *Trusted Publisher* →
+Or by hand, for **each of the seven packages** (`@cc-go-proxy/ccgp` and `-linux-x64`, `-linux-arm64`, `-darwin-x64`,
+`-darwin-arm64`, `-w32-x64`, `-w32-arm64`): npmjs.com → the package → *Settings* → *Trusted Publisher* →
 *GitHub Actions*:
 
 | Field | Value |
@@ -119,16 +93,17 @@ Or by hand, for **each of the seven packages**: npmjs.com → the package → *S
 | Workflow filename | `release.yml` |
 | Environment | `npm` (the job runs in it; leave empty only if you also remove `environment: npm`) |
 
-Then delete the `NPM_TOKEN` secret (repository and environment) and revoke the token on npmjs.com:
+npm does not check these values when they are saved: a wrong one shows only when a release is refused.
 
-```sh
-gh secret delete NPM_TOKEN -R PHPCraftdream/cc-go-proxy
-gh secret delete NPM_TOKEN -R PHPCraftdream/cc-go-proxy --env npm   # if it was put there
-``` The next tag
-publishes through OIDC. Optionally set each package to *Require two-factor authentication and disallow tokens*,
-so a leaked token can no longer publish.
+**A new configuration expires** unless a publish through it succeeds soon after it was created (npm's documented
+window is two days): that first publish validates it and binds it to the repository's identity. An expired entry
+cannot publish or be edited; delete it and create it again. So set it up right before a release, and make sure the
+release really publishes through it. All seven packages are published by one release run, so one run validates all
+seven; if that run fails half way, the packages it did not reach keep their unvalidated configuration. See
+[npm's documentation](https://docs.npmjs.com/trusted-publishers/).
 
-Needs npm 11.5.1 or newer (the job installs it) and GitHub-hosted runners.
+Needs npm 11.5.1 or newer (the job installs it) and GitHub-hosted runners. Optionally set each package to *Require
+two-factor authentication and disallow tokens*, so a token can no longer publish at all.
 
 ## Licenses
 

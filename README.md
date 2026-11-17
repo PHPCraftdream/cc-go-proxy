@@ -228,7 +228,7 @@ upstream's work, kept here for `codex_api`. Thank you, Niels Peter Strandberg an
 | [Sessions](docs/sessions.md) | `ccgp --send`, `--import` / `--export`, thinking blocks |
 | [Security](docs/security.md) | Token URLs, secrets at rest, why official credentials never reach a session |
 | [Architecture](docs/architecture.md) | Layout, request flow, invariants |
-| [Releasing](docs/releasing.md) | How releases, npm (token and Trusted Publishing) and license checks work |
+| [Releasing](docs/releasing.md) | How releases, npm (Trusted Publishing) and license checks work |
 | [Changelog](CHANGELOG.md) | What changed |
 
 ## Terms and disclaimer
