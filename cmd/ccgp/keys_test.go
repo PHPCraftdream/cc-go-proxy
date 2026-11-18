@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
 
@@ -103,7 +104,7 @@ func providerRun(t *testing.T, args ...string) (string, error) {
 	t.Setenv("CCGP_HOME", t.TempDir())
 	var buf bytes.Buffer
 	store := creds.Store{Dir: t.TempDir()}
-	err := provider(&buf, loadTestConfig(t), store, config.NewPeakPauses(store.Dir), time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC), args)
+	err := provider(&buf, loadTestConfig(t), store, peakcfg.NewPauses(store.Dir), time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC), args)
 	return buf.String(), err
 }
 
@@ -211,7 +212,7 @@ func TestProviderSet(t *testing.T) {
 
 func TestProviderNeedsAConfigFile(t *testing.T) {
 	cfg := &config.Config{}
-	if err := provider(&bytes.Buffer{}, cfg, creds.Store{}, config.NewPeakPauses(""), time.Now(), nil); err == nil {
+	if err := provider(&bytes.Buffer{}, cfg, creds.Store{}, peakcfg.NewPauses(""), time.Now(), nil); err == nil {
 		t.Error("env-only mode accepted")
 	}
 }

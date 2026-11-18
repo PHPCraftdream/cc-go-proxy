@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 )
 
 const speedUsage = "usage: ccgp --speed [<profile> <family> [fast|standard|unset|inherit]]"
@@ -78,7 +79,7 @@ func speed(w io.Writer, args []string) error {
 		if cfg.IsEnvMode() {
 			return errors.New("no config.ktav (env-only mode): nothing to edit")
 		}
-		backup, err := config.EditFile(cfg.ConfigFile, func(text string) (string, error) { return config.SetProfileSpeedText(text, name, family, value) })
+		backup, err := cfgedit.EditFile(cfg.ConfigFile, func(text string) (string, error) { return cfgedit.SetProfileSpeedText(text, name, family, value) })
 		if err != nil {
 			return err
 		}

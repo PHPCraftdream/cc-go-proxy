@@ -1,24 +1,26 @@
-package config
+package cfgedit
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 )
 
 // mustLoad loads text through the real loader or fails the test. The text is
 // written as-is (CRLF stays CRLF): the loader accepts CRLF files.
-func mustLoad(t *testing.T, text string) *fileConfig {
+func mustLoad(t *testing.T, text string) *config.File {
 	t.Helper()
-	fc, err := loadFile(writeKtav(t, text))
+	fc, err := config.LoadFile(writeKtav(t, text))
 	if err != nil {
 		t.Fatalf("result does not load: %v\n%s", err, text)
 	}
 	return fc
 }
 
-func profilePtr(fc *fileConfig, name string) *Profile {
+func profilePtr(fc *config.File, name string) *config.Profile {
 	for i := range fc.Profiles {
 		if fc.Profiles[i].Name == name {
 			return &fc.Profiles[i]
@@ -27,7 +29,7 @@ func profilePtr(fc *fileConfig, name string) *Profile {
 	return nil
 }
 
-func providerPtr(fc *fileConfig, name string) *Provider {
+func providerPtr(fc *config.File, name string) *config.Provider {
 	for i := range fc.Providers {
 		if fc.Providers[i].Name == name {
 			return &fc.Providers[i]
@@ -93,11 +95,11 @@ func TestNextFreeName(t *testing.T) {
 }
 
 func TestAddProfileToTemplate(t *testing.T) {
-	base := string(DefaultTemplate())
+	base := string(config.DefaultTemplate())
 	pf := ProfileSpec{
 		Name:     "work",
 		Provider: "zai",
-		Rules: []ModelRule{
+		Rules: []config.ModelRule{
 			{Match: "*", Model: "glm-5.3-flash", ContextWindow: 1000000},
 			{Match: "*x*", Model: "m"}, // context_window omitted when 0
 		},
@@ -128,10 +130,10 @@ func TestAddProfileToTemplate(t *testing.T) {
 }
 
 func TestAddProfileWithProvider(t *testing.T) {
-	base := string(DefaultTemplate())
+	base := string(config.DefaultTemplate())
 	prov := &ProviderSpec{
 		Name:      "glm",
-		Type:      ProviderTypeAnthropicCompat,
+		Type:      config.ProviderTypeAnthropicCompat,
 		BaseURL:   "https://api.example.com/v1",
 		APIKeyEnv: "GLM_API_KEY",
 		EffortMap: map[string]string{"high": "max", "low": "low", "medium": "high"},
@@ -140,7 +142,7 @@ func TestAddProfileWithProvider(t *testing.T) {
 		Name:     "glm",
 		Provider: "glm",
 		Managed:  true,
-		Rules:    []ModelRule{{Match: "*", Model: "glm-5.3-flash", ContextWindow: 1000000}},
+		Rules:    []config.ModelRule{{Match: "*", Model: "glm-5.3-flash", ContextWindow: 1000000}},
 	}
 	out, err := AddProfileText(base, prov, pf)
 	if err != nil {
@@ -158,7 +160,7 @@ func TestAddProfileWithProvider(t *testing.T) {
 		t.Fatalf("providers=%d profiles=%d", len(fc.Providers), len(fc.Profiles))
 	}
 	gp := providerPtr(fc, "glm")
-	if gp == nil || gp.Type != ProviderTypeAnthropicCompat || gp.BaseURL != "https://api.example.com/v1" ||
+	if gp == nil || gp.Type != config.ProviderTypeAnthropicCompat || gp.BaseURL != "https://api.example.com/v1" ||
 		gp.APIKeyEnv != "GLM_API_KEY" || gp.EffortMap["low"] != "low" || gp.EffortMap["medium"] != "high" ||
 		gp.EffortMap["high"] != "max" || len(gp.EffortMap) != 3 {
 		t.Errorf("glm provider = %+v", gp)
@@ -184,8 +186,8 @@ func TestAddProfileWithProvider(t *testing.T) {
 }
 
 func TestAddProfileErrors(t *testing.T) {
-	base := string(DefaultTemplate())
-	prov := &ProviderSpec{Name: "extra", Type: ProviderTypeCodexAPI}
+	base := string(config.DefaultTemplate())
+	prov := &ProviderSpec{Name: "extra", Type: config.ProviderTypeCodexAPI}
 	tests := []struct {
 		name    string
 		text    string
@@ -194,13 +196,13 @@ func TestAddProfileErrors(t *testing.T) {
 		wantErr string
 	}{
 		{"duplicate profile", base, nil, ProfileSpec{Name: "codex", Provider: "codex"}, "already exists"},
-		{"duplicate provider", base, &ProviderSpec{Name: "zai", Type: ProviderTypeCodexAPI}, ProfileSpec{Name: "n", Provider: "zai"}, "already exists"},
+		{"duplicate provider", base, &ProviderSpec{Name: "zai", Type: config.ProviderTypeCodexAPI}, ProfileSpec{Name: "n", Provider: "zai"}, "already exists"},
 		{"unknown provider", base, nil, ProfileSpec{Name: "n", Provider: "nope"}, "unknown provider"},
 		{"no providers list", "a: 1\n", prov, ProfileSpec{Name: "n", Provider: "p"}, "profiles: ["},
 		{"no providers list, profiles ok", "profiles: [\n]\n", prov, ProfileSpec{Name: "n", Provider: "p"}, "providers: ["},
 		{"no profiles list", "providers: [\n]\n", nil, ProfileSpec{Name: "n", Provider: "p"}, "profiles: ["},
 		{"bad profile name", base, nil, ProfileSpec{Name: "Bad", Provider: "zai"}, "[a-z0-9_-]"},
-		{"bad provider name", base, &ProviderSpec{Name: "Bad Name", Type: ProviderTypeCodexAPI}, ProfileSpec{Name: "n", Provider: "Bad Name"}, "provider name"},
+		{"bad provider name", base, &ProviderSpec{Name: "Bad Name", Type: config.ProviderTypeCodexAPI}, ProfileSpec{Name: "n", Provider: "Bad Name"}, "provider name"},
 		{"provider without type", base, &ProviderSpec{Name: "x"}, ProfileSpec{Name: "n", Provider: "x"}, "type is required"},
 	}
 	for _, tt := range tests {
@@ -508,7 +510,7 @@ func TestRemoveProfileErrors(t *testing.T) {
 }
 
 func TestRemoveProfileManagedMarkers(t *testing.T) {
-	out, err := RemoveProfileText(string(DefaultTemplate()), "codex", false)
+	out, err := RemoveProfileText(string(config.DefaultTemplate()), "codex", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +526,7 @@ func TestRemoveProfileManagedMarkers(t *testing.T) {
 func TestEditFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.ktav")
-	orig := string(DefaultTemplate())
+	orig := string(config.DefaultTemplate())
 	if err := os.WriteFile(p, []byte(orig), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -543,7 +545,7 @@ func TestEditFile(t *testing.T) {
 	if b, _ := os.ReadFile(backup); string(b) != orig {
 		t.Error("backup does not hold the original content")
 	}
-	if fc, ferr := loadFile(p); ferr != nil || len(fc.Profiles) != 4 {
+	if fc, ferr := config.LoadFile(p); ferr != nil || len(fc.Profiles) != 4 {
 		t.Fatalf("edited file: profiles=%d err=%v", len(fc.Profiles), ferr)
 	}
 	if n := len(backups()); n != 1 {
@@ -579,92 +581,6 @@ func TestEditFile(t *testing.T) {
 	// Edit errors pass through.
 	if _, err := EditFile(p, func(string) (string, error) { return "", os.ErrPermission }); err == nil {
 		t.Error("edit error swallowed")
-	}
-}
-
-func TestIsListHeader(t *testing.T) {
-	trueCases := []string{
-		"profiles: [",
-		"profiles:  [",
-		"profiles : [",
-		"\tprofiles: [\r",
-		"    profiles: [",
-	}
-	for _, line := range trueCases {
-		if !isListHeader(line, "profiles") {
-			t.Errorf("isListHeader(%q, profiles) = false, want true", line)
-		}
-	}
-	falseCases := []string{
-		"profiles: []",
-		"profiles [",
-		"profilesX: [",
-		"# profiles: [",
-		"## profiles: [",
-		"profiles: [ x",
-		"",
-	}
-	for _, line := range falseCases {
-		if isListHeader(line, "profiles") {
-			t.Errorf("isListHeader(%q, profiles) = true, want false", line)
-		}
-	}
-	if isListHeader("profiles: [", "providers") {
-		t.Error(`isListHeader("profiles: [", providers) = true, want false`)
-	}
-}
-
-func TestKeyValue(t *testing.T) {
-	tests := []struct {
-		line, key, val string
-		ok             bool
-	}{
-		{"listen.host: 1", "listen.host", "1", true},
-		{"name:  work  ", "name", "work", true},
-		{"provider :  p1", "provider", "p1", true},
-		{"provider\t: p1", "provider", "p1", true},
-		{"## comment: x", "", "", false},
-		{"no colon here", "", "", false},
-	}
-	for _, tt := range tests {
-		k, v, ok := keyValue(tt.line)
-		if ok != tt.ok || k != tt.key || v != tt.val {
-			t.Errorf("keyValue(%q) = %q, %q, %v; want %q, %q, %v", tt.line, k, v, ok, tt.key, tt.val, tt.ok)
-		}
-	}
-}
-
-func TestDominantCRLF(t *testing.T) {
-	crlf := func(n int) []string {
-		out := make([]string, n)
-		for i := range out {
-			out[i] = "x\r"
-		}
-		return out
-	}
-	lf := func(n int) []string {
-		out := make([]string, n)
-		for i := range out {
-			out[i] = "x"
-		}
-		return out
-	}
-	// 7 CRLF lines + 6 LF lines, all newline-terminated (split's last element
-	// is the empty tail after the final "\n").
-	tests := []struct {
-		name  string
-		lines []string
-		want  bool
-	}{
-		{"7 CRLF + 6 LF + trailing newline", append(append(crlf(7), lf(6)...), ""), true},
-		{"6 CRLF + 7 LF + trailing newline", append(append(crlf(6), lf(7)...), ""), false},
-		{"tie", append(append(crlf(6), lf(6)...), ""), false},
-		{"single line no newline", []string{"x"}, false},
-	}
-	for _, tt := range tests {
-		if got := dominantCRLF(tt.lines); got != tt.want {
-			t.Errorf("%s: dominantCRLF = %v, want %v", tt.name, got, tt.want)
-		}
 	}
 }
 
@@ -746,7 +662,7 @@ func TestCRLFAddRemoveRoundTrip(t *testing.T) {
 func TestEditFileKeepsEveryBackup(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.ktav")
-	orig := string(DefaultTemplate())
+	orig := string(config.DefaultTemplate())
 	if err := os.WriteFile(p, []byte(orig), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -6,14 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
+	tea "github.com/charmbracelet/bubbletea"
 )
-
-// The screens of `ccgp --interactive`. Each acts through the code the commands
-// use (config.EditFile and its editors, profileAdd, profileRemove, peak), so a
-// change made here is the change the command makes.
 
 func push(s func() screen) func(a *app) tea.Cmd {
 	return func(a *app) tea.Cmd {
@@ -123,7 +119,7 @@ func profileMenu(name string) *menu {
 					id: key, label: fmt.Sprintf("%-16s %s", key, dash(current)),
 					run: push(func() screen {
 						return editKeyInput(head, key, hint+"; empty removes the setting", current, func(text, v string) (string, error) {
-							return config.SetProfileKeyText(text, name, key, v)
+							return cfgedit.SetProfileKeyText(text, name, key, v)
 						})
 					}),
 				}
@@ -140,7 +136,7 @@ func profileMenu(name string) *menu {
 				return []menuItem{
 					{id: "base_url", label: fmt.Sprintf("%-16s %s", "base_url", dash(pr.BaseURL)), run: push(func() screen {
 						return editKeyInput(head, "base_url", "the server; empty: the official one ("+config.OfficialAnthropicURL+")", pr.BaseURL, func(text, v string) (string, error) {
-							return config.SetProviderKeyText(text, pr.Name, "base_url", v)
+							return cfgedit.SetProviderKeyText(text, pr.Name, "base_url", v)
 						})
 					})},
 					{id: "login", label: "log in: save the API key", run: func(a *app) tea.Cmd {
@@ -161,7 +157,7 @@ func profileMenu(name string) *menu {
 									return nil, err
 								}
 							}
-							return nil, a.edit(func(text string) (string, error) { return config.SetProfileProxyText(text, name, p) })
+							return nil, a.edit(func(text string) (string, error) { return cfgedit.SetProfileProxyText(text, name, p) })
 						})
 				}),
 			}
@@ -191,7 +187,7 @@ func moveMenu(name, current string) *menu {
 				items = append(items, menuItem{
 					id: "provider", label: fmt.Sprintf("%-14s %s", to, a.cfg.Providers[to].Type),
 					run: func(a *app) tea.Cmd {
-						err := a.edit(func(text string) (string, error) { return config.SetProfileKeyText(text, name, "provider", to) })
+						err := a.edit(func(text string) (string, error) { return cfgedit.SetProfileKeyText(text, name, "provider", to) })
 						if err != nil {
 							a.errMsg = err.Error()
 							return nil
@@ -265,10 +261,10 @@ func (w *wizard) finish(a *app) error {
 }
 
 func (w *wizard) nameInput(a *app) *input {
-	suggested := config.NextFreeName(w.base, func(n string) bool { return nameTaken(a.cfg, n) })
+	suggested := cfgedit.NextFreeName(w.base, func(n string) bool { return nameTaken(a.cfg, n) })
 	return newInput("Add a profile", "profile name", "letters, digits, - and _; a free name is suggested", suggested,
 		func(a *app, v string) (screen, error) {
-			if err := config.ValidateProfileName(v); err != nil {
+			if err := cfgedit.ValidateProfileName(v); err != nil {
 				return nil, err
 			}
 			if nameTaken(a.cfg, v) {
@@ -443,7 +439,7 @@ func providerMenu(name string) *menu {
 					id: key, label: fmt.Sprintf("%-14s %s", key, dash(current)),
 					run: push(func() screen {
 						return editKeyInput(head, key, hint+"; empty removes the setting", current, func(text, v string) (string, error) {
-							return config.SetProviderKeyText(text, name, key, v)
+							return cfgedit.SetProviderKeyText(text, name, key, v)
 						})
 					}),
 				}
@@ -467,7 +463,7 @@ func providerMenu(name string) *menu {
 									return nil, err
 								}
 							}
-							return nil, a.edit(func(text string) (string, error) { return config.SetProviderProxyText(text, name, p) })
+							return nil, a.edit(func(text string) (string, error) { return cfgedit.SetProviderProxyText(text, name, p) })
 						})
 				}),
 			}

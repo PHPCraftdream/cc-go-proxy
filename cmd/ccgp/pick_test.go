@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 )
 
 // pickTUI is the list of `ccgp .` over uiConfig (profiles codex, work, zai).
@@ -73,7 +73,7 @@ func TestPickArgIsAProfileWordThatNoProfileCanHave(t *testing.T) {
 	if err != nil || inv.cmd != nil || inv.profile != pickArg || strings.Join(inv.args, "|") != "-c|x" {
 		t.Errorf("parseInvocation(. -c x) = %+v, %v", inv, err)
 	}
-	if err := config.ValidateProfileName(pickArg); err == nil {
+	if err := cfgedit.ValidateProfileName(pickArg); err == nil {
 		t.Error(`"." must not be a valid profile name`)
 	}
 }

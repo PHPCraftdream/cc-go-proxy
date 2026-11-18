@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
 
@@ -23,13 +25,13 @@ func peakCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	return peak(os.Stdout, time.Now(), config.NewPeakPauses(dir), args)
+	return peak(os.Stdout, time.Now(), peakcfg.NewPauses(dir), args)
 }
 
 // peak shows the peak hours of the providers, or changes those of one in
 // config.ktav (the running server applies it on its next request); pause and
 // resume go to the pause file instead.
-func peak(w io.Writer, now time.Time, pauses *config.PeakPauses, args []string) error {
+func peak(w io.Writer, now time.Time, pauses *peakcfg.Pauses, args []string) error {
 	jsonOut := false
 	var rest []string
 	for _, a := range args {
@@ -57,7 +59,7 @@ func peak(w io.Writer, now time.Time, pauses *config.PeakPauses, args []string) 
 	verb, words := rest[1], rest[2:]
 	switch verb {
 	case "set", "add":
-		windows, err := config.ParsePeakWords(words)
+		windows, err := peakcfg.ParseWords(words)
 		if err != nil {
 			return err
 		}
@@ -84,7 +86,7 @@ func peak(w io.Writer, now time.Time, pauses *config.PeakPauses, args []string) 
 		}
 		tz := ""
 		if words[0] != "local" {
-			if tz, err = config.CanonicalPeakZone(words[0]); err != nil {
+			if tz, err = peakcfg.CanonicalZone(words[0]); err != nil {
 				return err
 			}
 		}
@@ -164,12 +166,12 @@ func removeWindows(have []config.PeakWindow, words []string) ([]config.PeakWindo
 }
 
 // changePeak writes the provider's peak hours into config.ktav and shows them.
-func changePeak(w io.Writer, cfg *config.Config, now time.Time, pauses *config.PeakPauses, provider string, windows []config.PeakWindow, tz string) error {
+func changePeak(w io.Writer, cfg *config.Config, now time.Time, pauses *peakcfg.Pauses, provider string, windows []config.PeakWindow, tz string) error {
 	if cfg.IsEnvMode() {
 		return errors.New("no config.ktav (env-only mode): nothing to edit")
 	}
-	backup, err := config.EditFile(cfg.ConfigFile, func(text string) (string, error) {
-		return config.SetProviderPeakText(text, provider, windows, tz)
+	backup, err := cfgedit.EditFile(cfg.ConfigFile, func(text string) (string, error) {
+		return cfgedit.SetProviderPeakText(text, provider, windows, tz)
 	})
 	if err != nil {
 		return err
@@ -187,7 +189,7 @@ func changePeak(w io.Writer, cfg *config.Config, now time.Time, pauses *config.P
 
 // pausePeak lets requests through for a while in peak hours: for the given
 // duration, or till the end of the peak that is running.
-func pausePeak(w io.Writer, cfg *config.Config, now time.Time, pauses *config.PeakPauses, provider string, words []string) error {
+func pausePeak(w io.Writer, cfg *config.Config, now time.Time, pauses *peakcfg.Pauses, provider string, words []string) error {
 	s, err := cfg.Providers[provider].PeakSchedule()
 	if err != nil {
 		return err
@@ -257,7 +259,7 @@ type peakInfo struct {
 	PausedUntil string              `json:"paused_until,omitempty"`
 }
 
-func showPeak(w io.Writer, cfg *config.Config, now time.Time, pauses *config.PeakPauses, only string, jsonOut bool) error {
+func showPeak(w io.Writer, cfg *config.Config, now time.Time, pauses *peakcfg.Pauses, only string, jsonOut bool) error {
 	var providers []string
 	if only != "" {
 		providers = []string{only}
@@ -301,7 +303,7 @@ func showPeak(w io.Writer, cfg *config.Config, now time.Time, pauses *config.Pea
 	return nil
 }
 
-func printPeak(w io.Writer, name string, s *config.PeakSchedule, st config.PeakState, now, paused time.Time, isPaused bool) {
+func printPeak(w io.Writer, name string, s *peakcfg.Schedule, st peakcfg.State, now, paused time.Time, isPaused bool) {
 	zone := s.TZ
 	if zone == "" {
 		zone = "local time"

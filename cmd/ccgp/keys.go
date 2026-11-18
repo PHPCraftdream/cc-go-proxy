@@ -11,11 +11,10 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
-
-// The commands that set one key of a profile or a provider: the twins of the
-// fields of the interface (`ccgp --interactive`), which make the same edit.
 
 const (
 	profileSetUsage = "usage: ccgp --profile set <name> <key> <value> | ccgp --profile unset <name> <key>   (keys: default_model, context_window, compact_percent, provider; unset does not take provider)"
@@ -48,8 +47,8 @@ func profileSet(w io.Writer, cfg *config.Config, args []string, unset bool) erro
 	if isClaudeProfile(cfg, pf) {
 		return fmt.Errorf("profile %q is a Claude profile: it does not go through ccgp, so it has no settings of ccgp's", name)
 	}
-	if !slices.Contains(config.ProfileKeys(), key) {
-		return fmt.Errorf("unknown profile key %q (%s)", key, strings.Join(config.ProfileKeys(), ", "))
+	if !slices.Contains(cfgedit.ProfileKeys(), key) {
+		return fmt.Errorf("unknown profile key %q (%s)", key, strings.Join(cfgedit.ProfileKeys(), ", "))
 	}
 	value := ""
 	if !unset {
@@ -73,8 +72,8 @@ func profileSet(w io.Writer, cfg *config.Config, args []string, unset bool) erro
 	if cfg.IsEnvMode() {
 		return errors.New("no config.ktav (env-only mode): nothing to edit")
 	}
-	backup, err := config.EditFile(cfg.ConfigFile, func(text string) (string, error) {
-		return config.SetProfileKeyText(text, name, key, value)
+	backup, err := cfgedit.EditFile(cfg.ConfigFile, func(text string) (string, error) {
+		return cfgedit.SetProfileKeyText(text, name, key, value)
 	})
 	if err != nil {
 		return err
@@ -100,7 +99,7 @@ type providerListData struct {
 	Providers []providerRow `json:"providers"`
 }
 
-func providerRows(cfg *config.Config, store creds.Store, pauses *config.PeakPauses, now time.Time) []providerRow {
+func providerRows(cfg *config.Config, store creds.Store, pauses *peakcfg.Pauses, now time.Time) []providerRow {
 	var rows []providerRow
 	for _, name := range sortedKeys(cfg.Providers) {
 		pr := cfg.Providers[name]
@@ -124,12 +123,12 @@ func providerCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	return provider(os.Stdout, cfg, store, config.NewPeakPauses(store.Dir), time.Now(), args)
+	return provider(os.Stdout, cfg, store, peakcfg.NewPauses(store.Dir), time.Now(), args)
 }
 
 // provider implements `ccgp --provider`: the list, one provider in detail, and
 // set / unset of base_url and api_key_env.
-func provider(w io.Writer, cfg *config.Config, store creds.Store, pauses *config.PeakPauses, now time.Time, args []string) error {
+func provider(w io.Writer, cfg *config.Config, store creds.Store, pauses *peakcfg.Pauses, now time.Time, args []string) error {
 	if cfg.IsEnvMode() {
 		return errors.New("ccgp --provider needs config.ktav (env-only mode has a single implicit provider)")
 	}
@@ -197,8 +196,8 @@ func providerSet(w io.Writer, cfg *config.Config, args []string, unset bool) err
 	if pr.Type == config.ProviderTypeClaude {
 		return fmt.Errorf("provider %q is a Claude profile: it does not go through ccgp, so it has no settings of ccgp's", name)
 	}
-	if !slices.Contains(config.ProviderKeys(), key) {
-		return fmt.Errorf("unknown provider key %q (%s)", key, strings.Join(config.ProviderKeys(), ", "))
+	if !slices.Contains(cfgedit.ProviderKeys(), key) {
+		return fmt.Errorf("unknown provider key %q (%s)", key, strings.Join(cfgedit.ProviderKeys(), ", "))
 	}
 	if key == "api_key_env" && pr.Type == config.ProviderTypeCodex {
 		return fmt.Errorf("provider %q signs in with OAuth: it takes no api_key_env", name)
@@ -207,8 +206,8 @@ func providerSet(w io.Writer, cfg *config.Config, args []string, unset bool) err
 	if !unset {
 		value = strings.TrimSpace(args[2])
 	}
-	backup, err := config.EditFile(cfg.ConfigFile, func(text string) (string, error) {
-		return config.SetProviderKeyText(text, name, key, value)
+	backup, err := cfgedit.EditFile(cfg.ConfigFile, func(text string) (string, error) {
+		return cfgedit.SetProviderKeyText(text, name, key, value)
 	})
 	if err != nil {
 		return err
@@ -221,7 +220,7 @@ func providerSet(w io.Writer, cfg *config.Config, args []string, unset bool) err
 // --provider beyond the command itself.
 func profileVerbs() []string {
 	v := []string{"list", "add --like", "add --provider", "add --type", "rm"}
-	for _, k := range config.ProfileKeys() {
+	for _, k := range cfgedit.ProfileKeys() {
 		v = append(v, "set "+k)
 		if k != "provider" {
 			v = append(v, "unset "+k)
@@ -232,7 +231,7 @@ func profileVerbs() []string {
 
 func providerVerbs() []string {
 	var v []string
-	for _, k := range config.ProviderKeys() {
+	for _, k := range cfgedit.ProviderKeys() {
 		v = append(v, "set "+k, "unset "+k)
 	}
 	return v

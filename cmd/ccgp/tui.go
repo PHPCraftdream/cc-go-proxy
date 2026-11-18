@@ -7,16 +7,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
-
-// The Bubble Tea model behind `ccgp --interactive`: a stack of screens (menus,
-// one-line inputs, confirmations) over a config that is read afresh after every
-// change. Screens build what they show from app.cfg, so a list is never stale.
 
 var (
 	styTitle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
@@ -40,7 +37,7 @@ type app struct {
 	cfg        *config.Config
 	store      creds.Store
 	claudeBase string
-	pauses     *config.PeakPauses
+	pauses     *peakcfg.Pauses
 	now        func() time.Time
 
 	// run starts `ccgp args…` for the screens that do what a command does:
@@ -55,7 +52,7 @@ type app struct {
 }
 
 func newApp(store creds.Store, claudeBase string, now func() time.Time) (*app, error) {
-	a := &app{store: store, claudeBase: claudeBase, now: now, pauses: config.NewPeakPauses(store.Dir), run: runSelf}
+	a := &app{store: store, claudeBase: claudeBase, now: now, pauses: peakcfg.NewPauses(store.Dir), run: runSelf}
 	if err := a.reload(); err != nil {
 		return nil, err
 	}
@@ -110,7 +107,7 @@ func (a *app) back() tea.Cmd {
 // edit applies an edit of config.ktav (validated, backed up), reads the config
 // again and says what happened.
 func (a *app) edit(fn func(text string) (string, error)) error {
-	backup, err := config.EditFile(a.cfg.ConfigFile, fn)
+	backup, err := cfgedit.EditFile(a.cfg.ConfigFile, fn)
 	if err != nil {
 		return err
 	}
@@ -439,8 +436,10 @@ type confirmScreen struct {
 }
 
 func (c *confirmScreen) header(a *app) string { return c.head }
-func (c *confirmScreen) help() string         { return "y yes · n or esc no · ctrl+c quit" }
-func (c *confirmScreen) body(a *app) string   { return c.question + " [y/N]" }
+
+func (c *confirmScreen) help() string { return "y yes · n or esc no · ctrl+c quit" }
+
+func (c *confirmScreen) body(a *app) string { return c.question + " [y/N]" }
 
 func (c *confirmScreen) key(a *app, k tea.KeyMsg) tea.Cmd {
 	switch k.String() {

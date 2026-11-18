@@ -13,6 +13,7 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/clientver"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
@@ -178,14 +179,14 @@ func presetModelsProfile(profile, provider string, p preset.Preset) modelsProfil
 // writeManaged writes rules into the profile's managed block, adding the block
 // first when the profile has none.
 func writeManaged(cfg *config.Config, profile string, rules []config.ModelRule) error {
-	added, err := config.EnsureManaged(cfg.ConfigFile, profile)
+	added, err := cfgedit.EnsureManaged(cfg.ConfigFile, profile)
 	if err != nil {
 		return err
 	}
 	if added {
 		fmt.Printf("added a managed block to profile %q (its previous default_model and models were replaced)\n", profile)
 	}
-	return config.ApplyManaged(cfg.ConfigFile, profile, config.ManagedModels{Rules: rules})
+	return cfgedit.ApplyManaged(cfg.ConfigFile, profile, cfgedit.ManagedModels{Rules: rules})
 }
 
 // printRules shows a preset's mapping.
@@ -285,7 +286,7 @@ func printSelection(profile string, sel codex.Selection) {
 // lookup leaves the configured version.
 func clientVersion(ctx context.Context, cfg *config.Config, write bool, out io.Writer) {
 	if write {
-		if seeded, err := config.SeedCodexClientVersion(cfg); err != nil {
+		if seeded, err := cfgedit.SeedCodexClientVersion(cfg); err != nil {
 			_, _ = fmt.Fprintf(out, "ccgp: could not write codex.client_version: %v\n", err)
 		} else if seeded {
 			_, _ = fmt.Fprintf(out, "codex.client_version %s written to %s\n", cfg.CodexClientVersion(), cfg.ConfigFile)
@@ -305,7 +306,7 @@ func clientVersion(ctx context.Context, cfg *config.Config, write bool, out io.W
 		cfg.CodexClientVersionSet = target
 		return
 	}
-	if _, _, err := config.RaiseCodexClientVersion(cfg.ConfigFile, target); err != nil {
+	if _, _, err := cfgedit.RaiseCodexClientVersion(cfg.ConfigFile, target); err != nil {
 		_, _ = fmt.Fprintf(out, "ccgp: could not raise codex.client_version to %s: %v\n", target, err)
 		return
 	}
@@ -330,10 +331,10 @@ func autoApplyModels(cfg *config.Config, provider string) {
 	}
 	for _, name := range sortedKeys(cfg.Profiles) {
 		pf := cfg.Profiles[name]
-		if pf.Provider != provider || !config.HasManaged(string(data), name) {
+		if pf.Provider != provider || !cfgedit.HasManaged(string(data), name) {
 			continue
 		}
-		if err := config.ApplyManaged(cfg.ConfigFile, name, clientver.ManagedFrom(pc.sel)); err != nil {
+		if err := cfgedit.ApplyManaged(cfg.ConfigFile, name, clientver.ManagedFrom(pc.sel)); err != nil {
 			fmt.Fprintf(os.Stderr, "ccgp: update mapping of profile %q: %v\n", name, err)
 			continue
 		}
@@ -374,10 +375,10 @@ func autoApplyPreset(cfg *config.Config, provider string) {
 	}
 	for _, name := range sortedKeys(cfg.Profiles) {
 		pf := cfg.Profiles[name]
-		if pf.Provider != provider || !config.HasManaged(string(data), name) {
+		if pf.Provider != provider || !cfgedit.HasManaged(string(data), name) {
 			continue
 		}
-		if err := config.ApplyManaged(cfg.ConfigFile, name, config.ManagedModels{Rules: p.Rules}); err != nil {
+		if err := cfgedit.ApplyManaged(cfg.ConfigFile, name, cfgedit.ManagedModels{Rules: p.Rules}); err != nil {
 			fmt.Fprintf(os.Stderr, "ccgp: update mapping of profile %q: %v\n", name, err)
 			continue
 		}

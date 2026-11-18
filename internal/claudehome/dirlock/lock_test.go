@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
 )
 
 func TestDestinationLockStableAndIndependent(t *testing.T) {

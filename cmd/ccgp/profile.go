@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 )
@@ -168,7 +169,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 	}
 	srcText := string(data)
 
-	var prov *config.ProviderSpec // nil: the profile shares an existing provider
+	var prov *cfgedit.ProviderSpec // nil: the profile shares an existing provider
 	var rules []config.ModelRule
 	managed := false
 	providerName, providerType, providerURL := "", "", ""
@@ -181,7 +182,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 		srcProv := cfg.Providers[src.Provider]
 		// The copy gets its own credentials (no api_key_env) and the source's name.
-		prov = &config.ProviderSpec{
+		prov = &cfgedit.ProviderSpec{
 			Name:      opts.Like,
 			Type:      srcProv.Type,
 			BaseURL:   srcProv.BaseURL,
@@ -193,7 +194,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		}
 		providerName, providerType, providerURL = opts.Like, srcProv.Type, srcProv.BaseURL
 		rules = src.Models
-		managed = config.HasManaged(srcText, opts.Like)
+		managed = cfgedit.HasManaged(srcText, opts.Like)
 
 	case opts.Provider != "":
 		pr, ok := cfg.Providers[opts.Provider]
@@ -211,7 +212,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 					continue
 				}
 				rules = cfg.Profiles[n].Models
-				managed = config.HasManaged(srcText, n)
+				managed = cfgedit.HasManaged(srcText, n)
 				break
 			}
 		}
@@ -231,7 +232,7 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 			return fmt.Errorf("--type must be %q, %q, %q, %q or %q", config.ProviderTypeCodex, config.ProviderTypeCodexAPI, config.ProviderTypeAnthropicCompat, config.ProviderTypeClaude, config.ProviderTypeClaudeAPI)
 		}
 		providerName, providerType, providerURL = opts.Name, opts.Type, opts.BaseURL
-		prov = &config.ProviderSpec{Name: opts.Name, Type: opts.Type, BaseURL: opts.BaseURL}
+		prov = &cfgedit.ProviderSpec{Name: opts.Name, Type: opts.Type, BaseURL: opts.BaseURL}
 		if p, ok := preset.ForBaseURL(opts.BaseURL); ok && !config.IsOwnType(opts.Type) {
 			prov.EffortMap = p.EffortMap
 		}
@@ -253,12 +254,12 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 
 	name := opts.Name
 	if name == "" && opts.Like != "" {
-		name = config.NextFreeName(opts.Like, func(n string) bool { return nameTaken(cfg, n) })
+		name = cfgedit.NextFreeName(opts.Like, func(n string) bool { return nameTaken(cfg, n) })
 	}
 	if name == "" {
 		return errors.New("profile add: a profile name is required")
 	}
-	if err := config.ValidateProfileName(name); err != nil {
+	if err := cfgedit.ValidateProfileName(name); err != nil {
 		return err
 	}
 	if nameTaken(cfg, name) {
@@ -271,14 +272,14 @@ func profileAdd(w io.Writer, opts profileAddOpts, cfgPath string, cfg *config.Co
 		providerName = name
 	}
 
-	backup, err := config.EditFile(cfgPath, func(text string) (string, error) {
-		out, err := config.AddProfileText(text, prov, config.ProfileSpec{Name: name, Provider: providerName, Rules: rules, Managed: managed})
+	backup, err := cfgedit.EditFile(cfgPath, func(text string) (string, error) {
+		out, err := cfgedit.AddProfileText(text, prov, cfgedit.ProfileSpec{Name: name, Provider: providerName, Rules: rules, Managed: managed})
 		if err != nil || !readyForApply {
 			return out, err
 		}
 		// An empty managed block, so `ccgp --models apply <name>` can fill it;
 		// inside the same validated, backed-up edit.
-		return config.AddManaged(out, name)
+		return cfgedit.AddManaged(out, name)
 	})
 	if err != nil {
 		return err
@@ -414,7 +415,7 @@ func parseProfileRm(args []string) (profileRmOpts, error) {
 // It is only safe to delete when the name is valid and the path is a direct
 // child of base: the user's own Claude Code dir must never be touched.
 func claudeProfileDir(base, name string) (string, error) {
-	if err := config.ValidateProfileName(name); err != nil {
+	if err := cfgedit.ValidateProfileName(name); err != nil {
 		return "", err
 	}
 	base = filepath.Clean(base)
@@ -449,8 +450,8 @@ func profileRemove(w io.Writer, opts profileRmOpts, cfgPath string, cfg *config.
 			refs++
 		}
 	}
-	backup, err := config.EditFile(cfgPath, func(text string) (string, error) {
-		return config.RemoveProfileText(text, opts.Name, true)
+	backup, err := cfgedit.EditFile(cfgPath, func(text string) (string, error) {
+		return cfgedit.RemoveProfileText(text, opts.Name, true)
 	})
 	if err != nil {
 		return err

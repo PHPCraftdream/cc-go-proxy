@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 )
 
 const peakTestBody = "listen.port: 60093\n\nproviders: [\n    {\n        name: p\n        type: codex\n    }\n    {\n        name: work\n        type: claude\n    }\n]\n\nprofiles: [\n    {\n        name: pp\n        provider: p\n    }\n    {\n        name: work\n        provider: work\n    }\n]\n"
@@ -27,7 +28,7 @@ func peakTestConfig(t *testing.T) string {
 // 2026-11-03 is a Tuesday.
 var peakNow = time.Date(2026, 11, 3, 15, 42, 0, 0, time.FixedZone("+08:00", 8*3600))
 
-func runPeak(t *testing.T, pauses *config.PeakPauses, args ...string) (string, error) {
+func runPeak(t *testing.T, pauses *peakcfg.Pauses, args ...string) (string, error) {
 	t.Helper()
 	var buf bytes.Buffer
 	err := peak(&buf, peakNow, pauses, args)
@@ -36,7 +37,7 @@ func runPeak(t *testing.T, pauses *config.PeakPauses, args ...string) (string, e
 
 func TestPeakShowsProvidersWithoutPeakHours(t *testing.T) {
 	peakTestConfig(t)
-	out, err := runPeak(t, config.NewPeakPauses(t.TempDir()))
+	out, err := runPeak(t, peakcfg.NewPauses(t.TempDir()))
 	if err != nil || out != "p: no peak hours\n" {
 		t.Errorf("output %q, %v: want p only (a Claude provider has none)", out, err)
 	}
@@ -44,7 +45,7 @@ func TestPeakShowsProvidersWithoutPeakHours(t *testing.T) {
 
 func TestPeakSetAddRemoveClear(t *testing.T) {
 	path := peakTestConfig(t)
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peakcfg.NewPauses(t.TempDir())
 	file := func() string {
 		b, _ := os.ReadFile(path)
 		return string(b)
@@ -103,7 +104,7 @@ func TestPeakSetAddRemoveClear(t *testing.T) {
 
 func TestPeakRejectsBadInput(t *testing.T) {
 	path := peakTestConfig(t)
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peakcfg.NewPauses(t.TempDir())
 	for _, args := range [][]string{
 		{"nope"},
 		{"work"},
@@ -138,7 +139,7 @@ func TestPeakRejectsBadInput(t *testing.T) {
 
 func TestPeakPauseAndResume(t *testing.T) {
 	peakTestConfig(t)
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peakcfg.NewPauses(t.TempDir())
 	if _, err := runPeak(t, pauses, "p", "set", "mon-fri", "14:00-18:00"); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +179,7 @@ func TestPeakPauseAndResume(t *testing.T) {
 
 func TestPeakJSON(t *testing.T) {
 	peakTestConfig(t)
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peakcfg.NewPauses(t.TempDir())
 	for _, args := range [][]string{{"p", "set", "mon-fri", "14:00-18:00"}, {"p", "tz", "+08:00"}} {
 		if _, err := runPeak(t, pauses, args...); err != nil {
 			t.Fatal(err)
@@ -219,7 +220,7 @@ func TestParsePause(t *testing.T) {
 // A window over all time has no end to name, and a pause needs a length then.
 func TestPeakAroundTheClock(t *testing.T) {
 	peakTestConfig(t)
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peakcfg.NewPauses(t.TempDir())
 	out, err := runPeak(t, pauses, "p", "set", "00:00-24:00")
 	if err != nil || !strings.Contains(out, "now: PEAK, requests are refused (the windows cover all time)") {
 		t.Fatalf("set: %v\n%s", err, out)
@@ -239,7 +240,7 @@ func TestPeakAroundTheClock(t *testing.T) {
 
 // Without a config file there is nothing to edit.
 func TestChangePeakNeedsAConfigFile(t *testing.T) {
-	err := changePeak(&bytes.Buffer{}, &config.Config{}, peakNow, config.NewPeakPauses(t.TempDir()), "p",
+	err := changePeak(&bytes.Buffer{}, &config.Config{}, peakNow, peakcfg.NewPauses(t.TempDir()), "p",
 		[]config.PeakWindow{{From: "14:00", To: "18:00"}}, "")
 	if err == nil || !strings.Contains(err.Error(), "env-only mode") {
 		t.Errorf("changePeak = %v, want the env-only refusal", err)

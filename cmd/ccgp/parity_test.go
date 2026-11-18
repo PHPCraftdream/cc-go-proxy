@@ -10,24 +10,9 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
-
-// The command line and the interface (`ccgp --interactive`) do the same things,
-// both ways: whatever a command can do the interface can, and whatever the
-// interface offers a command offers. This file keeps it so.
-//
-//   - Every command and every verb of it (command.verbs) is an "entry"; every
-//     item of every screen is an "id path" found by crawling the interface.
-//   - features ties entries to id paths. An entry with no path, or a path (that
-//     does something: asks, acts, edits) with no entry, fails the test, and so
-//     does a stale line of the table. What cannot be in the interface is in
-//     cliOnly, with the reason.
-//   - For every feature that edits, the command and the keys of the interface
-//     are run on the same config and must leave the same file; for every
-//     feature that runs a command, the interface must start exactly that one.
-//
-// A new command, verb or screen item fails here until the other side exists.
 
 // cliOnly are the commands the interface does not have, and why.
 var cliOnly = map[string]string{
@@ -407,7 +392,7 @@ func snapshot(t *testing.T, cfgPath, credsDir string) string {
 
 // runCommand runs a command line in this process, as main does, with its
 // output out of the way. The peak command gets the fixed clock of the tests.
-func runCommand(t *testing.T, args []string, pauses *config.PeakPauses) error {
+func runCommand(t *testing.T, args []string, pauses *peakcfg.Pauses) error {
 	t.Helper()
 	if args[0] == "--peak" {
 		return peak(&bytes.Buffer{}, peakNow, pauses, args[1:])
@@ -544,7 +529,7 @@ func TestParityEditsLeaveTheSameFile(t *testing.T) {
 			}
 			t.Setenv(config.ConfigFileEnv, path)
 			t.Setenv("CCGP_HOME", filepath.Join(root, "home"))
-			pauses := config.NewPeakPauses(filepath.Join(root, "creds"))
+			pauses := peakcfg.NewPauses(filepath.Join(root, "creds"))
 			for _, p := range r.prime {
 				if err := peak(&bytes.Buffer{}, peakNow, pauses, p); err != nil {
 					t.Fatalf("prime %v: %v", p, err)

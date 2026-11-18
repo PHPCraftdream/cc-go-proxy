@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 )
@@ -135,7 +136,7 @@ func TestProfileAddLikeZai(t *testing.T) {
 		t.Errorf("effort_map = %v, want it copied", pr.EffortMap)
 	}
 	b, _ := os.ReadFile(path)
-	if config.HasManaged(string(b), "zai3") {
+	if cfgedit.HasManaged(string(b), "zai3") {
 		t.Error("markers were added although the source has none")
 	}
 	if !strings.Contains(out.String(), "zai3") || !strings.Contains(out.String(), "run: ccgp zai3") {
@@ -158,7 +159,7 @@ func TestProfileAddLikeCodexCopiesManagedMarkers(t *testing.T) {
 		t.Errorf("first rule = %+v", pf.Models[0])
 	}
 	b, _ := os.ReadFile(path)
-	if !config.HasManaged(string(b), "codex2") {
+	if !cfgedit.HasManaged(string(b), "codex2") {
 		t.Error("the managed markers of the source were not copied")
 	}
 	pr := cfg2.Providers["codex2"]
@@ -200,7 +201,7 @@ func TestProfileAddProviderShared(t *testing.T) {
 		t.Errorf("rules = %+v, want the copied ones %+v", pf.Models, cfg.Profiles["zai"].Models)
 	}
 	b, _ := os.ReadFile(path)
-	if config.HasManaged(string(b), "zai3") {
+	if cfgedit.HasManaged(string(b), "zai3") {
 		t.Error("the source profile has no markers, so none must be added")
 	}
 
@@ -240,7 +241,7 @@ func TestProfileAddTypeNewBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
-	if !config.HasManaged(string(b), "fresh") {
+	if !cfgedit.HasManaged(string(b), "fresh") {
 		t.Error("a codex profile without --model must get an empty managed block")
 	}
 	if !strings.Contains(out.String(), "then: ccgp --models apply fresh") {
@@ -253,7 +254,7 @@ func TestProfileAddTypeNewBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(path)
-	if !config.HasManaged(string(b), "glm2") {
+	if !cfgedit.HasManaged(string(b), "glm2") {
 		t.Error("a preset provider without --model must get an empty managed block")
 	}
 	pr = loadTestConfig(t).Providers["glm2"]

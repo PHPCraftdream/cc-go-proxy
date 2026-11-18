@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
 
 // providerText describes one provider, the text `ccgp --provider NAME` prints
 // and the interface shows above a provider's menu.
-func providerText(cfg *config.Config, store creds.Store, pauses *config.PeakPauses, now time.Time, name string) string {
+func providerText(cfg *config.Config, store creds.Store, pauses *peakcfg.Pauses, now time.Time, name string) string {
 	pr, ok := cfg.Providers[name]
 	if !ok {
 		return "this provider is gone"
@@ -60,7 +61,7 @@ func providerProxyText(cfg *config.Config, pr *config.Provider) string {
 }
 
 // peakSummary sums up a provider's peak hours and whether it is peak now.
-func peakSummary(pr *config.Provider, name string, now time.Time, pauses *config.PeakPauses) string {
+func peakSummary(pr *config.Provider, name string, now time.Time, pauses *peakcfg.Pauses) string {
 	s, err := pr.PeakSchedule()
 	if err != nil {
 		return "unreadable: " + err.Error()

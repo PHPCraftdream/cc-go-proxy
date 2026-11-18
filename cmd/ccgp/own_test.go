@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
 
@@ -37,7 +38,7 @@ func TestProfileAddClaude(t *testing.T) {
 		t.Errorf("profile = %+v", pf)
 	}
 	b, _ := os.ReadFile(path)
-	if config.HasManaged(string(b), "work") {
+	if cfgedit.HasManaged(string(b), "work") {
 		t.Error("a Claude profile must not get a managed model block")
 	}
 	for _, want := range []string{`created Claude profile "work"`, "nothing goes through ccgp", "run: ccgp work", "/login"} {

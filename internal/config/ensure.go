@@ -68,11 +68,11 @@ func EnsureFile() (path string, created bool, err error) {
 	return path, true, f.Close()
 }
 
-// backupFile copies path to <path>.bak-<timestamp> (0600) and returns the
+// BackupFile copies path to <path>.bak-<timestamp> (0600) and returns the
 // backup path. A missing original is not an error: backup stays "". The
 // timestamp has one-second resolution, so a taken name gets a -N suffix:
 // two edits in the same second must not overwrite the first backup.
-func backupFile(path string) (string, error) {
+func BackupFile(path string) (string, error) {
 	old, rerr := os.ReadFile(path)
 	if errors.Is(rerr, fs.ErrNotExist) {
 		return "", nil
@@ -110,7 +110,7 @@ func ResetFile() (path, backup string, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return path, "", err
 	}
-	if backup, err = backupFile(path); err != nil {
+	if backup, err = BackupFile(path); err != nil {
 		return path, "", err
 	}
 	return path, backup, securefile.WriteFile(path, newConfig())

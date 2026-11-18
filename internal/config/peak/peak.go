@@ -1,4 +1,6 @@
-package config
+// Package peak models the peak hours of a provider: windows in a zone, whether a
+// moment is inside one, when it ends, and the pause that lets requests through.
+package peak
 
 import (
 	"fmt"
@@ -9,7 +11,7 @@ import (
 	_ "time/tzdata" // zone names work on machines without zoneinfo (Windows)
 )
 
-// PeakWindow is one stretch of a provider's peak hours as config.ktav holds it:
+// Window is one stretch of a provider's peak hours as config.ktav holds it:
 //
 //	{ days: mon-fri   from: 14:00   to: 18:00 }
 //
@@ -17,14 +19,14 @@ import (
 // (it may wrap past the end of the week: `fri-mon`), or both mixed. A window
 // whose to is not after from runs past midnight (`22:00` to `06:00`); its days
 // are the days it starts on. to is exclusive, `24:00` is the end of the day.
-type PeakWindow struct {
+type Window struct {
 	Days string `json:"days"`
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
 // String is the window in the form `ccgp --peak` takes: `mon-fri 14:00-18:00`.
-func (w PeakWindow) String() string {
+func (w Window) String() string {
 	if w.Days == "" {
 		return w.From + "-" + w.To
 	}
@@ -89,13 +91,13 @@ var clockRe = regexp.MustCompile(`^(\d{1,2}):(\d{2})$`)
 
 func formatClock(min int) string { return fmt.Sprintf("%02d:%02d", min/60, min%60) }
 
-// peakSpan is a parsed PeakWindow.
+// peakSpan is a parsed Window.
 type peakSpan struct {
 	days     uint8
 	from, to int // minutes since midnight; to <= from: past midnight
 }
 
-func (w PeakWindow) span() (peakSpan, error) {
+func (w Window) span() (peakSpan, error) {
 	days, err := parseDays(w.Days)
 	if err != nil {
 		return peakSpan{}, err
@@ -130,11 +132,11 @@ func (s peakSpan) covers(t time.Time) bool {
 
 var clockRangeRe = regexp.MustCompile(`^\d{1,2}:\d{2}-\d{1,2}:\d{2}$`)
 
-// ParsePeakWords reads windows as `ccgp --peak` takes them: for each one an
+// ParseWords reads windows as `ccgp --peak` takes them: for each one an
 // optional days word and then `HH:MM-HH:MM`, e.g. `mon-fri 14:00-18:00 20:00-23:00`.
 // A word may hold a whole window in quotes. The windows come back normalized.
-func ParsePeakWords(words []string) ([]PeakWindow, error) {
-	var out []PeakWindow
+func ParseWords(words []string) ([]Window, error) {
+	var out []Window
 	var days []string
 	for _, w := range strings.Fields(strings.Join(words, " ")) {
 		if !clockRangeRe.MatchString(w) {
@@ -145,7 +147,7 @@ func ParsePeakWords(words []string) ([]PeakWindow, error) {
 			return nil, fmt.Errorf("%q: give the days as one word without spaces (mon,tue or mon-fri)", strings.Join(days, " "))
 		}
 		from, to, _ := strings.Cut(w, "-")
-		pw := PeakWindow{From: from, To: to}
+		pw := Window{From: from, To: to}
 		if len(days) == 1 {
 			pw.Days = days[0]
 		}
@@ -166,13 +168,13 @@ func ParsePeakWords(words []string) ([]PeakWindow, error) {
 }
 
 // normalized validates w and returns it in the canonical spelling.
-func (w PeakWindow) normalized() (PeakWindow, error) {
+func (w Window) normalized() (Window, error) {
 	if _, err := w.span(); err != nil {
 		return w, err
 	}
 	from, _ := parseClock(w.From)
 	to, _ := parseClock(w.To)
-	return PeakWindow{Days: strings.ToLower(w.Days), From: formatClock(from), To: formatClock(to)}, nil
+	return Window{Days: strings.ToLower(w.Days), From: formatClock(from), To: formatClock(to)}, nil
 }
 
 // zoneOffset reads a fixed offset (+08:00, +8, -0530, UTC+8, GMT-3): its seconds
@@ -205,9 +207,9 @@ func zoneOffset(s string) (sec int, canon string, ok bool, err error) {
 	return sec, fmt.Sprintf("%c%02d:%02d", off[0], hh, mm), true, nil
 }
 
-// ParsePeakZone reads a time zone: an IANA name (Asia/Shanghai), a fixed offset
+// ParseZone reads a time zone: an IANA name (Asia/Shanghai), a fixed offset
 // (+08:00, +8, -0530, UTC+8, GMT-3), UTC, or "" for the machine's own.
-func ParsePeakZone(s string) (*time.Location, error) {
+func ParseZone(s string) (*time.Location, error) {
 	if s == "" {
 		return time.Local, nil
 	}
@@ -227,11 +229,11 @@ func ParsePeakZone(s string) (*time.Location, error) {
 	return loc, nil
 }
 
-// CanonicalPeakZone checks a zone and returns the text to keep in config.ktav:
+// CanonicalZone checks a zone and returns the text to keep in config.ktav:
 // an offset as +08:00 (a bare +8 would read as a number there), UTC as UTC,
 // a name as given.
-func CanonicalPeakZone(s string) (string, error) {
-	if _, err := ParsePeakZone(s); err != nil {
+func CanonicalZone(s string) (string, error) {
+	if _, err := ParseZone(s); err != nil {
 		return "", err
 	}
 	if strings.EqualFold(s, "utc") || strings.EqualFold(s, "gmt") {
@@ -243,27 +245,27 @@ func CanonicalPeakZone(s string) (string, error) {
 	return s, nil
 }
 
-// PeakSchedule is the peak hours of one provider.
-type PeakSchedule struct {
-	Windows []PeakWindow
+// Schedule is the peak hours of one provider.
+type Schedule struct {
+	Windows []Window
 	TZ      string // as written; "" is the machine's zone
 	Loc     *time.Location
 	spans   []peakSpan
 }
 
-// NewPeakSchedule checks the windows and the zone. No windows: nil.
-func NewPeakSchedule(windows []PeakWindow, tz string) (*PeakSchedule, error) {
+// NewSchedule checks the windows and the zone. No windows: nil.
+func NewSchedule(windows []Window, tz string) (*Schedule, error) {
 	if len(windows) == 0 {
 		if tz != "" {
 			return nil, fmt.Errorf("peak_tz is set but there are no peak windows")
 		}
 		return nil, nil
 	}
-	loc, err := ParsePeakZone(tz)
+	loc, err := ParseZone(tz)
 	if err != nil {
 		return nil, err
 	}
-	s := &PeakSchedule{Windows: windows, TZ: tz, Loc: loc}
+	s := &Schedule{Windows: windows, TZ: tz, Loc: loc}
 	for i, w := range windows {
 		sp, err := w.span()
 		if err != nil {
@@ -274,12 +276,7 @@ func NewPeakSchedule(windows []PeakWindow, tz string) (*PeakSchedule, error) {
 	return s, nil
 }
 
-// PeakSchedule is the provider's peak hours; nil when it has none.
-func (p *Provider) PeakSchedule() (*PeakSchedule, error) {
-	return NewPeakSchedule(p.Peak, p.PeakTZ)
-}
-
-func (s *PeakSchedule) covers(t time.Time) bool {
+func (s *Schedule) covers(t time.Time) bool {
 	t = t.In(s.Loc)
 	for _, sp := range s.spans {
 		if sp.covers(t) {
@@ -293,21 +290,21 @@ func (s *PeakSchedule) covers(t time.Time) bool {
 // weekly window is always found.
 const peakLookahead = 8 * 24 * 60
 
-// PeakState is what a schedule says about a moment.
-type PeakState struct {
+// State is what a schedule says about a moment.
+type State struct {
 	In bool
 	// Until is when the peak that holds the moment ends (runs of touching windows
 	// count as one); When not In it is when the next one starts. Zero: it never
 	// does (a schedule that covers all time, or one that cannot be reached).
 	Until time.Time
 	// Windows are the windows holding the moment (In) or starting at Until.
-	Windows []PeakWindow
+	Windows []Window
 }
 
 // At reports whether now is in peak hours and when that changes, to the minute.
-func (s *PeakSchedule) At(now time.Time) PeakState {
+func (s *Schedule) At(now time.Time) State {
 	in := s.covers(now)
-	st := PeakState{In: in}
+	st := State{In: in}
 	t := now.Truncate(time.Minute)
 	for i := 0; i < peakLookahead; i++ {
 		t = t.Add(time.Minute)
@@ -324,9 +321,9 @@ func (s *PeakSchedule) At(now time.Time) PeakState {
 	return st
 }
 
-func (s *PeakSchedule) windowsAt(t time.Time) []PeakWindow {
+func (s *Schedule) windowsAt(t time.Time) []Window {
 	t = t.In(s.Loc)
-	var out []PeakWindow
+	var out []Window
 	for i, sp := range s.spans {
 		if sp.covers(t) {
 			out = append(out, s.Windows[i])
@@ -336,13 +333,13 @@ func (s *PeakSchedule) windowsAt(t time.Time) []PeakWindow {
 }
 
 // InPeak is the cheap half of At: whether now is in peak hours.
-func (s *PeakSchedule) InPeak(now time.Time) bool { return s.covers(now) }
+func (s *Schedule) InPeak(now time.Time) bool { return s.covers(now) }
 
 // ClockText says when t is, for a person who reads it at now: the clock in the
 // schedule's zone and, when that is not the machine's zone, the machine's clock
 // too, then how long it is to wait. A weekday name goes in front of a clock that
 // is not today's. "18:00 Asia/Shanghai (13:00 your time, in 2h 18m)".
-func (s *PeakSchedule) ClockText(t, now time.Time) string {
+func (s *Schedule) ClockText(t, now time.Time) string {
 	wait := "in " + FormatWait(t.Sub(now))
 	if s.TZ == "" {
 		return clockIn(t, time.Local, now) + " (" + wait + ")"
@@ -380,23 +377,9 @@ func FormatWait(d time.Duration) string {
 }
 
 // ZoneName is the zone as people read it: the name given, or "local".
-func (s *PeakSchedule) ZoneName() string {
+func (s *Schedule) ZoneName() string {
 	if s.TZ == "" {
 		return "local"
 	}
 	return s.TZ
-}
-
-// validatePeak checks a provider's peak settings for the loader.
-func validatePeak(pr Provider) error {
-	if IsOwnType(pr.Type) {
-		if len(pr.Peak) > 0 || pr.PeakTZ != "" {
-			return fmt.Errorf("provider %q: type %q takes no peak hours (it does not go through ccgp)", pr.Name, pr.Type)
-		}
-		return nil
-	}
-	if _, err := pr.PeakSchedule(); err != nil {
-		return fmt.Errorf("provider %q: %w", pr.Name, err)
-	}
-	return nil
 }

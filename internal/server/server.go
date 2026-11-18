@@ -3,6 +3,7 @@
 //
 // Requests arrive on /call/{token}/v1/messages; the token selects a profile,
 // which selects the provider and model mapping.
+
 package server
 
 import (
@@ -18,6 +19,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -110,16 +112,16 @@ type sessions struct {
 	store creds.Store
 	mu    sync.Mutex
 	m     map[string]*oauth.Session
-	peak  *config.PeakPauses
+	peak  *peak.Pauses
 }
 
 // pauses are the pauses of peak hours (`ccgp --peak <provider> pause`), kept in
 // the creds directory.
-func (s *sessions) pauses() *config.PeakPauses {
+func (s *sessions) pauses() *peak.Pauses {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.peak == nil {
-		s.peak = config.NewPeakPauses(s.store.Dir)
+		s.peak = peak.NewPauses(s.store.Dir)
 	}
 	return s.peak
 }
