@@ -63,6 +63,13 @@ Guidance for Claude Code when working in this repository.
   Trusted Publishing, never with a token (no `NPM_TOKEN` secret may exist). Process and setup: `docs/releasing.md`.
 - Keep the README's first line (fork notice) and `CHANGELOG.md` `## [Unreleased]` up to date.
 
+## Size limits
+
+At most 1000 lines in a file and 7 code files (`.go`, `.mjs`, `.sh`, `.cmd`, `.ps1`, …, tests included) in a directory;
+subdirectories do not count toward their parent. `node scripts/ci/limits.mjs` checks the tracked files, CI runs it. A file or
+directory over a limit is split, and in Go a subdirectory is a package of its own: cut along the seams of the code, export
+only what crosses a seam, and move a test with the code it tests.
+
 ## Gotchas
 
 - Ktav comments are `##`; a single `#` is text, and `# key: [` opens a list. Every comment in the default template and
