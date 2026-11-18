@@ -1,17 +1,11 @@
-package sessions
+package jsonl
 
 import (
-	"bytes"
-	"errors"
-	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-// Lines as Claude Code writes them, cut down to what failedTail looks at.
+// Lines as Claude Code writes them, cut down to what FailedTail looks at.
 const (
 	lPrompt    = `{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}` + "\n"
 	lReply     = `{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
@@ -44,7 +38,7 @@ var failedEnd = lRequest + lRequest + lError + lDuration + scheduledTurn() + sch
 
 func tailOf(t *testing.T, s string) (int64, int) {
 	t.Helper()
-	cut, failed, err := failedTail(strings.NewReader(s), int64(len(s)))
+	cut, failed, err := FailedTail(strings.NewReader(s), int64(len(s)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +119,7 @@ func TestFailedTail(t *testing.T) {
 	}
 }
 
-// smallWindows makes failedTail look at 1 KiB first and at most at 16 KiB.
+// smallWindows makes FailedTail look at 1 KiB first and at most at 16 KiB.
 func smallWindows(t *testing.T) {
 	w, m := failedTailWindow, failedTailMax
 	failedTailWindow, failedTailMax = 1<<10, 16<<10
@@ -154,163 +148,3 @@ func TestFailedTailBeyondTheLimitIsKept(t *testing.T) {
 }
 
 // ---- through Copy ----
-
-func failedPair(t *testing.T, src string) pair {
-	t.Helper()
-	p := pair{src: t.TempDir(), dst: t.TempDir()}
-	p.s = filepath.Join(p.src, "projects", "a", sid+".jsonl")
-	p.d = filepath.Join(p.dst, "projects", "a", sid+".jsonl")
-	put(t, p.s, src, t0)
-	return p
-}
-
-func TestCopyLeavesOutTheFailedEnd(t *testing.T) {
-	p := failedPair(t, kept+failedEnd)
-	r := copyOne(t, p, Options{})
-	if r.Status != Copied || r.Failed != 3 || read(t, p.d) != kept {
-		t.Fatalf("got %v, %d failed, %q", r.Status, r.Failed, read(t, p.d))
-	}
-
-	// Again: nothing to do.
-	if r = copyOne(t, p, Options{}); r.Status != Unchanged || read(t, p.d) != kept {
-		t.Fatalf("rerun: %v, %q", r.Status, read(t, p.d))
-	}
-
-	// The session went on: the errors are no longer its end and come along.
-	put(t, p.s, kept+failedEnd+lPrompt+lReply, t0.Add(time.Hour))
-	if r = copyOne(t, p, Options{}); r.Status != Updated || r.Failed != 0 || read(t, p.d) != kept+failedEnd+lPrompt+lReply {
-		t.Fatalf("after more: %v, %d failed, %q", r.Status, r.Failed, read(t, p.d))
-	}
-}
-
-func TestCopyKeepsAnEarlierCopyThatHasTheFailedEnd(t *testing.T) {
-	for _, have := range []string{
-		kept + failedEnd,                                 // all of it
-		kept + lRequest + lRequest + lError,              // a part
-		kept + failedEnd[:len(failedEnd)-len(lDuration)], // all but the last line
-	} {
-		p := failedPair(t, kept+failedEnd)
-		put(t, p.d, have, t0)
-		if r := copyOne(t, p, Options{}); r.Status != Unchanged || read(t, p.d) != have {
-			t.Errorf("have %d bytes: %v, %d bytes now", len(have), r.Status, len(read(t, p.d)))
-		}
-	}
-}
-
-func TestCopyDestinationThatDivergesInTheFailedEnd(t *testing.T) {
-	p := failedPair(t, kept+failedEnd)
-	have := kept + lPrompt
-	put(t, p.d, have, t0)
-	if r := copyOne(t, p, Options{}); r.Status != Diverged || read(t, p.d) != have {
-		t.Errorf("got %v, %q", r.Status, read(t, p.d))
-	}
-	r := copyOne(t, p, Options{Force: true})
-	if r.Status != Replaced || r.Failed != 3 || read(t, p.d) != kept || read(t, r.Backup) != have {
-		t.Errorf("force: %v, %d failed, %q", r.Status, r.Failed, read(t, p.d))
-	}
-}
-
-func TestCopyLeavesOutTheFailedEndWhileStrippingThinking(t *testing.T) {
-	thinking := `{"type":"assistant","uuid":"th","parentUuid":"u1","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm","signature":"s"}]}}` + "\n"
-	reply := `{"type":"assistant","uuid":"a1","parentUuid":"th","message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}` + "\n"
-	// The error hangs off the dropped thinking line too.
-	errLine := strings.Replace(lError, `"parentUuid":"at1"`, `"parentUuid":"th"`, 1)
-	src := lPrompt + thinking + reply + errLine + lDuration
-	p := failedPair(t, src)
-	r := copyOne(t, p, Options{StripThinking: true})
-	want, _, err := StripThinking([]byte(lPrompt + thinking + reply))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Status != Copied || r.Failed != 1 || r.Removed != 1 || read(t, p.d) != string(want) {
-		t.Fatalf("got %v, %d failed, %d removed, %q", r.Status, r.Failed, r.Removed, read(t, p.d))
-	}
-	// A copy made before, with its end, stays as it is.
-	full, _, err := StripThinking([]byte(src))
-	if err != nil {
-		t.Fatal(err)
-	}
-	put(t, p.d, string(full), t0)
-	if r = copyOne(t, p, Options{StripThinking: true}); r.Status != Unchanged || read(t, p.d) != string(full) {
-		t.Errorf("earlier copy: %v, %q", r.Status, read(t, p.d))
-	}
-}
-
-func TestForkLeavesOutTheFailedEnd(t *testing.T) {
-	p := failedPair(t, entry(sid, "one")+kept+failedEnd)
-	put(t, p.d, entry(sid, "one")+entry(sid, "from-destination"), t0)
-	r := copyOne(t, p, Options{Fork: true})
-	fork := filepath.Join(p.dst, "projects", "a", r.Fork+".jsonl")
-	got := read(t, fork)
-	if r.Status != Forked || r.Failed != 3 || strings.Contains(got, "API Error") || !strings.HasSuffix(got, lState) {
-		t.Fatalf("got %v, %d failed, %q", r.Status, r.Failed, got)
-	}
-	if strings.Count(got, "\n") != 1+strings.Count(kept, "\n") {
-		t.Errorf("fork has %d lines", strings.Count(got, "\n"))
-	}
-}
-
-func TestSubagentTranscriptsKeepTheirEnd(t *testing.T) {
-	p := failedPair(t, kept)
-	sub := filepath.Join(strings.TrimSuffix(p.s, ".jsonl"), "subagents", "agent-a1.jsonl")
-	put(t, sub, kept+failedEnd, t0)
-	copyOne(t, p, Options{})
-	if got := read(t, filepath.Join(strings.TrimSuffix(p.d, ".jsonl"), "subagents", "agent-a1.jsonl")); got != kept+failedEnd {
-		t.Errorf("subagent transcript: %q", got)
-	}
-}
-
-func TestPlacerComparesPastTheLimit(t *testing.T) {
-	dst := filepath.Join(t.TempDir(), "f")
-	if err := os.WriteFile(dst, []byte("abcdef"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range []struct {
-		limit  int64
-		stream string
-		want   Status
-		file   string
-	}{
-		{3, "abcdefgh", Unchanged, "abcdef"},
-		{8, "abcdefghij", Updated, "abcdefgh"},
-		{3, "abcxyz", 0, "abcdef"}, // diverged
-		{3, "abcd", Ahead, "abcdef"},
-	} {
-		p, err := newPlacer(dst, t0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		p.compareFrom(c.limit)
-		_, werr := p.Write([]byte(c.stream))
-		if c.want == 0 {
-			if !errors.Is(werr, errDiverged) {
-				t.Errorf("%q: %v, want diverged", c.stream, werr)
-			}
-		} else if werr != nil {
-			t.Fatal(werr)
-		} else if st, err := p.finish(); err != nil || st != c.want {
-			t.Errorf("%q: %v, %v; want %v", c.stream, st, err, c.want)
-		}
-		p.close()
-		if got, _ := os.ReadFile(dst); !bytes.Equal(got, []byte(c.file)) {
-			t.Errorf("%q: file %q, want %q", c.stream, got, c.file)
-		}
-		_ = os.WriteFile(dst, []byte("abcdef"), 0o600)
-	}
-}
-
-func TestSwapReaderMarksTheOutputAtTheCut(t *testing.T) {
-	double := func(b []byte) ([]byte, error) { return append(append([]byte{}, b...), b...), nil }
-	for _, size := range []int{1, 3, 4096} {
-		got := int64(-1)
-		s := testSwapReader(strings.NewReader("a\nbb\nc\n"), double)
-		s.cut, s.mark = 5, func(n int64) { got = n }
-		var out strings.Builder
-		if _, err := io.CopyBuffer(struct{ io.Writer }{&out}, struct{ io.Reader }{s}, make([]byte, size)); err != nil {
-			t.Fatal(err)
-		}
-		if got != 10 || out.String() != "a\na\nbb\nbb\nc\nc\n" {
-			t.Errorf("buffer %d: mark %d, %q", size, got, out.String())
-		}
-	}
-}

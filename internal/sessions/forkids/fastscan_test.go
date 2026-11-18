@@ -1,4 +1,4 @@
-package sessions
+package forkids
 
 import (
 	"bytes"
@@ -37,20 +37,20 @@ func refReplaceAt(b []byte, idx [][]int, fn func([]byte) []byte) []byte {
 	return append(out, b[last:]...)
 }
 
-func (m *forkIDs) refMapUUIDs(b []byte) []byte {
+func (m *IDs) refMapUUIDs(b []byte) []byte {
 	return refUUID.ReplaceAllFunc(b, func(u []byte) []byte {
 		s := strings.ToLower(string(u))
 		if !m.uuids[s] {
 			return u
 		}
-		return []byte(forkUUID(m.fid, s))
+		return []byte(ForkUUID(m.FID, s))
 	})
 }
 
-func (m *forkIDs) refMapAPIIDs(b []byte) []byte {
+func (m *IDs) refMapAPIIDs(b []byte) []byte {
 	b = refReplaceAt(b, refAPIID.FindAllIndex(b, -1), func(id []byte) []byte {
 		i := bytes.IndexByte(id, '_') + 3
-		return append(append([]byte{}, id[:i]...), derive(m.fid, string(id), base62, len(id)-i)...)
+		return append(append([]byte{}, id[:i]...), derive(m.FID, string(id), base62, len(id)-i)...)
 	})
 	return refReplaceAt(b, refCodexID.FindAllIndex(b, -1), func(id []byte) []byte {
 		i := bytes.IndexByte(id, '_') + 1
@@ -62,7 +62,7 @@ func (m *forkIDs) refMapAPIIDs(b []byte) []byte {
 		if len(bytes.Trim(body, hexDigits)) == 0 {
 			alphabet = hexDigits
 		}
-		return append(append([]byte{}, id[:i]...), derive(m.fid, string(id), alphabet, len(body))...)
+		return append(append([]byte{}, id[:i]...), derive(m.FID, string(id), alphabet, len(body))...)
 	})
 }
 
@@ -130,7 +130,7 @@ func fastSamples(t *testing.T) []string {
 }
 
 func TestFastFindersAgreeWithTheRegularExpressions(t *testing.T) {
-	m := &forkIDs{fid: forkID(sid), uuids: map[string]bool{fu1: true, strings.ToLower(fu2): true, "aaaaaaaa-0000-4000-8000-000000000000": true}}
+	m := &IDs{FID: ForkID(sid), uuids: map[string]bool{fu1: true, strings.ToLower(fu2): true, "aaaaaaaa-0000-4000-8000-000000000000": true}}
 	for _, s := range fastSamples(t) {
 		in := []byte(s)
 		if got, want := string(m.mapUUIDs(append([]byte{}, in...))), string(m.refMapUUIDs(append([]byte{}, in...))); got != want {

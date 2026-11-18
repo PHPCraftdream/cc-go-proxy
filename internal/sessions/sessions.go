@@ -6,6 +6,7 @@
 // what Claude Code keeps of it elsewhere: its task list, the file versions of
 // /rewind and its plan (artifacts.go). Nothing else is touched, in particular
 // no credentials, prompt history, session environment or live-process registry.
+
 package sessions
 
 import (
@@ -21,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions/forkids"
 )
 
 const projectsDir = "projects"
@@ -87,7 +90,7 @@ type Options struct {
 	// the fork is written afresh, the original stays.
 	Force bool
 	// rewrite gives a fork its own ids, in the files and their names.
-	rewrite *forkIDs
+	rewrite *forkids.IDs
 	// home is Within for a session written into Project from a subdirectory's
 	// folder (Session.Into): its transcript is made to say it lives there.
 	home string
@@ -327,14 +330,14 @@ func copySession(dstDir string, s Session, opt Options) Result {
 		opt.Force = false // not forked: the original's files stay too
 	}
 	if err == nil && (st == Diverged || st == Elsewhere) && opt.Fork {
-		id := forkID(s.ID)
+		id := forkids.ForkID(s.ID)
 		dst = dstFile(id)
 		res.Fork = id
 		if other := idElsewhere(dstDir, s.Folder(), id); other != "" {
 			// The fork's id is taken in another folder too (a fork written
 			// there before): not a second session of that id.
 			st, res.Other = Elsewhere, other
-		} else if opt.rewrite, err = newForkIDs(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
+		} else if opt.rewrite, err = forkids.New(s.ID, id, s.Path, strings.TrimSuffix(s.Path, ".jsonl")); err == nil {
 			own.rewrite = opt.rewrite
 			if st, c, backup, err = place(s.Path, dst, true, own, prog); st == Copied || st == Updated || st == Replaced {
 				st = Forked
@@ -381,7 +384,7 @@ func copySession(dstDir string, s Session, opt Options) Result {
 			return err
 		}
 		if opt.rewrite != nil {
-			rel = opt.rewrite.name(rel)
+			rel = opt.rewrite.Name(rel)
 		}
 		to := filepath.Join(dstSide, rel)
 		// A plain copy place wrote earlier is there by its size and time; it
@@ -446,14 +449,14 @@ const sidecarWorkers = 16
 // set, say where they were relocated to, and jsonl, json, text and Markdown
 // files get a fork's ids (Options.rewrite). The rest are untouched.
 func plainCopy(path string, opt Options) bool {
-	jsonl := strings.HasSuffix(path, ".jsonl")
-	if jsonl && (opt.StripThinking || opt.home != "") {
+	isJSONL := strings.HasSuffix(path, ".jsonl")
+	if isJSONL && (opt.StripThinking || opt.home != "") {
 		return false
 	}
 	if opt.rewrite == nil {
 		return true
 	}
-	return !jsonl && !rewritable(path)
+	return !isJSONL && !forkids.Rewritable(path)
 }
 
 // idElsewhere names the project folder of configDir, other than project, that

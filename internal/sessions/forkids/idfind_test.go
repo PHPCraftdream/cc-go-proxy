@@ -1,4 +1,4 @@
-package sessions
+package forkids
 
 import (
 	"math/rand"
@@ -102,22 +102,22 @@ func TestIsShortKey(t *testing.T) {
 // line, writing its steps into two buffers it reuses, gives what the steps
 // give one after the other, and a line it returned stays as it was.
 func TestLineWithScratchMatchesTheSteps(t *testing.T) {
-	m := newIDSet(forkID(sid))
-	m.old = sid
+	m := newIDSet(ForkID(sid))
+	m.Old = sid
 	for _, u := range []string{"aaaaaaaa-0000-4000-8000-000000000001", "aaaaaaaa-0000-4000-8000-000000000002"} {
 		m.uuids[u] = true
 	}
 	for _, id := range []string{"a0123456789abcdef", "bk7f3m2q1"} {
 		m.add(id)
 	}
-	m.slugs["calm-blue-river"] = "calm-blue-river-" + m.fid[:8]
+	m.Slugs["calm-blue-river"] = "calm-blue-river-" + m.FID[:8]
 	m.prepare()
 	steps := func(b []byte) []byte {
-		b = []byte(strings.ReplaceAll(string(b), m.old, m.fid))
+		b = []byte(strings.ReplaceAll(string(b), m.Old, m.FID))
 		b = m.mapUUIDs(b)
 		b = m.mapAPIIDs(b)
 		b = m.shortIDs(b)
-		for old, as := range m.slugs {
+		for old, as := range m.Slugs {
 			b = replaceWord(b, old, as)
 		}
 		return b
@@ -132,15 +132,15 @@ func TestLineWithScratchMatchesTheSteps(t *testing.T) {
 		for range r.Intn(12) {
 			b.WriteString(pieces[r.Intn(len(pieces))])
 		}
-		got = append(got, string(m.line([]byte(b.String()))))
+		got = append(got, string(m.Line([]byte(b.String()))))
 		want = append(want, string(steps([]byte(b.String()))))
 	}
 	kept := make([][]byte, 0, 50)
 	for i := range 50 { // returned slices must not share the reused buffers
-		kept = append(kept, m.line([]byte(sid+" "+strings.Repeat("z", i))))
+		kept = append(kept, m.Line([]byte(sid+" "+strings.Repeat("z", i))))
 	}
 	for i, b := range kept {
-		if string(b) != m.fid+" "+strings.Repeat("z", i) {
+		if string(b) != m.FID+" "+strings.Repeat("z", i) {
 			t.Fatalf("line %d changed after later calls: %q", i, b)
 		}
 	}

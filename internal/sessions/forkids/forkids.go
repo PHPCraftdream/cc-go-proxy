@@ -1,9 +1,10 @@
-package sessions
+package forkids
 
 import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"io/fs"
@@ -12,9 +13,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions/jsonl"
 )
 
-// forkIDs maps every id of a session to the one its fork has, the same way in
+// IDs maps every id of a session to the one its fork has, the same way in
 // every line, file and file name and on every run: links between messages,
 // tool calls and their results, subagents and their files all hold, and a
 // rerun extends the fork instead of diverging from it. A fork that kept any id
@@ -26,13 +29,13 @@ import (
 // background tasks found in id fields and in the names of the session's files.
 // Each is replaced wherever it stands, text included; a uuid that is only
 // mentioned in text (a link to something else) is not the session's and stays.
-type forkIDs struct {
-	old, fid string
+type IDs struct {
+	Old, FID string
 	uuids    map[string]bool // the session's uuids, lower case
 	short    map[string]bool // short ids, to be replaced wherever they stand alone
 	// slugs maps each slug of the session (the name of its plan file) to the
 	// fork's: one plan file for two sessions would be written by both.
-	slugs map[string]string
+	Slugs map[string]string
 	// shortAs is short mapped once (prepare); shape has bit n set for the first
 	// byte of a short id of length n, so most words need no map lookup.
 	shortAs map[string]string
@@ -46,11 +49,11 @@ var (
 	letterTask = regexp.MustCompile(`^b[a-z]{8}$`)
 )
 
-// newForkIDs collects the short ids of the session: its transcript and the
+// New collects the short ids of the session: its transcript and the
 // files of its folder side (which may not exist).
-func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
+func New(old, fid, transcript, side string) (*IDs, error) {
 	m := newIDSet(fid)
-	m.old = old
+	m.Old = old
 	files := []string{transcript}
 	err := filepath.WalkDir(side, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -71,7 +74,7 @@ func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
 				m.add(sm[1])
 			}
 		}
-		if rewritable(p) || strings.HasSuffix(p, ".jsonl") {
+		if Rewritable(p) || strings.HasSuffix(p, ".jsonl") {
 			files = append(files, p)
 		}
 		return nil
@@ -86,28 +89,28 @@ func newForkIDs(old, fid, transcript, side string) (*forkIDs, error) {
 	return m, nil
 }
 
-// newIDSet is an empty forkIDs of the fork fid.
-func newIDSet(fid string) *forkIDs {
-	return &forkIDs{fid: fid, uuids: map[string]bool{}, short: map[string]bool{}, slugs: map[string]string{}}
+// newIDSet is an empty IDs of the fork fid.
+func newIDSet(fid string) *IDs {
+	return &IDs{FID: fid, uuids: map[string]bool{}, short: map[string]bool{}, Slugs: map[string]string{}}
 }
 
 // merge adds the ids p collected.
-func (m *forkIDs) merge(p *forkIDs) {
+func (m *IDs) merge(p *IDs) {
 	for k := range p.uuids {
 		m.uuids[k] = true
 	}
 	for k := range p.short {
 		m.short[k] = true
 	}
-	for k, v := range p.slugs {
-		m.slugs[k] = v
+	for k, v := range p.Slugs {
+		m.Slugs[k] = v
 	}
 }
 
 // scanFiles scans the files, several at once: a session's folder holds
 // thousands of small ones.
-func (m *forkIDs) scanFiles(files []string) error {
-	n := min(workers(), len(files))
+func (m *IDs) scanFiles(files []string) error {
+	n := min(jsonl.Workers(), len(files))
 	if n < 2 {
 		for _, f := range files {
 			if err := m.scan(f); err != nil {
@@ -117,11 +120,11 @@ func (m *forkIDs) scanFiles(files []string) error {
 		return nil
 	}
 	next := make(chan string)
-	parts := make([]*forkIDs, n)
+	parts := make([]*IDs, n)
 	errs := make([]error, n)
 	var wg sync.WaitGroup
 	for i := range parts {
-		parts[i] = newIDSet(m.fid)
+		parts[i] = newIDSet(m.FID)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -148,10 +151,10 @@ func (m *forkIDs) scanFiles(files []string) error {
 
 // prepare maps every short id once; line is then free of writes and safe for
 // concurrent use.
-func (m *forkIDs) prepare() {
+func (m *IDs) prepare() {
 	m.shortAs = make(map[string]string, len(m.short))
 	for id := range m.short {
-		m.shortAs[id] = m.mapShort(id)
+		m.shortAs[id] = m.MapShort(id)
 		if n := len(id); n < 32 {
 			m.shape[id[0]] |= 1 << n
 		}
@@ -159,7 +162,7 @@ func (m *forkIDs) prepare() {
 }
 
 // isShort reports whether b is a short id of the session.
-func (m *forkIDs) isShort(b []byte) bool {
+func (m *IDs) isShort(b []byte) bool {
 	if len(b) == 0 {
 		return false
 	}
@@ -172,7 +175,7 @@ func (m *forkIDs) isShort(b []byte) bool {
 // add keeps a short id: letters and digits mixed, or a task id of letters
 // (b + 8). A number (a task list's 100001) is not one, nor a word a field may
 // hold ("deployment"), which would be replaced all over the text.
-func (m *forkIDs) add(id string) {
+func (m *IDs) add(id string) {
 	letters := strings.IndexFunc(id, func(r rune) bool { return !isDigit(r) }) >= 0
 	digits := strings.IndexFunc(id, isDigit) >= 0
 	if letters && digits || letterTask.MatchString(id) {
@@ -183,18 +186,18 @@ func (m *forkIDs) add(id string) {
 func isDigit(r rune) bool { return r >= '0' && r <= '9' }
 
 // scan collects the ids of a file; a large one is read on several goroutines.
-func (m *forkIDs) scan(path string) error {
+func (m *IDs) scan(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	n := workers()
-	if info, err := f.Stat(); err != nil || info.Size() < parallelFrom || n < 2 {
-		br := bufio.NewReaderSize(f, copyBuf)
+	n := jsonl.Workers()
+	if info, err := f.Stat(); err != nil || info.Size() < jsonl.ParallelFrom || n < 2 {
+		br := bufio.NewReaderSize(f, jsonl.CopyBuf)
 		var long []byte
 		for {
-			line, err := readLine(br, &long)
+			line, err := jsonl.ReadLine(br, &long)
 			m.scanLine(line)
 			if errors.Is(err, io.EOF) {
 				return nil
@@ -204,17 +207,17 @@ func (m *forkIDs) scan(path string) error {
 			}
 		}
 	}
-	parts := make([]*forkIDs, n)
-	work := make(chan *lineBatch, 2*n)
+	parts := make([]*IDs, n)
+	work := make(chan *jsonl.LineBatch, 2*n)
 	var wg sync.WaitGroup
 	for i := range parts {
-		part := newIDSet(m.fid)
+		part := newIDSet(m.FID)
 		parts[i] = part
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for b := range work {
-				for rest := b.data; len(rest) > 0; {
+				for rest := b.Data; len(rest) > 0; {
 					end := len(rest)
 					if i := bytes.IndexByte(rest, '\n'); i >= 0 {
 						end = i + 1
@@ -222,15 +225,15 @@ func (m *forkIDs) scan(path string) error {
 					part.scanLine(rest[:end])
 					rest = rest[end:]
 				}
-				b.free()
+				b.Free()
 			}
 		}()
 	}
 	var rerr error
-	readBatches(f, func(b *lineBatch) bool {
+	jsonl.ReadBatches(f, func(b *jsonl.LineBatch) bool {
 		work <- b
-		if b.err != nil && !errors.Is(b.err, io.EOF) {
-			rerr = b.err
+		if b.Err != nil && !errors.Is(b.Err, io.EOF) {
+			rerr = b.Err
 		}
 		return true
 	})
@@ -243,12 +246,12 @@ func (m *forkIDs) scan(path string) error {
 }
 
 // scanLine collects the ids of one line.
-func (m *forkIDs) scanLine(line []byte) {
+func (m *IDs) scanLine(line []byte) {
 	eachShortField(line, func(id []byte) { m.add(string(id)) })
 	collectUUIDValues(line, m.uuids)
 	eachSlug(line, func(v []byte) {
-		if m.slugs[string(v)] == "" {
-			m.slugs[string(v)] = string(v) + "-" + m.fid[:min(8, len(m.fid))]
+		if m.Slugs[string(v)] == "" {
+			m.Slugs[string(v)] = string(v) + "-" + m.FID[:min(8, len(m.FID))]
 		}
 	})
 	// Named in text before any field does: kept from the first mention, so
@@ -260,7 +263,7 @@ func (m *forkIDs) scanLine(line []byte) {
 }
 
 // line gives every id of b its fork id.
-func (m *forkIDs) line(b []byte) []byte {
+func (m *IDs) Line(b []byte) []byte {
 	// The steps write into two buffers in turn: a transcript has gigabytes of
 	// lines, and a copy of each per step kept the collector busy.
 	sc := lineScratch.Get().(*[2][]byte)
@@ -271,8 +274,8 @@ func (m *forkIDs) line(b []byte) []byte {
 			cur, k = out, k^1
 		}
 	}
-	if m.old != "" && bytes.Contains(cur, []byte(m.old)) {
-		step(replaceAllTo(sc[k][:0], cur, m.old, m.fid))
+	if m.Old != "" && bytes.Contains(cur, []byte(m.Old)) {
+		step(replaceAllTo(sc[k][:0], cur, m.Old, m.FID))
 	}
 	if len(m.uuids) > 0 {
 		step(m.mapUUIDsTo(sc[k][:0], cur))
@@ -281,9 +284,9 @@ func (m *forkIDs) line(b []byte) []byte {
 	if len(m.short) > 0 {
 		step(m.shortIDsTo(sc[k][:0], cur))
 	}
-	for old, as := range m.slugs {
+	for old, as := range m.Slugs {
 		if bytes.Contains(cur, []byte(old)) {
-			step(replaceWordTo(sc[k][:0], cur, old, as))
+			step(ReplaceWordTo(sc[k][:0], cur, old, as))
 		}
 	}
 	if len(cur) > 0 && len(b) > 0 && &cur[0] != &b[0] {
@@ -295,7 +298,7 @@ func (m *forkIDs) line(b []byte) []byte {
 	return cur
 }
 
-// lineScratch holds the two buffers of forkIDs.line.
+// lineScratch holds the two buffers of IDs.line.
 var lineScratch = sync.Pool{New: func() any { return new([2][]byte) }}
 
 // replaceAllTo appends b to dst with every old replaced by as; changed is
@@ -314,9 +317,9 @@ func replaceAllTo(dst, b []byte, old, as string) ([]byte, bool) {
 	return append(dst, b...), changed
 }
 
-// replaceWordTo is replaceWord appending to dst; changed is false when
+// ReplaceWordTo is replaceWord appending to dst; changed is false when
 // nothing was replaced (dst is then to be ignored).
-func replaceWordTo(dst, b []byte, old, as string) ([]byte, bool) {
+func ReplaceWordTo(dst, b []byte, old, as string) ([]byte, bool) {
 	word := func(c byte) bool { return isAlnum(c) || c == '-' || c == '_' }
 	out, changed := dst, false
 	last := 0
@@ -341,11 +344,11 @@ func replaceWordTo(dst, b []byte, old, as string) ([]byte, bool) {
 }
 
 // name gives the ids in a path of the session's folder their fork ids.
-func (m *forkIDs) name(rel string) string { return string(m.line([]byte(rel))) }
+func (m *IDs) Name(rel string) string { return string(m.Line([]byte(rel))) }
 
 // shortIDsTo is shortIDs appending to dst; changed is false when nothing was
 // replaced (dst is then to be ignored).
-func (m *forkIDs) shortIDsTo(dst, b []byte) ([]byte, bool) {
+func (m *IDs) shortIDsTo(dst, b []byte) ([]byte, bool) {
 	out, changed := dst, false
 	last := 0
 	for i := 0; i < len(b); {
@@ -376,21 +379,21 @@ func (m *forkIDs) shortIDsTo(dst, b []byte) ([]byte, bool) {
 }
 
 // shortFor is the fork's id for the short id id.
-func (m *forkIDs) shortFor(id string) string {
+func (m *IDs) shortFor(id string) string {
 	if as, ok := m.shortAs[id]; ok {
 		return as
 	}
-	return m.mapShort(id)
+	return m.MapShort(id)
 }
 
-// mapShort keeps the first character (a for an agent, b for a task) and the
+// MapShort keeps the first character (a for an agent, b for a task) and the
 // alphabet of the rest.
-func (m *forkIDs) mapShort(id string) string {
+func (m *IDs) MapShort(id string) string {
 	alphabet := base36
 	if strings.Trim(id[1:], "0123456789abcdef") == "" {
 		alphabet = hexDigits
 	}
-	return id[:1] + derive(m.fid, id, alphabet, len(id)-1)
+	return id[:1] + derive(m.FID, id, alphabet, len(id)-1)
 }
 
 const (
@@ -418,12 +421,30 @@ func isAlnum(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
-// rewritable tells the files of a session's folder whose text holds ids: JSON,
+// Rewritable tells the files of a session's folder whose text holds ids: JSON,
 // text and Markdown. Others are copied as they are.
-func rewritable(path string) bool {
+func Rewritable(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".json", ".txt", ".md", ".log":
 		return true
 	}
 	return false
+}
+
+// ForkID is the id a diverged session is written under: derived from the
+// original, so the next fork of it lands on the same file and extends it.
+func ForkID(id string) string { return uuidOf("ccgp fork " + id) }
+
+// ForkUUID is the id the fork fid has in place of the uuid u (of a message, a
+// prompt, …): a fork that kept the original's message ids would be the same
+// conversation to Claude Code, which lists only one of the two.
+func ForkUUID(fid, u string) string { return uuidOf("ccgp fork " + fid + " " + u) }
+
+// uuidOf derives a version 4 layout id from s, as Claude Code's own ids.
+func uuidOf(s string) string {
+	h := sha256.Sum256([]byte(s))
+	h[6] = h[6]&0x0f | 0x40
+	h[8] = h[8]&0x3f | 0x80
+	x := hex.EncodeToString(h[:16])
+	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
 }

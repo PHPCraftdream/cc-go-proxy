@@ -1,15 +1,10 @@
-package sessions
+package jsonl
 
 import (
 	"bytes"
 	"encoding/json"
 	"io"
 )
-
-// A transcript can end in turns that never got an answer: Claude Code writes an
-// API error in place of the reply (a usage limit, a server error), often once
-// per tick of a scheduled prompt that kept firing. A copy of the session leaves
-// that end out, so the copy goes on from its last real exchange.
 
 var (
 	failedTailWindow int64 = 8 << 20  // first look at the transcript's last bytes
@@ -37,7 +32,7 @@ const (
 	tailState                  // session state written after a prompt (title, mode, ...)
 )
 
-// classifyTail tells what a line is to failedTail. A line it cannot read is
+// classifyTail tells what a line is to FailedTail. A line it cannot read is
 // taken as part of the conversation.
 func classifyTail(line []byte) tailKind {
 	if len(bytes.TrimSpace(line)) == 0 {
@@ -106,12 +101,12 @@ func isInterrupt(message json.RawMessage) bool {
 	return json.Unmarshal(content, &blocks) == nil && len(blocks) == 1 && blocks[0].Type == "text" && interruptTexts[blocks[0].Text]
 }
 
-// failedTail returns where the failed end of a transcript of size bytes
+// FailedTail returns where the failed end of a transcript of size bytes
 // begins, and how many API errors it holds; size and 0 when there is none.
 // The end kept runs to the last line of the conversation and the session state
 // written right after it; what follows holds only API errors, request records
 // and the scheduled prompts that got nothing else.
-func failedTail(f io.ReaderAt, size int64) (int64, int, error) {
+func FailedTail(f io.ReaderAt, size int64) (int64, int, error) {
 	for window := failedTailWindow; ; window = min(window*4, failedTailMax) {
 		start := max(0, size-window)
 		buf := make([]byte, size-start)
