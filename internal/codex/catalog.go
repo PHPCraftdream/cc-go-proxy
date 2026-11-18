@@ -98,6 +98,29 @@ func fetchCatalog(ctx context.Context, rawURL string, tok *oauth.Tokens) ([]Mode
 	return models, resp.StatusCode, err
 }
 
+// FastServiceTier resolves the advertised Fast label to its wire ID.
+func FastServiceTier(models []Model, slug string) (string, error) {
+	for _, model := range models {
+		if model.Slug != slug {
+			continue
+		}
+		var tiers []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(model.Raw["service_tiers"], &tiers); err != nil && len(model.Raw["service_tiers"]) != 0 {
+			return "", fmt.Errorf("codex: invalid service tiers for model %s", slug)
+		}
+		for _, tier := range tiers {
+			if strings.EqualFold(strings.TrimSpace(tier.Name), "Fast") && strings.TrimSpace(tier.ID) != "" {
+				return tier.ID, nil
+			}
+		}
+		return "", fmt.Errorf("codex: model %s does not advertise a Fast service tier", slug)
+	}
+	return "", fmt.Errorf("codex: model %s is absent from the account catalog", slug)
+}
+
 // ParseCatalog decodes {"models":[...]} or {"data":[...]}.
 func ParseCatalog(body []byte) ([]Model, error) {
 	var payload struct {

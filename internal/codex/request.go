@@ -20,6 +20,7 @@ const SignaturePrefix = "ccgp1:"
 // Anthropic request (only fields we translate).
 type anthropicRequest struct {
 	Model      string           `json:"model"`
+	Speed      json.RawMessage  `json:"speed"`
 	Messages   []anthropicMsg   `json:"messages"`
 	System     json.RawMessage  `json:"system"`
 	Tools      []anthropicTool  `json:"tools"`
@@ -82,6 +83,7 @@ type Request struct {
 	Store             bool       `json:"store"`
 	Include           []string   `json:"include"`
 	PromptCacheKey    string     `json:"prompt_cache_key,omitempty"`
+	ServiceTier       string     `json:"service_tier,omitempty"`
 }
 
 type Tool struct {
@@ -151,6 +153,12 @@ func ParseRequest(body []byte) (*ParsedRequest, error) {
 
 // Model returns the model named in the original Anthropic request.
 func (p *ParsedRequest) Model() string { return p.request.Model }
+
+// ClientFast reports the explicit top-level fast selection.
+func (p *ParsedRequest) ClientFast() bool {
+	var speed string
+	return json.Unmarshal(p.request.Speed, &speed) == nil && speed == "fast"
+}
 
 // Convert translates this parsed request. model is the mapped backend model.
 // wantStream reports what the client asked for; the backend call itself always
