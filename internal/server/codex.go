@@ -425,9 +425,10 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 		req.ServiceTier, status, err = fastTier(context.Background(), cfg, baseURL, model, s)
 		if err != nil {
 			typ := "api_error"
-			if status == fiber.StatusUnauthorized {
+			switch status {
+			case fiber.StatusUnauthorized:
 				typ = "authentication_error"
-			} else if status == fiber.StatusBadRequest {
+			case fiber.StatusBadRequest:
 				typ = "invalid_request_error"
 			}
 			return anthropicError(c, status, typ, err.Error())
