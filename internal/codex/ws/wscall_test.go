@@ -306,7 +306,7 @@ func TestWSManagerStatsAndAtomicConcurrentReset(t *testing.T) {
 func countWSManagerJanitors() int {
 	buf := make([]byte, 1<<20)
 	n := runtime.Stack(buf, true)
-	return strings.Count(string(buf[:n]), "codex.(*WSManager).janitor(")
+	return strings.Count(string(buf[:n]), "ws.(*WSManager).janitor(")
 }
 
 func TestWSManagerJanitorReclaimsCanceledUnreadBody(t *testing.T) {
