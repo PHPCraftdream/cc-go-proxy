@@ -26,7 +26,7 @@ func TestSpeedTUIUnsetParityAndRepeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.open("speed", "profile:codex", "family:astra")
+	h.open("config", "speed", "profile:codex", "family:astra")
 	if !strings.Contains(h.view(), "fast (profile rule)") {
 		t.Fatalf("inspection: %s", h.view())
 	}

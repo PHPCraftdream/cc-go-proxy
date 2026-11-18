@@ -35,7 +35,6 @@ func mainMenu() *menu {
 				{id: "models", label: "Models", run: push(func() screen { return modelsMenu() })},
 				{id: "sessions", label: "Sessions", run: push(func() screen { return sessionsMenu() })},
 				{id: "server", label: "Server", run: push(func() screen { return serverMenu() })},
-				{id: "speed", label: "Codex speed rules", run: push(func() screen { return speedMenu() })},
 				{id: navQuit, label: "Quit", run: func(a *app) tea.Cmd {
 					a.quit = true
 					return tea.Quit

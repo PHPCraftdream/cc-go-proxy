@@ -111,6 +111,7 @@ func configMenu() *menu {
 					return []string{"proxy", v}
 				}),
 				confirmed("reset", "reset config.ktav to the default…", "Write the default config? The old one is kept as a backup.", "Reset the config", false, "--config", "reset"),
+				{id: "speed", label: "Codex speed rules", run: push(func() screen { return speedMenu() })},
 			}
 		},
 	}
