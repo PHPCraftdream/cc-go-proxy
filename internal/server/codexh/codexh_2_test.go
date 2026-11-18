@@ -613,13 +613,13 @@ func TestCodexPreparedRequestIsSerializedOnceForAttempts(t *testing.T) {
 
 	var handler *ast.FuncDecl
 	for _, decl := range fileAST.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "handleCodexMessages" {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "HandleCodexMessages" {
 			handler = fn
 			break
 		}
 	}
 	if handler == nil {
-		t.Fatal("handleCodexMessages not found")
+		t.Fatal("HandleCodexMessages not found")
 	}
 	prepares, retryCalls, againCalls, preparedCalls := 0, 0, 0, 0
 	capturedReq := false

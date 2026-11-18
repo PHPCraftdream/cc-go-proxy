@@ -7,10 +7,10 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -277,19 +277,24 @@ var fiberStringMethods = map[string]bool{
 // A string read from the fiber context may be kept (in a variable, a header, a
 // map) only as a copy: every such call whose result is assigned must be wrapped
 // in ownString. Using one in place (a comparison, an argument) is fine: it is
-// gone when the handler returns. The check reads the source of this package.
+// gone when the handler returns. The check reads the source of this package and its subpackages.
 func TestFiberStringsAreCopiedBeforeTheyAreKept(t *testing.T) {
-	entries, err := os.ReadDir(".")
+	var paths []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+			paths = append(paths, path)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
 	checked := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
+	for _, name := range paths {
 		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)
