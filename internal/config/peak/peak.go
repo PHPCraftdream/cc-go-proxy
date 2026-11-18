@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // zone names work on machines without zoneinfo (Windows)
 )
 
 // Window is one stretch of a provider's peak hours as config.ktav holds it:

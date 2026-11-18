@@ -17,6 +17,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	_ "golang.org/x/crypto/x509roots/fallback"
 	"io"
 	"io/fs"
 	"os"
