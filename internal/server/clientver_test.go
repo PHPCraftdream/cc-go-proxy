@@ -13,6 +13,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/clientver"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -63,7 +64,7 @@ func TestBackendAskingForNewerClientRaisesConfig(t *testing.T) {
 		t.Fatalf("first reply %d: %s", status, reply)
 	}
 	b, _ := os.ReadFile(path)
-	got, _ := config.CodexClientVersionText(string(b))
+	got, _ := cfgedit.CodexClientVersionText(string(b))
 	if got != "0.170.0" || !strings.Contains(string(b), "model: gpt-6.3-astra") {
 		t.Fatalf("config after the refusal:\n%s", b)
 	}

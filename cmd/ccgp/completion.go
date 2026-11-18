@@ -9,12 +9,9 @@ import (
 	"sync"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
-
-// Shell completion. The scripts are thin: they pass the command line to the
-// hidden `ccgp --complete`, which decides the candidates in Go (testable, one
-// source: the command table plus the configured names).
 
 // emptyWord stands for an empty word being completed: Windows PowerShell 5.1
 // drops empty arguments of native commands.
@@ -316,7 +313,7 @@ func profileCandidates(sub []string, prev string, n completionNames) []string {
 			if sub[0] == "unset" {
 				return []string{"default_model", "context_window", "compact_percent"}
 			}
-			return config.ProfileKeys()
+			return cfgedit.ProfileKeys()
 		case 3:
 			if sub[0] == "set" && sub[2] == "provider" {
 				return call(n.providers)
@@ -336,7 +333,7 @@ func providerCandidates(sub []string, n completionNames) []string {
 		case 1:
 			return call(n.providers)
 		case 2:
-			return config.ProviderKeys()
+			return cfgedit.ProviderKeys()
 		}
 		return nil
 	}

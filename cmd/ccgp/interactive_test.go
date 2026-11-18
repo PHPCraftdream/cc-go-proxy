@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Profiles, sorted: codex, work, zai. Providers, sorted: codex, work, zai.
@@ -789,14 +789,14 @@ func TestTUIPausesAndResumesPeakHours(t *testing.T) {
 	h.has("peak hours of zai do not refuse requests until 18:00 +08:00", "now: peak, but paused")
 	h.press("6")
 	h.has("peak hours of zai apply again", "now: PEAK")
-	if _, ok := config.NewPeakPauses(h.store.Dir).Until("zai", peakNow); ok {
+	if _, ok := peakcfg.NewPauses(h.store.Dir).Until("zai", peakNow); ok {
 		t.Error("the pause survived the resume")
 	}
 	// A length; and outside the peak a pause needs one.
 	h.press("5")
 	h.typ("2h")
 	h.press("enter")
-	if _, ok := config.NewPeakPauses(h.store.Dir).Until("zai", peakNow); !ok {
+	if _, ok := peakcfg.NewPauses(h.store.Dir).Until("zai", peakNow); !ok {
 		t.Error("no pause after 2h")
 	}
 	h.press("6", "2")

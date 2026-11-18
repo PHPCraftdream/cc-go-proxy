@@ -1,4 +1,4 @@
-package config
+package peak
 
 import (
 	"errors"
@@ -17,24 +17,24 @@ import (
 // the other machine-managed files and config.ktav stays as written.
 const pauseFile = "peak-pause" + ktavfile.Ext
 
-// PeakPauses is that file. The CLI writes it; the server reads it when a
+// Pauses is that file. The CLI writes it; the server reads it when a
 // request falls in peak hours (a small file, read afresh, so a change counts at
 // once).
-type PeakPauses struct {
+type Pauses struct {
 	path string
 	mu   sync.Mutex
 }
 
-// NewPeakPauses opens the pauses kept in dir. An empty dir keeps none.
-func NewPeakPauses(dir string) *PeakPauses {
+// NewPauses opens the pauses kept in dir. An empty dir keeps none.
+func NewPauses(dir string) *Pauses {
 	if dir == "" {
-		return &PeakPauses{}
+		return &Pauses{}
 	}
-	return &PeakPauses{path: filepath.Join(dir, pauseFile)}
+	return &Pauses{path: filepath.Join(dir, pauseFile)}
 }
 
 // read returns the pauses on disk; the caller holds p.mu.
-func (p *PeakPauses) read() map[string]time.Time {
+func (p *Pauses) read() map[string]time.Time {
 	m := map[string]time.Time{}
 	if p.path == "" {
 		return m
@@ -52,7 +52,7 @@ func (p *PeakPauses) read() map[string]time.Time {
 }
 
 // Until is the end of the provider's pause when one is running at now.
-func (p *PeakPauses) Until(provider string, now time.Time) (time.Time, bool) {
+func (p *Pauses) Until(provider string, now time.Time) (time.Time, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if t, ok := p.read()[provider]; ok && t.After(now) {
@@ -64,7 +64,7 @@ func (p *PeakPauses) Until(provider string, now time.Time) (time.Time, bool) {
 // Set pauses the provider's peak hours until the given moment; the zero time
 // ends the pause. Pauses that have run out are dropped on the way, and the file
 // goes when none is left.
-func (p *PeakPauses) Set(provider string, until, now time.Time) error {
+func (p *Pauses) Set(provider string, until, now time.Time) error {
 	if p.path == "" {
 		return errors.New("no directory for the pause file")
 	}

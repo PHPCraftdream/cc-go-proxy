@@ -2,6 +2,7 @@
 // (`codex.client_version`) current: it raises it when the backend asks for a
 // newer client or a newer Codex CLI is out, and refreshes the managed model
 // mappings that a newer version may unlock.
+
 package clientver
 
 import (
@@ -19,6 +20,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
@@ -125,15 +127,15 @@ func (u *Upgrader) Raise(ctx context.Context, path, current, required string) (t
 	if err != nil || to == "" {
 		return "", err
 	}
-	if _, _, err := config.RaiseCodexClientVersion(path, to); err != nil {
+	if _, _, err := cfgedit.RaiseCodexClientVersion(path, to); err != nil {
 		return "", err
 	}
 	return to, nil
 }
 
 // ManagedFrom converts a catalog selection into the config's managed block.
-func ManagedFrom(sel codex.Selection) config.ManagedModels {
-	return config.ManagedModels{Rules: []config.ModelRule{
+func ManagedFrom(sel codex.Selection) cfgedit.ManagedModels {
+	return cfgedit.ManagedModels{Rules: []config.ModelRule{
 		{Match: "*fable*", Model: sel.Fable, ContextWindow: sel.FableWindow},
 		{Match: "*opus*", Model: sel.Opus, ContextWindow: sel.OpusWindow},
 		{Match: "*sonnet*", Model: sel.Sonnet, ContextWindow: sel.SonnetWindow},
@@ -174,11 +176,11 @@ func RefreshMappings(ctx context.Context, cfg *config.Config, provider string, t
 		if cfg.Profiles[name].Provider != provider {
 			continue
 		}
-		out, err := config.ReplaceManaged(string(data), name, ManagedFrom(sel))
+		out, err := cfgedit.ReplaceManaged(string(data), name, ManagedFrom(sel))
 		if err != nil || out == string(data) {
 			continue // no managed block, or already current
 		}
-		if err := config.ApplyManaged(cfg.ConfigFile, name, ManagedFrom(sel)); err != nil {
+		if err := cfgedit.ApplyManaged(cfg.ConfigFile, name, ManagedFrom(sel)); err != nil {
 			return sel, changed, fmt.Errorf("update mapping of profile %q: %w", name, err)
 		}
 		changed = append(changed, name)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 )
 
 // peakBanner lists, for the start-up output, the providers that have peak hours.
@@ -38,7 +39,7 @@ func peakBanner(cfg *config.Config) []string {
 // paused with `ccgp --peak <provider> pause`. The answer is an HTTP error, not a
 // reply of the model, so Claude Code shows it as a notice of its own and the
 // provider never sees the request.
-func peakRefusal(cfg *config.Config, pauses *config.PeakPauses, now time.Time) string {
+func peakRefusal(cfg *config.Config, pauses *peak.Pauses, now time.Time) string {
 	pr := cfg.Providers[cfg.ProviderName]
 	if pr == nil || len(pr.Peak) == 0 {
 		return ""

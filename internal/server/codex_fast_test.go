@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/coder/websocket"
 )
 
@@ -104,8 +105,8 @@ func TestPersistedFastPolicyRequests(t *testing.T) {
 	t.Setenv(config.ConfigFileEnv, path)
 	edit := func(value string) string {
 		t.Helper()
-		backup, err := config.EditFile(path, func(s string) (string, error) {
-			return config.SetProfileSpeedText(s, "codex", "astra", value)
+		backup, err := cfgedit.EditFile(path, func(s string) (string, error) {
+			return cfgedit.SetProfileSpeedText(s, "codex", "astra", value)
 		})
 		if err != nil {
 			t.Fatal(err)

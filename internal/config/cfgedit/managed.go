@@ -1,4 +1,4 @@
-package config
+package cfgedit
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgtext"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/securefile"
 )
 
@@ -24,7 +26,7 @@ const (
 // ManagedModels is the content of a managed block: the ordered model rules,
 // each with its own context window. A final "*" rule plays the default.
 type ManagedModels struct {
-	Rules []ModelRule
+	Rules []config.ModelRule
 }
 
 // Render returns the block body, one line per element, indented by indent.
@@ -111,15 +113,14 @@ func AddManaged(text, profile string) (string, error) {
 		nl = "\r\n"
 	}
 	lines := strings.Split(text, nl)
-	indentOf := func(s string) string { return s[:len(s)-len(strings.TrimLeft(s, " \t"))] }
 
-	open, closeAt, _, err := findProfileObject(lines, profile)
+	open, closeAt, _, err := cfgtext.FindProfileObject(lines, profile)
 	if err != nil {
 		return "", err
 	}
 	nameAt := -1
 	for i := open + 1; i < closeAt; i++ {
-		if k, v, ok := keyValue(lines[i]); ok && k == "name" && v == profile {
+		if k, v, ok := cfgtext.KeyValue(lines[i]); ok && k == "name" && v == profile {
 			nameAt = i
 			break
 		}
@@ -127,21 +128,21 @@ func AddManaged(text, profile string) (string, error) {
 	if nameAt < 0 {
 		return "", fmt.Errorf("profile %q not found in the config", profile)
 	}
-	keyIndent := indentOf(lines[nameAt])
+	keyIndent := cfgtext.IndentOf(lines[nameAt])
 
 	drop := map[int]bool{}
 	first := -1
 	for i := open + 1; i < closeAt; i++ {
-		if indentOf(lines[i]) != keyIndent {
+		if cfgtext.IndentOf(lines[i]) != keyIndent {
 			continue
 		}
-		k, _, hasKey := keyValue(lines[i])
+		k, _, hasKey := cfgtext.KeyValue(lines[i])
 		end := i
 		switch {
 		case hasKey && (k == "default_model" || k == "context_window"):
-		case isListHeader(lines[i], "models"):
+		case cfgtext.IsListHeader(lines[i], "models"):
 			for end = i + 1; end < closeAt; end++ {
-				if indentOf(lines[end]) == keyIndent && isCloseBracket(lines[end]) {
+				if cfgtext.IndentOf(lines[end]) == keyIndent && cfgtext.IsCloseBracket(lines[end]) {
 					break
 				}
 			}
@@ -174,26 +175,6 @@ func AddManaged(text, profile string) (string, error) {
 		}
 	}
 	return strings.Join(out, nl), nil
-}
-
-// objectAround finds the { ... } lines enclosing line i (braces alone on their lines).
-func objectAround(lines []string, i int) (open, closeAt int, ok bool) {
-	for open = i; open >= 0; open-- {
-		if strings.TrimSpace(lines[open]) == "{" {
-			break
-		}
-	}
-	if open < 0 {
-		return 0, 0, false
-	}
-	indent := lines[open][:len(lines[open])-len(strings.TrimLeft(lines[open], " \t"))]
-	for closeAt = i; closeAt < len(lines); closeAt++ {
-		if strings.TrimSpace(lines[closeAt]) == "}" && strings.HasPrefix(lines[closeAt], indent) &&
-			len(lines[closeAt])-len(strings.TrimLeft(lines[closeAt], " \t")) == len(indent) {
-			return open, closeAt, true
-		}
-	}
-	return 0, 0, false
 }
 
 // EnsureManaged adds a managed block to profile in the file at path when it

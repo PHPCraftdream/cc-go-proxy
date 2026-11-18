@@ -16,7 +16,7 @@ Guidance for Claude Code when working in this repository.
 | --- | --- |
 | `cmd/ccgpy` | `ccgpy <profile> …`: runs the sibling `ccgp <profile> --dangerously-skip-permissions …`, nothing else (no profile: `.`) |
 | `cmd/ccgp` | CLI: `<profile>` launcher (`.`: choose the profile, or plain `claude`, from a list, `pick.go`) plus `--commands` (one table in `commands.go`: dispatch, `--help`, completion; a bare word is always a profile). Commands: `--serve/--start/--stop/--restart/--status/--logs/--doctor`, `--login/--logout`, `--models/--which`, `--config`, `--profile add/list/rm/set/unset`, `--provider` (list, set/unset base_url and api_key_env), `--connections` (active/total/proxy of everybody, a provider or a profile), `--peak` (peak hours of a provider, pause), `--interactive`/`-i` (Bubble Tea interface that covers every command: `interactive.go`, `tui.go`, `tui_screens.go`, `tui_more.go`, `tui_run.go`), `--send/--import/--export`, `--update`, `--completion`; `--json` where documented |
-| `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`EditFile`, `AddProfileText`, `RemoveProfileText`, `SetProviderPeakText`, `SetProfileKeyText`/`SetProviderKeyText`, `SetProfileProxyText`/`SetProviderProxyText`) with backup and loader validation; provider peak hours (`peak.go`: windows, zone, `PeakSchedule.At`; `peak_pause.go`: the pause file in creds) |
+| `internal/config` | env + Ktav config (`providers[]`, `profiles[]`), model mapping (`ResolveModel`), surgical config editing (`config/cfgedit`, over the line primitives of `config/cfgtext`: `EditFile`, `AddProfileText`, `RemoveProfileText`, `SetProviderPeakText`, `SetProfileKeyText`/`SetProviderKeyText`, `SetProfileProxyText`/`SetProviderProxyText`) with backup and loader validation; provider peak hours (`config/peak`: windows, zone, `Schedule.At`, `Pauses`: the pause file in creds) |
 | `internal/creds` | generated secrets: profile URL tokens, API keys, OAuth file paths; `TokenIndex` |
 | `internal/ktavfile` | read/write ccgp's own files (logins, URL tokens, mirror manifest) as Ktav, verified to read back; converts and removes the JSON files of earlier versions |
 | `internal/home` | where ccgp keeps its files: default config/cache dirs, or one home directory (`--home <dir>`, `--local` = `./.ccgp`, `CCGP_HOME`, a `.ccgp` dir in the current directory) for config, creds, Claude dirs and log; flag parsing shared with `ccgpy` |
@@ -36,10 +36,10 @@ Guidance for Claude Code when working in this repository.
 - Every model endpoint is under `/call/:token/`; unknown token → 404. Never log tokens
   (`maskToken`).
 - `config.ktav` is written only on the user's command: `ccgp --profile add` / `rm`, `ccgp --connections`, `ccgp --peak` and `ccgp --interactive` (surgical edit through
-  `config.EditFile`: validated with the real loader, `config.ktav.bak-<timestamp>` backup), `ccgp --models apply`
+  `cfgedit.EditFile`: validated with the real loader, `config.ktav.bak-<timestamp>` backup), `ccgp --models apply`
   and the refresh after `ccgp --login` (only the marked `ccgp:managed-models` block) and `ccgp --config reset` (default
   template, old file backed up). One exception without a command: `codex.client_version` (`internal/clientver`,
-  `config/codex_version.go`) is seeded with the built-in default on first use and raised (never lowered) by
+  `config/cfgedit/settings.go`) is seeded with the built-in default on first use and raised (never lowered) by
   `--models apply`, the login refresh and the server when the backend asks for a newer client; the server then also
   refreshes the managed mappings of that provider's profiles. Secrets go through `securefile.WriteFile`.
 - Rotated OAuth refresh tokens are persisted before use (`Session.refreshLocked`).
@@ -69,7 +69,7 @@ Guidance for Claude Code when working in this repository.
   in test fixtures uses `##`.
 - `ccgp --interactive` is a Bubble Tea model (`tui.go`, `tui_screens.go`): test it by sending `tea.KeyMsg`s to
   `Update` and reading `View`, never by starting a program (no terminal in CI). It must only change the config
-  through `config.EditFile` and the same editors the commands use; what a command does besides editing, a screen does
+  through `cfgedit.EditFile` and the same editors the commands use; what a command does besides editing, a screen does
   by running that command (`app.run`, `tui_run.go`; tests replace it with a recorder).
 - **The command line and the interface cover each other, both ways** (`cmd/ccgp/parity_test.go`). Adding either side
   means adding the other in the same change: a command (or a verb: `command.verbs` in `commands.go`) needs a screen

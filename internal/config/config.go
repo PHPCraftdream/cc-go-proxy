@@ -3,6 +3,7 @@
 // It supports multiple config file locations (./.env, ~/.claude/proxy.env, ~/.claude-code-proxy)
 // and detects the provider type (OpenRouter, OpenAI, Ollama) based on the OPENAI_BASE_URL.
 // The package also handles model overrides for routing Claude model names to alternative providers.
+
 package config
 
 import (
@@ -13,9 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joho/godotenv"
-
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
+	"github.com/joho/godotenv"
 )
 
 // ProviderType represents the backend provider type
@@ -192,7 +192,7 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	fc, err := loadFile(p)
+	fc, err := LoadFile(p)
 	if err != nil {
 		return nil, err
 	}

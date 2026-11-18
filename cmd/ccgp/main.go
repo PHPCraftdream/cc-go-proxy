@@ -11,6 +11,7 @@
 //	ccgp --profile add|list|rm        manage profiles (and their providers) in config.ktav
 //
 // Commands are written with a leading "--"; a bare word is always a profile.
+
 package main
 
 import (
@@ -22,12 +23,9 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
-
-	// Root certificates for HTTPS when the system has none (busybox, scratch and
-	// other minimal containers): used only as a fallback, never over the system store.
-	_ "golang.org/x/crypto/x509roots/fallback"
 )
 
 var version = "ccgp v" + server.ProxyVersion
@@ -297,7 +295,7 @@ func serve(args []string) error {
 		return fmt.Errorf("already running (pid %d)", h.PID)
 	}
 	// From here on the Codex client version comes only from the config.
-	if seeded, err := config.SeedCodexClientVersion(cfg); err != nil {
+	if seeded, err := cfgedit.SeedCodexClientVersion(cfg); err != nil {
 		fmt.Printf("[WARN] could not write codex.client_version: %v\n", err)
 	} else if seeded {
 		fmt.Printf("codex.client_version %s written to %s\n", cfg.CodexClientVersion(), cfg.ConfigFile)

@@ -606,3 +606,288 @@ func TestMultipleEnvFiles(t *testing.T) {
 		t.Errorf("Expected local base URL, got %q", cfg.OpenAIBaseURL)
 	}
 }
+
+func claudeAPIConfig(provider string) string {
+	return "providers: [\n    {\n        name: api\n        type: claude_api\n" + provider + "    }\n]\nprofiles: [\n    {\n        name: api\n        provider: api\n    }\n]\n"
+}
+
+func TestLoadFileClaudeAPI(t *testing.T) {
+	for _, tt := range []struct{ name, extra, url string }{
+		{"the official server by default", "", OfficialAnthropicURL},
+		{"another server", "        base_url: https://gw.example/anthropic\n", "https://gw.example/anthropic"},
+		{"a key from the environment", "        api_key_env: MY_ANTHROPIC_KEY\n", OfficialAnthropicURL},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fc, err := LoadFile(writeKtav(t, claudeAPIConfig(tt.extra)))
+			if err != nil {
+				t.Fatalf("LoadFile: %v", err)
+			}
+			pr := fc.Providers[0]
+			if pr.Type != ProviderTypeClaudeAPI || pr.EffectiveBaseURL() != tt.url {
+				t.Errorf("provider = %+v, server %q, want %q", pr, pr.EffectiveBaseURL(), tt.url)
+			}
+		})
+	}
+}
+
+func TestLoadFileClaudeAPIErrors(t *testing.T) {
+	tests := []struct{ name, body, want string }{
+		{"effort map", claudeAPIConfig("        effort_map: {\n            medium: high\n        }\n"), "takes no effort_map or proxy"},
+		{"proxy", claudeAPIConfig("        proxy: none\n"), "takes no effort_map or proxy"},
+		{"server without a scheme", claudeAPIConfig("        base_url: gw.example\n"), "base_url must be an http(s) URL"},
+		{"server of another kind", claudeAPIConfig("        base_url: ftp://gw.example\n"), "base_url must be an http(s) URL"},
+		{"peak hours", claudeAPIConfig("        peak_tz: UTC\n"), "takes no peak hours"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := LoadFile(writeKtav(t, tt.body))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+
+	profile := "providers: [\n    {\n        name: api\n        type: claude_api\n    }\n]\nprofiles: [\n    {\n        name: api\n        provider: api\n%s    }\n]\n"
+	for name, extra := range map[string]string{
+		"models":         "        models: [\n            {\n                match: *\n                model: m\n            }\n        ]\n",
+		"default_model":  "        default_model: m\n",
+		"context_window": "        context_window: 1000\n",
+		"proxy":          "        proxy: none\n",
+	} {
+		t.Run("profile "+name, func(t *testing.T) {
+			_, err := LoadFile(writeKtav(t, strings.Replace(profile, "%s", extra, 1)))
+			if err == nil || !strings.Contains(err.Error(), "does not go through ccgp") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestIsOwnType(t *testing.T) {
+	for typ, want := range map[string]bool{
+		ProviderTypeClaude: true, ProviderTypeClaudeAPI: true,
+		ProviderTypeCodex: false, ProviderTypeCodexAPI: false, ProviderTypeAnthropicCompat: false, "": false,
+	} {
+		if got := IsOwnType(typ); got != want {
+			t.Errorf("IsOwnType(%q) = %v, want %v", typ, got, want)
+		}
+	}
+	// Only claude_api has a default server.
+	for _, typ := range []string{ProviderTypeClaude, ProviderTypeCodexAPI, ProviderTypeAnthropicCompat} {
+		if got := (&Provider{Type: typ}).EffectiveBaseURL(); got != "" {
+			t.Errorf("%s without a base_url has the server %q", typ, got)
+		}
+	}
+}
+
+// A claude_api profile has no URL token, no rules and no route: the server
+// config for it is never asked for, but the loader must still hand it over whole.
+func TestClaudeAPIKeepsItsBaseURLInTheConfig(t *testing.T) {
+	t.Setenv(ConfigFileEnv, writeKtav(t, claudeAPIConfig("        base_url: https://gw.example\n")))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr := cfg.Providers["api"]; pr == nil || pr.BaseURL != "https://gw.example" {
+		t.Errorf("provider = %+v", pr)
+	}
+	t.Setenv(ConfigFileEnv, writeKtav(t, claudeAPIConfig("")))
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if pr := cfg.Providers["api"]; pr == nil || pr.BaseURL != "" {
+		t.Errorf("a claude_api without a base_url must keep it empty in the config, got %+v", pr)
+	}
+}
+
+func setupCodexTransportLoad(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("APPDATA", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv(ConfigFileEnv, "")
+	t.Setenv("PROXY_TOKEN", testToken)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+	t.Setenv("CODEX_TRANSPORT", "")
+	return dir
+}
+
+func TestCodexTransportDefault(t *testing.T) {
+	setupCodexTransportLoad(t)
+	for _, tt := range []struct {
+		name  string
+		unset bool
+	}{{"absent", true}, {"empty", false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.unset {
+				os.Unsetenv("CODEX_TRANSPORT")
+			} else {
+				t.Setenv("CODEX_TRANSPORT", "")
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.CodexTransport != "auto" || !cfg.CodexWebsocket() {
+				t.Errorf("transport = %q, websocket = %v; want auto, true", cfg.CodexTransport, cfg.CodexWebsocket())
+			}
+		})
+	}
+}
+
+func TestCodexTransportZeroValueIsHTTP(t *testing.T) {
+	// A Config not made by Load (tests, tools) keeps the plain HTTP path.
+	if (&Config{}).CodexWebsocket() {
+		t.Fatal("zero Config uses the websocket")
+	}
+}
+
+func TestCodexTransportAcceptedValues(t *testing.T) {
+	setupCodexTransportLoad(t)
+	for _, tt := range []struct {
+		value string
+		want  string
+	}{{"http", "http"}, {"HTTP", "http"}, {"websocket", "websocket"}, {"WEBSOCKET", "websocket"}, {"ws", "websocket"}, {"Ws", "websocket"}, {"auto", "auto"}, {"AUTO", "auto"}} {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv("CODEX_TRANSPORT", tt.value)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.CodexTransport != tt.want || cfg.CodexWebsocket() != (tt.want != "http") {
+				t.Errorf("transport = %q, websocket = %v; want %q", cfg.CodexTransport, cfg.CodexWebsocket(), tt.want)
+			}
+		})
+	}
+}
+
+func TestCodexTransportInvalidValue(t *testing.T) {
+	setupCodexTransportLoad(t)
+	for _, value := range []string{"not-a-transport", " ws ", " websocket ", "   "} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CODEX_TRANSPORT", value)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.CodexTransport != "auto" || !cfg.CodexWebsocket() {
+				t.Errorf("transport = %q, websocket = %v; want the default auto, true", cfg.CodexTransport, cfg.CodexWebsocket())
+			}
+		})
+	}
+}
+
+func TestCodexTransportReload(t *testing.T) {
+	setupCodexTransportLoad(t)
+	for _, value := range []string{"ws", "http", "WEBsocket"} {
+		t.Setenv("CODEX_TRANSPORT", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load with CODEX_TRANSPORT=%q: %v", value, err)
+		}
+		want := value != "http"
+		if cfg.CodexWebsocket() != want {
+			t.Errorf("CODEX_TRANSPORT=%q: CodexWebsocket() = %v, want %v", value, cfg.CodexWebsocket(), want)
+		}
+	}
+}
+
+func TestCodexTransportEnvFiles(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		path func(string) string
+	}{
+		{"local env", func(string) string { return ".env" }},
+		{"proxy env", func(dir string) string { return filepath.Join(dir, ".claude", "proxy.env") }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := setupCodexTransportLoad(t)
+			file := tt.path(dir)
+			if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, []byte("CODEX_TRANSPORT=ws\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.CodexTransport != "websocket" || !cfg.CodexWebsocket() {
+				t.Errorf("transport = %q, websocket = %v; want websocket, true", cfg.CodexTransport, cfg.CodexWebsocket())
+			}
+		})
+	}
+}
+
+func TestCodexTransportKtavMode(t *testing.T) {
+	setupCodexTransportLoad(t)
+	t.Setenv("CCGP_CONFIG", writeKtav(t, "providers: [\n    {\n        name: work\n        type: codex\n    }\n]\nprofiles: [\n    {\n        name: work\n        provider: work\n    }\n]\n"))
+	t.Setenv("CODEX_TRANSPORT", "websocket")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	profile, err := cfg.ForProfile("work", "")
+	if err != nil {
+		t.Fatalf("ForProfile: %v", err)
+	}
+	if profile.CodexTransport != "websocket" || !profile.CodexWebsocket() {
+		t.Errorf("profile transport = %q, websocket = %v; want websocket, true", profile.CodexTransport, profile.CodexWebsocket())
+	}
+}
+
+const codexProviderKtav = "providers: [\n    {\n        name: codex\n        type: codex\n    }\n]\n"
+
+// The template carries the built-in version, and it reads back as a string.
+func TestTemplateCodexClientVersion(t *testing.T) {
+	fc, err := LoadFile(writeKtav(t, string(DefaultTemplate())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fc.Codex.ClientVersion != DefaultCodexClientVersion {
+		t.Errorf("template codex.client_version = %q, want %q", fc.Codex.ClientVersion, DefaultCodexClientVersion)
+	}
+	if CompareClientVersions(DefaultCodexClientVersion, "0.169.0") < 0 {
+		t.Errorf("default %s is older than 0.169.0, which brought gpt-6.2", DefaultCodexClientVersion)
+	}
+}
+
+func TestCodexClientVersionLoad(t *testing.T) {
+	t.Setenv(ConfigFileEnv, writeKtav(t, "codex.client_version:: 0.171.2\n"+codexProviderKtav))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.CodexClientVersion(); got != "0.171.2" {
+		t.Errorf("CodexClientVersion = %q", got)
+	}
+	if got := (&Config{}).CodexClientVersion(); got != DefaultCodexClientVersion {
+		t.Errorf("unset CodexClientVersion = %q, want the default", got)
+	}
+
+	t.Setenv(ConfigFileEnv, writeKtav(t, "codex.client_version:: 0.171\n"+codexProviderKtav))
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "MAJOR.MINOR.PATCH") {
+		t.Errorf("bad version: err = %v", err)
+	}
+}
+
+func TestCompareClientVersions(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want int
+	}{
+		{"0.169.0", "0.169.0", 0},
+		{"0.170.0", "0.169.9", 1},
+		{"0.99.0", "0.100.0", -1},
+		{"1.0.0", "0.999.999", 1},
+	} {
+		if got := CompareClientVersions(tt.a, tt.b); got != tt.want {
+			t.Errorf("Compare(%s, %s) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}

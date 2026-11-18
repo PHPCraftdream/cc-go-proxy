@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
+	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 )
 
@@ -51,7 +53,7 @@ func TestProfileAddClaudeAPI(t *testing.T) {
 		t.Errorf("profile = %+v", pf)
 	}
 	text, _ := os.ReadFile(path)
-	if config.HasManaged(string(text), "api") || strings.Contains(string(text), "base_url: https://api.anthropic.com") {
+	if cfgedit.HasManaged(string(text), "api") || strings.Contains(string(text), "base_url: https://api.anthropic.com") {
 		t.Errorf("a claude_api profile must get neither a model block nor the default server written:\n%s", text)
 	}
 	for _, want := range []string{`created Claude API profile "api"`, config.OfficialAnthropicURL + " (the official one)", "ccgp --login api", "nothing goes through ccgp"} {
@@ -111,7 +113,7 @@ func TestClaudeAPIViews(t *testing.T) {
 	writeTestConfig(t, testConfig)
 	cfg := addAPI(t, "api", "")
 	store := creds.Store{Dir: t.TempDir()}
-	pauses := config.NewPeakPauses(store.Dir)
+	pauses := peakcfg.NewPauses(store.Dir)
 	show := func(cfg *config.Config) string {
 		return providerText(cfg, store, pauses, time.Now(), "api")
 	}

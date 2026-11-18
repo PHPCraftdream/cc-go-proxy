@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
@@ -33,7 +34,7 @@ func shanghai(day, hour, min int) time.Time {
 
 func TestPeakRefusalNamesWindowAndResumeTime(t *testing.T) {
 	cfg := peakConfig("http://x", "+08:00", config.PeakWindow{Days: "mon-fri", From: "14:00", To: "18:00"})
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peak.NewPauses(t.TempDir())
 	msg := peakRefusal(cfg, pauses, shanghai(3, 15, 42))
 	for _, want := range []string{
 		"Peak hours of provider zai: mon-fri 14:00-18:00 (+08:00 time).",
@@ -56,7 +57,7 @@ func TestPeakRefusalNamesWindowAndResumeTime(t *testing.T) {
 
 func TestPeakRefusalFollowsThePause(t *testing.T) {
 	cfg := peakConfig("http://x", "+08:00", config.PeakWindow{From: "14:00", To: "18:00"})
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peak.NewPauses(t.TempDir())
 	now := shanghai(3, 15, 0)
 	if err := pauses.Set("zai", now.Add(time.Hour), now); err != nil {
 		t.Fatal(err)
@@ -76,7 +77,7 @@ func TestPeakRefusalFollowsThePause(t *testing.T) {
 }
 
 func TestPeakRefusalNeedsPeakHours(t *testing.T) {
-	pauses := config.NewPeakPauses(t.TempDir())
+	pauses := peak.NewPauses(t.TempDir())
 	now := shanghai(3, 15, 0)
 	if m := peakRefusal(peakConfig("http://x", ""), pauses, now); m != "" {
 		t.Errorf("a provider without peak hours was refused: %s", m)
@@ -234,7 +235,7 @@ func TestPeakBannerNamesTheMachinesZone(t *testing.T) {
 // by hand) lets the request through rather than stopping all work.
 func TestPeakRefusalIgnoresAnUnreadableSchedule(t *testing.T) {
 	cfg := peakConfig("http://x", "", config.PeakWindow{Days: "funday", From: "14:00", To: "18:00"})
-	if m := peakRefusal(cfg, config.NewPeakPauses(t.TempDir()), shanghai(3, 15, 0)); m != "" {
+	if m := peakRefusal(cfg, peak.NewPauses(t.TempDir()), shanghai(3, 15, 0)); m != "" {
 		t.Errorf("refused by a schedule that cannot be read: %s", m)
 	}
 }
@@ -273,7 +274,7 @@ func TestPeakHoursFollowTheConfigFile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return peakRefusal(rc, config.NewPeakPauses(t.TempDir()), time.Now())
+		return peakRefusal(rc, peak.NewPauses(t.TempDir()), time.Now())
 	}
 
 	write(text(false), 0)

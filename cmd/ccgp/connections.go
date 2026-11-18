@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 )
 
@@ -73,20 +74,20 @@ func connections(w io.Writer, args []string) error {
 		if cfg.IsEnvMode() {
 			return errors.New("no config.ktav (env-only mode): nothing to edit")
 		}
-		backup, err = config.EditFile(cfg.ConfigFile, func(text string) (string, error) {
+		backup, err = cfgedit.EditFile(cfg.ConfigFile, func(text string) (string, error) {
 			for _, k := range order {
 				var err error
-				if text, err = config.SetConnectionsText(text, k, set[k]); err != nil {
+				if text, err = cfgedit.SetConnectionsText(text, k, set[k]); err != nil {
 					return "", err
 				}
 			}
 			switch {
 			case setProxy && scope == "provider":
-				return config.SetProviderProxyText(text, scopeName, proxy)
+				return cfgedit.SetProviderProxyText(text, scopeName, proxy)
 			case setProxy && scope == "profile":
-				return config.SetProfileProxyText(text, scopeName, proxy)
+				return cfgedit.SetProfileProxyText(text, scopeName, proxy)
 			case setProxy:
-				return config.SetConnectionsProxyText(text, proxy)
+				return cfgedit.SetConnectionsProxyText(text, proxy)
 			}
 			return text, nil
 		})

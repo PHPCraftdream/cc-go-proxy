@@ -3,9 +3,6 @@ package config
 import (
 	"fmt"
 	"net/url"
-	"regexp"
-	"strconv"
-	"strings"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
@@ -52,11 +49,11 @@ func effectiveConnections(active, total int64) (int, int) {
 // inherited from the levels above).
 const ProxyNone = "none"
 
-func validateProfileProxy(profile, proxy string) error {
+func CheckProfileProxy(profile, proxy string) error {
 	return validateScopeProxy("profile", profile, proxy)
 }
 
-func validateProviderProxy(provider, proxy string) error {
+func CheckProviderProxy(provider, proxy string) error {
 	return validateScopeProxy("provider", provider, proxy)
 }
 
@@ -179,91 +176,4 @@ func (c *Config) ProviderProxyChoice(provider string) proxydial.Choice {
 		return c.ProviderProxy(provider)
 	}
 	return common
-}
-
-// SetConnectionsText sets connections.<key> (active or total) in config text:
-// the `connections.<key>:` line is rewritten, or added after the listen and
-// connections settings (at the top when there are none). A `connections: {` block must be
-// edited by hand.
-func SetConnectionsText(text, key string, value int64) (string, error) {
-	if key != "active" && key != "total" {
-		return "", fmt.Errorf("unknown connections setting %q (active or total)", key)
-	}
-	return setConnectionsLine(text, key, strconv.FormatInt(value, 10))
-}
-
-// SetConnectionsProxyText sets connections.proxy in config text like
-// SetConnectionsText; an empty proxy removes the line.
-func SetConnectionsProxyText(text, proxy string) (string, error) {
-	if proxy == "" {
-		lines := strings.Split(text, "\n")
-		out := lines[:0]
-		for _, l := range lines {
-			if !proxyLine.MatchString(strings.TrimRight(l, "\r")) {
-				out = append(out, l)
-			}
-		}
-		return strings.Join(out, "\n"), nil
-	}
-	if _, err := proxydial.Parse(proxy); err != nil {
-		return "", err
-	}
-	return setConnectionsLine(text, "proxy", proxy)
-}
-
-func setConnectionsLine(text, key, value string) (string, error) {
-	lines := strings.Split(text, "\n")
-	line := "connections." + key + ": " + value
-	re := regexp.MustCompile(`^connections\.` + key + `\s*:`)
-	lastListen, block := -1, false
-	for i, l := range lines {
-		trimmed := strings.TrimRight(l, "\r")
-		switch {
-		case re.MatchString(trimmed):
-			lines[i] = line + l[len(trimmed):]
-			return strings.Join(lines, "\n"), nil
-		case strings.HasPrefix(trimmed, "listen."), strings.HasPrefix(trimmed, "connections."):
-			lastListen = i
-		case connectionsBlock.MatchString(trimmed):
-			block = true
-		}
-	}
-	if block {
-		return "", fmt.Errorf("config has a `connections:` block; set %s there by hand", key)
-	}
-	if strings.HasSuffix(lines[0], "\r") {
-		line += "\r"
-	}
-	at := lastListen + 1
-	if lastListen < 0 {
-		// After the leading comment lines.
-		for at < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[at]), "#") {
-			at++
-		}
-	}
-	out := append([]string{}, lines[:at]...)
-	out = append(out, line)
-	return strings.Join(append(out, lines[at:]...), "\n"), nil
-}
-
-var (
-	connectionsBlock = regexp.MustCompile(`^connections\s*:`)
-	proxyLine        = regexp.MustCompile(`^connections\.proxy\s*:`)
-)
-
-// SetProfileProxyText sets proxy in the profile's object in config text: a
-// proxy URL, ProxyNone, or "" to remove the line (the profile inherits the
-// global proxy again). The line goes after the profile's provider line.
-func SetProfileProxyText(text, profile, proxy string) (string, error) {
-	if proxy != "" && proxy != ProxyNone {
-		if _, err := proxydial.Parse(proxy); err != nil {
-			return "", err
-		}
-	}
-	lines := strings.Split(text, "\n")
-	open, closeAt, _, err := findProfileObject(lines, profile)
-	if err != nil {
-		return "", err
-	}
-	return setScalarKey(lines, open, closeAt, "proxy", proxy, []string{"provider"})
 }

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	ktav "github.com/ktav-lang/golang/pure"
 )
@@ -70,6 +71,9 @@ type ModelRule struct {
 	ContextWindow int64 `json:"context_window"`
 }
 
+// PeakWindow is one window of a provider's peak hours (see package peak).
+type PeakWindow = peak.Window
+
 // Provider is an upstream backend.
 type Provider struct {
 	Name    string `json:"name"`
@@ -84,8 +88,8 @@ type Provider struct {
 	// Peak are the provider's peak hours: requests of its profiles are refused
 	// during them (see PeakSchedule). PeakTZ is the zone they are given in; "": the
 	// machine's own.
-	Peak   []PeakWindow `json:"peak"`
-	PeakTZ string       `json:"peak_tz"`
+	Peak   []peak.Window `json:"peak"`
+	PeakTZ string        `json:"peak_tz"`
 	// Proxy overrides connections.proxy for every profile of this provider (a
 	// profile's own proxy still wins): a proxy URL, or "none" for no proxy.
 	// Absent: the global setting applies.
@@ -109,6 +113,9 @@ type Profile struct {
 	Models     []ModelRule       `json:"models"`
 	SpeedRules map[string]string `json:"speed_rules"`
 }
+
+// File is the Ktav config file shape.
+type File = fileConfig
 
 // fileConfig is the Ktav config file shape.
 type fileConfig struct {
@@ -148,8 +155,8 @@ func configFilePath() (p string, explicit bool, err error) {
 	return p, false, err
 }
 
-// loadFile parses and validates a Ktav config file. Missing file returns (nil, nil).
-func loadFile(p string) (*fileConfig, error) {
+// LoadFile parses and validates a Ktav config file. Missing file returns (nil, nil).
+func LoadFile(p string) (*File, error) {
 	data, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -214,7 +221,7 @@ func (fc *fileConfig) validate() error {
 		if err := validatePeak(pr); err != nil {
 			return err
 		}
-		if err := validateProviderProxy(pr.Name, pr.Proxy); err != nil {
+		if err := CheckProviderProxy(pr.Name, pr.Proxy); err != nil {
 			return err
 		}
 		providers[pr.Name] = pr.Type
@@ -233,11 +240,11 @@ func (fc *fileConfig) validate() error {
 		if pf.CompactPercent < 0 || pf.CompactPercent > 100 {
 			return fmt.Errorf("profile %q: compact_percent must be 0-100", pf.Name)
 		}
-		if err := validateProfileProxy(pf.Name, pf.Proxy); err != nil {
+		if err := CheckProfileProxy(pf.Name, pf.Proxy); err != nil {
 			return err
 		}
 		for family, speed := range pf.SpeedRules {
-			if !validSpeedFamily(family) || (speed != SpeedFast && speed != SpeedStandard) {
+			if !ValidSpeedFamily(family) || (speed != SpeedFast && speed != SpeedStandard) {
 				return fmt.Errorf("profile %q: invalid speed rule %q: %q", pf.Name, family, speed)
 			}
 		}
@@ -378,3 +385,25 @@ func (p *Profile) ContextWindowFor(claudeModel string) int64 {
 	}
 	return p.EffectiveContextWindow()
 }
+
+// PeakSchedule is the provider's peak hours; nil when it has none.
+func (p *Provider) PeakSchedule() (*peak.Schedule, error) {
+	return peak.NewSchedule(p.Peak, p.PeakTZ)
+}
+
+// validatePeak checks a provider's peak settings for the loader.
+func validatePeak(pr Provider) error {
+	if IsOwnType(pr.Type) {
+		if len(pr.Peak) > 0 || pr.PeakTZ != "" {
+			return fmt.Errorf("provider %q: type %q takes no peak hours (it does not go through ccgp)", pr.Name, pr.Type)
+		}
+		return nil
+	}
+	if _, err := pr.PeakSchedule(); err != nil {
+		return fmt.Errorf("provider %q: %w", pr.Name, err)
+	}
+	return nil
+}
+
+// ReservedProfile reports whether name may not be a profile name.
+func ReservedProfile(name string) bool { return reservedProfiles[name] }
