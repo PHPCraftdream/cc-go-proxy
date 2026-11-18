@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/catalog"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -134,7 +134,7 @@ func (u *Upgrader) Raise(ctx context.Context, path, current, required string) (t
 }
 
 // ManagedFrom converts a catalog selection into the config's managed block.
-func ManagedFrom(sel codex.Selection) cfgedit.ManagedModels {
+func ManagedFrom(sel catalog.Selection) cfgedit.ManagedModels {
 	return cfgedit.ManagedModels{Rules: []config.ModelRule{
 		{Match: "*fable*", Model: sel.Fable, ContextWindow: sel.FableWindow},
 		{Match: "*opus*", Model: sel.Opus, ContextWindow: sel.OpusWindow},
@@ -149,16 +149,16 @@ func ManagedFrom(sel codex.Selection) cfgedit.ManagedModels {
 // of every profile of provider that has one (hand-written mappings are left
 // alone). ctx carries the client version and the way out. It returns the
 // selection and the profiles it changed.
-func RefreshMappings(ctx context.Context, cfg *config.Config, provider string, tok *oauth.Tokens) (codex.Selection, []string, error) {
+func RefreshMappings(ctx context.Context, cfg *config.Config, provider string, tok *oauth.Tokens) (catalog.Selection, []string, error) {
 	pr := cfg.Providers[provider]
 	if pr == nil || pr.Type != config.ProviderTypeCodex {
-		return codex.Selection{}, nil, fmt.Errorf("%q is not a codex provider", provider)
+		return catalog.Selection{}, nil, fmt.Errorf("%q is not a codex provider", provider)
 	}
-	list, err := codex.FetchCatalog(ctx, pr.BaseURL, tok)
+	list, err := catalog.FetchCatalog(ctx, pr.BaseURL, tok)
 	if err != nil {
-		return codex.Selection{}, nil, err
+		return catalog.Selection{}, nil, err
 	}
-	sel, err := codex.Pick(list)
+	sel, err := catalog.Pick(list)
 	if err != nil {
 		return sel, nil, err
 	}

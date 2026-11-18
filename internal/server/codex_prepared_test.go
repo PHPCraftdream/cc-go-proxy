@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -55,24 +56,24 @@ func TestCodexRetryReleasesPreparedAtFirstContentBlock(t *testing.T) {
 					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 				}
 
-				var col *codex.Collector
+				var col *sse.Collector
 				var emitted []string
-				dest := codex.Emit(func(event string, _ any) {
+				dest := sse.Emit(func(event string, _ any) {
 					if event == "content_block_start" && holder.prepared != nil {
 						t.Errorf("prepared request was not released before emitting content_block_start")
 					}
 					emitted = append(emitted, event)
 				})
 				if mode == "collector" {
-					col = &codex.Collector{}
-					dest = codex.Emit(func(event string, data any) {
+					col = &sse.Collector{}
+					dest = sse.Emit(func(event string, data any) {
 						if event == "content_block_start" && holder.prepared != nil {
 							t.Errorf("prepared request was not released before emitting content_block_start")
 						}
 						col.Emit(event, data)
 					})
 				}
-				tr := &codex.Translator{Model: "model", Emit: holder.emit(dest)}
+				tr := &sse.Translator{Model: "model", Emit: holder.emit(dest)}
 				final := runUpstream(context.Background(), tr,
 					mustPreparedResponse(t, holder),
 					func() (*http.Response, error) { return holder.callPrepared() }, "profile", "model")

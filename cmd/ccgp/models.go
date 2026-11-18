@@ -12,6 +12,7 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/clientver"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/catalog"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -151,7 +152,7 @@ type modelsData struct {
 }
 
 // catalogModelsProfile converts a live codex catalog selection into JSON form.
-func catalogModelsProfile(profile, provider string, sel codex.Selection) modelsProfile {
+func catalogModelsProfile(profile, provider string, sel catalog.Selection) modelsProfile {
 	return modelsProfile{
 		Profile:  profile,
 		Provider: provider,
@@ -198,8 +199,8 @@ func printRules(profile string, p preset.Preset) {
 }
 
 type providerCatalog struct {
-	models []codex.Model
-	sel    codex.Selection
+	models []catalog.Model
+	sel    catalog.Selection
 }
 
 // managedProfiles returns the profiles whose mapping ccgp can generate: codex
@@ -240,18 +241,18 @@ func loadCatalog(ctx context.Context, cfg *config.Config, provider string) (*pro
 		return nil, fmt.Errorf("%w (run: ccgp --login %s)", err, provider)
 	}
 	ctx = codex.WithClientVersion(ctx, cfg.CodexClientVersion())
-	list, err := codex.FetchCatalog(ctx, cfg.Providers[provider].BaseURL, tok)
+	list, err := catalog.FetchCatalog(ctx, cfg.Providers[provider].BaseURL, tok)
 	if err != nil {
 		return nil, err
 	}
-	sel, err := codex.Pick(list)
+	sel, err := catalog.Pick(list)
 	if err != nil {
 		return nil, fmt.Errorf("%w (catalog: %s)", err, slugs(list))
 	}
 	return &providerCatalog{models: list, sel: sel}, nil
 }
 
-func slugs(list []codex.Model) string {
+func slugs(list []catalog.Model) string {
 	s := make([]string, len(list))
 	for i, m := range list {
 		s[i] = m.Slug
@@ -266,7 +267,7 @@ func windowText(w int64) string {
 	return fmt.Sprintf("context: %d tokens", w)
 }
 
-func printSelection(profile string, sel codex.Selection) {
+func printSelection(profile string, sel catalog.Selection) {
 	fmt.Printf("profile %q mapping (model, context window):\n", profile)
 	fmt.Printf("  Fable  -> %-16s %d\n", sel.Fable, sel.FableWindow)
 	fmt.Printf("  Opus   -> %-16s %d\n", sel.Opus, sel.OpusWindow)
@@ -345,7 +346,7 @@ func autoApplyModels(cfg *config.Config, provider string) {
 
 // printRaw lists a catalog entry's short scalar fields (long prompt texts and
 // nested structures are skipped), to see which size-related fields a catalog has.
-func printRaw(m codex.Model) {
+func printRaw(m catalog.Model) {
 	keys := make([]string, 0, len(m.Raw))
 	for k := range m.Raw {
 		keys = append(keys, k)

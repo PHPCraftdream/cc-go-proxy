@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 )
 
 // Groups a big prompt is counted in besides the total: how long before it the
@@ -48,7 +48,7 @@ var promptStats = &cacheStats{}
 // Add counts the usage of one finished reply, in the total and in each of the
 // groups ("" is skipped: nothing was known); prompts under cacheMissMin are
 // never cached anyway and not counted.
-func (s *cacheStats) Add(us codex.Usage, groups ...string) {
+func (s *cacheStats) Add(us sse.Usage, groups ...string) {
 	if us.Input < cacheMissMin {
 		return
 	}

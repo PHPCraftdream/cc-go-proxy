@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 )
 
@@ -353,7 +354,7 @@ func (u *upstreamTrace) connText() string {
 
 // summary describes the call: the connection, the waits from the start of the
 // call, the request size and the tokens.
-func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes int) string {
+func (u *upstreamTrace) summary(tr *sse.Translator, end time.Time, bodyBytes int) string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	r := func(d time.Duration) string { return d.Round(time.Millisecond).String() }
@@ -390,7 +391,7 @@ func (u *upstreamTrace) summary(tr *codex.Translator, end time.Time, bodyBytes i
 		parts = append(parts, split)
 	}
 	parts = append(parts, req)
-	if us := tr.Usage; us != (codex.Usage{}) {
+	if us := tr.Usage; us != (sse.Usage{}) {
 		tokens := fmt.Sprintf("tokens in %d (cached %d) out %d (reasoning %d)", us.Input, us.Cached, us.Output, us.Reasoning)
 		if mark := cacheMark(us); mark != "" {
 			tokens += " | " + mark
@@ -542,7 +543,7 @@ func turnRoutingNote(routing *codex.Routing, newTurn bool) string {
 
 // cacheMark says when a big prompt was not read from the cache: nothing of it
 // (cache miss) or less than cachePartialPct percent (cache partial). "" else.
-func cacheMark(us codex.Usage) string {
+func cacheMark(us sse.Usage) string {
 	if us.Input < cacheMissMin {
 		return ""
 	}

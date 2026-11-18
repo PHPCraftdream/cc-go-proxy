@@ -15,6 +15,10 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/catalog"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
+	codexws "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws"
+	wschain "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws/chain"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
@@ -152,7 +156,7 @@ type codexRetry struct {
 	prepared  *codex.Prepared
 	websocket bool
 	call      func(*codex.Prepared) (*http.Response, error)
-	callWS    func(*codex.Request) (*http.Response, codex.WSInfo, error)
+	callWS    func(*codex.Request) (*http.Response, codexws.WSInfo, error)
 }
 
 func (r *codexRetry) callPrepared() (*http.Response, error) {
@@ -169,14 +173,14 @@ func (r *codexRetry) callPrepared() (*http.Response, error) {
 	return r.call(r.prepared)
 }
 
-func (r *codexRetry) callWebsocket() (*http.Response, codex.WSInfo, error) {
+func (r *codexRetry) callWebsocket() (*http.Response, codexws.WSInfo, error) {
 	if r.request == nil || r.callWS == nil {
-		return nil, codex.WSInfo{}, errors.New("codex: websocket request unavailable")
+		return nil, codexws.WSInfo{}, errors.New("codex: websocket request unavailable")
 	}
 	return r.callWS(r.request)
 }
 
-func (r *codexRetry) emit(next codex.Emit) codex.Emit {
+func (r *codexRetry) emit(next sse.Emit) sse.Emit {
 	return func(event string, data any) {
 		if event == "content_block_start" {
 			r.request = nil
@@ -271,7 +275,7 @@ func upstreamIDs(h http.Header) string {
 // that broke, before any content was sent: the request is asked again after a
 // pause (again), the client only waits longer. Each kind has its own budget.
 // It returns the reply the run ended on; the caller closes it.
-func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, again func() (*http.Response, error), profile, mapped string, retries ...*codexRetry) *http.Response {
+func runUpstream(ctx context.Context, tr *sse.Translator, up *http.Response, again func() (*http.Response, error), profile, mapped string, retries ...*codexRetry) *http.Response {
 	var retry *codexRetry
 	if len(retries) > 0 {
 		retry = retries[0]
@@ -280,7 +284,7 @@ func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, a
 	for {
 		tr.AllowRetry = overloads < len(overloadBackoff)
 		tr.AllowTransportRetry = breaks < len(brokenBackoff)
-		if err := tr.Run(up.Body); !errors.Is(err, codex.ErrRetry) {
+		if err := tr.Run(up.Body); !errors.Is(err, sse.ErrRetry) {
 			if err == nil && retry != nil {
 				drainCompletedWebsocketReply(retry, tr, up)
 			}
@@ -321,7 +325,7 @@ func runUpstream(ctx context.Context, tr *codex.Translator, up *http.Response, a
 // logUpstreamEnd prints the line for a reply that was cancelled, failed or slow.
 // All three are stamped with the start of the call, like the request's own line;
 // the summary tells when the reply ended.
-func logUpstreamEnd(ctx context.Context, tr *codex.Translator, trace *upstreamTrace, up *http.Response, profile, mapped string, bodyBytes int) {
+func logUpstreamEnd(ctx context.Context, tr *sse.Translator, trace *upstreamTrace, up *http.Response, profile, mapped string, bodyBytes int) {
 	end := time.Now()
 	trace.mu.Lock()
 	trace.edge = edgeOf(up.Header)
@@ -368,7 +372,7 @@ func codexTurnKind(req *codex.Request) (continuation, newTurn bool) {
 	}
 	sawUser := false
 	for i := len(req.Input) - 1; i >= 0; i-- {
-		typ, role, _, _ := codex.ItemParts(req.Input[i])
+		typ, role, _, _ := wschain.ItemParts(req.Input[i])
 		switch {
 		case typ == "function_call_output":
 			return true, false
@@ -420,7 +424,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if pr := cfg.Providers[cfg.ProviderName]; pr != nil {
 		baseURL = pr.BaseURL
 	}
-	if cfg.Profiles[cfg.Profile].EffectiveFast(codex.ModelFamily(model), parsed.ClientFast()) {
+	if cfg.Profiles[cfg.Profile].EffectiveFast(catalog.ModelFamily(model), parsed.ClientFast()) {
 		var status int
 		req.ServiceTier, status, err = fastTier(context.Background(), cfg, baseURL, model, s)
 		if err != nil {
@@ -486,7 +490,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	// thread (key, system prompt, tools) and would replace each other's chain.
 	bucket := ""
 	if useWS {
-		agent := codex.AgentKey(req)
+		agent := wschain.AgentKey(req)
 		trace.conv = wsConvTag(turnRegistration.threadID) + wsAgentTag(agent)
 		bucket = turnRegistration.threadID + ":" + agent
 		side, wrong := currentCodexWSManager().SideRequest(bucket, req)
@@ -501,7 +505,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if useWS {
 		retry.request = req
 		retry.websocket = true
-		retry.callWS = func(request *codex.Request) (*http.Response, codex.WSInfo, error) {
+		retry.callWS = func(request *codex.Request) (*http.Response, codexws.WSInfo, error) {
 			return currentCodexWSManager().Call(wsCtx, baseURL, s, bucket, request)
 		}
 		resp, err = retry.requestCall(ctx, trace, requestBytes)
@@ -636,8 +640,8 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 
 	if !wantStream {
 		defer cancel()
-		col := &codex.Collector{}
-		tr := &codex.Translator{Model: probe.Model, Emit: retry.emit(col.Emit)}
+		col := &sse.Collector{}
+		tr := &sse.Translator{Model: probe.Model, Emit: retry.emit(col.Emit)}
 		upstream := runUpstream(ctx, tr, resp, again, profile, mapped, retry)
 		defer func() { _ = upstream.Body.Close() }()
 		logUpstreamEnd(ctx, tr, trace, upstream, profile, mapped, bodyBytes)
@@ -662,7 +666,7 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		defer release()
 		defer cancel()
-		tr := &codex.Translator{Model: probe.Model, Emit: retry.emit(func(ev string, data any) {
+		tr := &sse.Translator{Model: probe.Model, Emit: retry.emit(func(ev string, data any) {
 			if err := writeSSEEvent(w, ev, data); err != nil {
 				cancel() // client gone: abort upstream
 				return

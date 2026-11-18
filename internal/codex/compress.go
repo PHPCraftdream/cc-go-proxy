@@ -9,15 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/klauspost/compress/zstd"
-
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/klauspost/compress/zstd"
 )
-
-// A request carries the whole conversation again and again, several MiB of
-// JSON, and the uplink is the slow part of a long turn (12-17 s for 6 MiB seen).
-// The official Codex client sends the body zstd-compressed to this backend, so
-// ccgp does the same: JSON shrinks five- to ten-fold.
 
 // compressThreshold is the body size from which it is compressed; a smaller
 // one gains nothing.

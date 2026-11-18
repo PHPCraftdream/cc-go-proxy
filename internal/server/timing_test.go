@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 )
 
@@ -49,7 +49,7 @@ func TestSlowStreamIsLoggedWithTiming(t *testing.T) {
 func TestTraceSummary(t *testing.T) {
 	start := time.Unix(1000, 0)
 	u := &upstreamTrace{start: start, calls: 2, reused: true, idle: 3 * time.Second, headers: start.Add(25 * time.Second)}
-	tr := &codex.Translator{FirstDelta: start.Add(40 * time.Second)}
+	tr := &sse.Translator{FirstDelta: start.Add(40 * time.Second)}
 	end := start.Add(3 * time.Minute)
 	got := u.summary(tr, end, 3<<20)
 	want := "conn reused (idle 3s), 2 upstream calls | headers 25s, first token 40s, total 3m0s, ended " + end.Format("15:04:05") +
@@ -83,7 +83,7 @@ func TestTraceSummaryWarmConnAndRetry(t *testing.T) {
 	ct.GetConn("h:443") // the retry
 	o.WarmConn(45 * time.Second)
 	end := start.Add(time.Second)
-	got := u.summary(&codex.Translator{}, end, 10)
+	got := u.summary(&sse.Translator{}, end, 10)
 	want := "conn warm (opened 45s before), 2 upstream calls, retried after: unexpected EOF | total 1s, ended " + end.Format("15:04:05") + " | request 10 B"
 	if got != want {
 		t.Errorf("summary = %q\nwant      %q", got, want)
@@ -106,7 +106,7 @@ func TestTraceSummaryNamesTheFirstConnection(t *testing.T) {
 	ct.GetConn("h:443")
 	ct.GotConn(httptrace.GotConnInfo{})
 	end := start.Add(time.Second)
-	got := u.summary(&codex.Translator{}, end, 10)
+	got := u.summary(&sse.Translator{}, end, 10)
 	want := "conn new (dns 0s, connect 0s, tls 0s), 2 upstream calls, retried after: wsasend: aborted (the first try was on a reused, idle 1m13s connection) | total 1s, ended " + end.Format("15:04:05") + " | request 10 B"
 	if got != want {
 		t.Errorf("summary = %q\nwant      %q", got, want)
@@ -155,13 +155,13 @@ func TestTraceReportsPoolAgeAndEveryRetry(t *testing.T) {
 	}
 
 	ct.GotConn(httptrace.GotConnInfo{})
-	got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
+	got := u.summary(&sse.Translator{}, start.Add(time.Second), 10)
 	if !strings.Contains(got, "conn new (dns 0s, connect 0s, tls 0s, pool 2s)") || !strings.Contains(got, "retried after: TLS handshake timeout") {
 		t.Errorf("summary = %q", got)
 	}
 	// Without connpool there is no pool age and nothing is invented.
 	v := &upstreamTrace{start: start}
-	if s := v.summary(&codex.Translator{}, start, 0); strings.Contains(s, "pool") {
+	if s := v.summary(&sse.Translator{}, start, 0); strings.Contains(s, "pool") {
 		t.Errorf("summary without a pool: %q", s)
 	}
 }
@@ -249,12 +249,12 @@ func TestSummaryShowsHowLongTheRequestTookToWrite(t *testing.T) {
 	ct := u.clientTrace()
 	ct.GetConn("h:443")
 	ct.GotConn(httptrace.GotConnInfo{Reused: true})
-	if got := u.summary(&codex.Translator{}, start.Add(time.Second), 10); strings.Contains(got, "written in") {
+	if got := u.summary(&sse.Translator{}, start.Add(time.Second), 10); strings.Contains(got, "written in") {
 		t.Errorf("summary before the request was written = %q", got)
 	}
 	ct.WroteRequest(httptrace.WroteRequestInfo{})
 	u.got, u.wrote = start.Add(time.Second), start.Add(4*time.Second+500*time.Millisecond)
-	if got := u.summary(&codex.Translator{}, start.Add(30*time.Second), 5<<20); !strings.Contains(got, "| request 5.0 MiB (written in 3.5s)") {
+	if got := u.summary(&sse.Translator{}, start.Add(30*time.Second), 5<<20); !strings.Contains(got, "| request 5.0 MiB (written in 3.5s)") {
 		t.Errorf("summary = %q", got)
 	}
 	ct.GetConn("h:443") // a new attempt forgets the last one's times
@@ -269,16 +269,16 @@ func TestSummaryMarksACacheMiss(t *testing.T) {
 	start := time.Unix(1000, 0)
 	for _, c := range []struct {
 		name  string
-		usage codex.Usage
+		usage sse.Usage
 		want  bool
 	}{
-		{"big, nothing cached", codex.Usage{Input: 575000, Cached: 0, Output: 10}, true},
-		{"big, mostly cached", codex.Usage{Input: 575000, Cached: 470000, Output: 10}, false},
-		{"small, nothing cached", codex.Usage{Input: 900, Output: 10}, false},
-		{"at the limit", codex.Usage{Input: cacheMissMin}, true},
+		{"big, nothing cached", sse.Usage{Input: 575000, Cached: 0, Output: 10}, true},
+		{"big, mostly cached", sse.Usage{Input: 575000, Cached: 470000, Output: 10}, false},
+		{"small, nothing cached", sse.Usage{Input: 900, Output: 10}, false},
+		{"at the limit", sse.Usage{Input: cacheMissMin}, true},
 	} {
 		u := &upstreamTrace{start: start}
-		got := u.summary(&codex.Translator{Usage: c.usage}, start.Add(time.Second), 10)
+		got := u.summary(&sse.Translator{Usage: c.usage}, start.Add(time.Second), 10)
 		if has := strings.Contains(got, "| cache miss"); has != c.want {
 			t.Errorf("%s: cache miss marked = %v, want %v: %q", c.name, has, c.want, got)
 		}
@@ -333,17 +333,17 @@ func TestStampedBodyRecordsTheLastRead(t *testing.T) {
 func TestCacheMark(t *testing.T) {
 	for _, c := range []struct {
 		name  string
-		usage codex.Usage
+		usage sse.Usage
 		want  string
 	}{
-		{"nothing cached", codex.Usage{Input: 500000}, "cache miss"},
-		{"64 percent", codex.Usage{Input: 732972, Cached: 469888}, "cache partial 64% (469888 of 732972)"},
-		{"just under the share", codex.Usage{Input: 100000, Cached: 89999}, "cache partial 89% (89999 of 100000)"},
-		{"exactly the share", codex.Usage{Input: 100000, Cached: 90000}, ""},
-		{"all cached", codex.Usage{Input: 500000, Cached: 500000}, ""},
-		{"small and partial", codex.Usage{Input: cacheMissMin - 1, Cached: 10}, ""},
-		{"at the minimum and partial", codex.Usage{Input: cacheMissMin, Cached: 10}, "cache partial 0% (10 of 10000)"},
-		{"no usage", codex.Usage{}, ""},
+		{"nothing cached", sse.Usage{Input: 500000}, "cache miss"},
+		{"64 percent", sse.Usage{Input: 732972, Cached: 469888}, "cache partial 64% (469888 of 732972)"},
+		{"just under the share", sse.Usage{Input: 100000, Cached: 89999}, "cache partial 89% (89999 of 100000)"},
+		{"exactly the share", sse.Usage{Input: 100000, Cached: 90000}, ""},
+		{"all cached", sse.Usage{Input: 500000, Cached: 500000}, ""},
+		{"small and partial", sse.Usage{Input: cacheMissMin - 1, Cached: 10}, ""},
+		{"at the minimum and partial", sse.Usage{Input: cacheMissMin, Cached: 10}, "cache partial 0% (10 of 10000)"},
+		{"no usage", sse.Usage{}, ""},
 	} {
 		if got := cacheMark(c.usage); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
@@ -354,7 +354,7 @@ func TestCacheMark(t *testing.T) {
 func TestSummaryMarksAPartialCache(t *testing.T) {
 	start := time.Unix(1000, 0)
 	u := &upstreamTrace{start: start}
-	got := u.summary(&codex.Translator{Usage: codex.Usage{Input: 575000, Cached: 470000, Output: 10}}, start.Add(time.Second), 10)
+	got := u.summary(&sse.Translator{Usage: sse.Usage{Input: 575000, Cached: 470000, Output: 10}}, start.Add(time.Second), 10)
 	if !strings.Contains(got, "| tokens in 575000 (cached 470000) out 10 (reasoning 0) | cache partial 81% (470000 of 575000)") || strings.Contains(got, "cache miss") {
 		t.Errorf("summary = %q", got)
 	}

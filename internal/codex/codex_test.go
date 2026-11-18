@@ -3,12 +3,12 @@ package codex
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,149 +111,9 @@ func TestConvertRequestToolChoice(t *testing.T) {
 	}
 }
 
-// sseBody builds an upstream Responses stream.
-func sseBody(events ...string) string {
-	var b strings.Builder
-	for _, e := range events {
-		b.WriteString("event: x\ndata: " + e + "\n\n")
-	}
-	return b.String()
-}
-
-var upstreamStream = sseBody(
-	`{"type":"response.created","response":{"id":"resp_1"}}`,
-	`{"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}`,
-	`{"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"think"}`,
-	`{"type":"response.output_item.done","item":{"id":"rs_1","type":"reasoning","encrypted_content":"ENC"}}`,
-	`{"type":"response.output_item.added","item":{"id":"msg_1","type":"message"}}`,
-	`{"type":"response.output_text.delta","item_id":"msg_1","delta":"Hel"}`,
-	`{"type":"response.output_text.delta","item_id":"msg_1","delta":"lo"}`,
-	`{"type":"response.output_item.done","item":{"id":"msg_1","type":"message"}}`,
-	`{"type":"response.output_item.added","item":{"id":"fc_1","type":"function_call","call_id":"call_9","name":"Read"}}`,
-	`{"type":"response.output_item.done","item":{"id":"fc_1","type":"function_call","arguments":"{\"path\":\"a\"}"}}`,
-	`{"type":"response.completed","response":{"usage":{"input_tokens":100,"output_tokens":7,"input_tokens_details":{"cached_tokens":40}}}}`,
-)
-
-func TestTranslatorStream(t *testing.T) {
-	var names []string
-	var last map[string]any
-	tr := &Translator{Model: "claude-sonnet-4-5", Emit: func(ev string, data any) {
-		names = append(names, ev)
-		if ev == "message_delta" {
-			last = data.(map[string]any)
-		}
-	}}
-	if err := tr.Run(strings.NewReader(upstreamStream)); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"message_start",
-		"content_block_start", "content_block_delta", "content_block_delta", "content_block_stop", // thinking + signature
-		"content_block_start", "content_block_delta", "content_block_delta", "content_block_stop", // text
-		"content_block_start", "content_block_delta", "content_block_stop", // tool_use (args from done)
-		"message_delta", "message_stop",
-	}
-	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Errorf("events =\n%v\nwant\n%v", names, want)
-	}
-	if d := last["delta"].(map[string]any); d["stop_reason"] != "tool_use" {
-		t.Errorf("stop_reason = %v", d["stop_reason"])
-	}
-	if u := last["usage"].(map[string]any); u["input_tokens"] != 60 || u["cache_read_input_tokens"] != 40 || u["output_tokens"] != 7 {
-		t.Errorf("usage = %v", u)
-	}
-}
-
-func TestCollector(t *testing.T) {
-	col := &Collector{}
-	tr := &Translator{Model: "claude-x", Emit: col.Emit}
-	_ = tr.Run(strings.NewReader(upstreamStream))
-	out, err := col.Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := out["content"].([]any)
-	if len(content) != 3 {
-		t.Fatalf("content = %v", content)
-	}
-	th, text, tool := content[0].(map[string]any), content[1].(map[string]any), content[2].(map[string]any)
-	if th["thinking"] != "think" || th["signature"] != SignaturePrefix+"ENC" {
-		t.Errorf("thinking = %v", th)
-	}
-	if text["text"] != "Hello" {
-		t.Errorf("text = %v", text)
-	}
-	if tool["id"] != "call_9" || mustJSON(t, tool["input"]) != `{"path":"a"}` {
-		t.Errorf("tool = %v", tool)
-	}
-	if out["model"] != "claude-x" || out["stop_reason"] != "tool_use" {
-		t.Errorf("msg = %v", out)
-	}
-}
-
-func TestTranslatorTruncatedStream(t *testing.T) {
-	var gotErr bool
-	tr := &Translator{Model: "m", Emit: func(ev string, _ any) { gotErr = gotErr || ev == "error" }}
-	_ = tr.Run(strings.NewReader(sseBody(`{"type":"response.created","response":{"id":"r"}}`)))
-	if !gotErr {
-		t.Error("no error event for truncated stream")
-	}
-	if !strings.Contains(tr.Failed, "ended before completion") {
-		t.Errorf("Failed = %q", tr.Failed)
-	}
-}
-
-// Every way a stream can fail sends the client an error event and records why.
-func TestTranslatorFailureReasons(t *testing.T) {
-	created := `{"type":"response.created","response":{"id":"r"}}`
-	tests := []struct {
-		name, body, want string
-	}{
-		{"response.failed", sseBody(created, `{"type":"response.failed","response":{"error":{"message":"model overloaded"}}}`), "model overloaded"},
-		{"response.failed without text", sseBody(created, `{"type":"response.failed","response":{}}`), "response failed"},
-		{"error event", sseBody(created, `{"type":"error","message":"rate limited"}`), "rate limited"},
-		{"error event with code only", sseBody(created, `{"type":"error","code":"E42"}`), "upstream error E42"},
-		{"error event with an error object", sseBody(created, `{"type":"error","error":{"type":"server_error","message":"boom"}}`), "server_error: boom"},
-		{"empty error event", sseBody(created, `{"type":"error"}`), "upstream error"},
-		{"response.failed with code", sseBody(created, `{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"slow down"}}}`), "rate_limit_exceeded: slow down"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var gotErr bool
-			tr := &Translator{Model: "m", Emit: func(ev string, _ any) { gotErr = gotErr || ev == "error" }}
-			_ = tr.Run(strings.NewReader(tt.body))
-			if !gotErr || tr.Failed != tt.want {
-				t.Errorf("error event %v, Failed = %q; want %q", gotErr, tr.Failed, tt.want)
-			}
-			if tr.Detail == "" || !strings.Contains(tt.body, tr.Detail) {
-				t.Errorf("Detail = %q, want the raw failing event", tr.Detail)
-			}
-		})
-	}
-}
-
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
-
-func TestTranslatorReadErrorIsRecorded(t *testing.T) {
-	var gotErr bool
-	tr := &Translator{Model: "m", Emit: func(ev string, _ any) { gotErr = gotErr || ev == "error" }}
-	if err := tr.Run(failingReader{}); err == nil {
-		t.Error("Run swallowed the read error")
-	}
-	if !gotErr || !strings.Contains(tr.Failed, "stream read error") {
-		t.Errorf("error event %v, Failed = %q", gotErr, tr.Failed)
-	}
-}
-
-func TestTranslatorSuccessLeavesFailedEmpty(t *testing.T) {
-	tr := &Translator{Model: "m", Emit: func(string, any) {}}
-	_ = tr.Run(strings.NewReader(upstreamStream))
-	if tr.Failed != "" {
-		t.Errorf("Failed = %q after a complete stream", tr.Failed)
-	}
-}
 
 func TestErrorType(t *testing.T) {
 	tests := map[int]string{
@@ -306,11 +166,11 @@ func TestDefaultClientHasHeaderTimeout(t *testing.T) {
 }
 
 func TestSessionHeaders(t *testing.T) {
-	h := sessionHeaders(&Request{Model: "gpt-x", PromptCacheKey: "abc123"})
+	h := SessionHeaders(&Request{Model: "gpt-x", PromptCacheKey: "abc123"})
 	if h.Get("session-id") != "abc123" || h.Get("x-codex-routing-hint") != "model=gpt-x" {
 		t.Errorf("headers = %v", h)
 	}
-	if h := sessionHeaders(&Request{}); len(h) != 0 {
+	if h := SessionHeaders(&Request{}); len(h) != 0 {
 		t.Errorf("headers of an empty request = %v, want none", h)
 	}
 }
@@ -353,7 +213,7 @@ func TestCallRetriesAfter401(t *testing.T) {
 	var calls atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
-		if r.Header.Get("ChatGPT-Account-ID") != "acc" || r.Header.Get("originator") != originator {
+		if r.Header.Get("ChatGPT-Account-ID") != "acc" || r.Header.Get("originator") != Originator {
 			t.Errorf("headers = %v", r.Header)
 		}
 		if n == 1 {
@@ -458,76 +318,448 @@ func TestConvertRequestCorrectsIdentityInSystemRoleMessages(t *testing.T) {
 	}
 }
 
-const overloadedEvent = `{"type":"error","sequence_number":3,"error":{"message":"Our servers are currently overloaded.","type":"service_unavailable_error","code":"server_is_overloaded"}}`
+type countedJSON struct {
+	calls *atomic.Int32
+}
 
-func TestTranslatorRetriesOverloadBeforeOutput(t *testing.T) {
-	created := `{"type":"response.created","response":{"id":"r"}}`
-	var events []string
-	tr := &Translator{Model: "m", AllowRetry: true, Emit: func(ev string, _ any) { events = append(events, ev) }}
-	if err := tr.Run(strings.NewReader(sseBody(created, overloadedEvent))); !errors.Is(err, ErrRetry) {
-		t.Fatalf("Run = %v, want ErrRetry", err)
+func (c countedJSON) MarshalJSON() ([]byte, error) {
+	c.calls.Add(1)
+	return []byte(`"counted"`), nil
+}
+
+func TestPrepareRequestSnapshotsBodyAndHeaders(t *testing.T) {
+	var marshals atomic.Int32
+	req := &Request{
+		Model:          "model-before",
+		PromptCacheKey: "session-before",
+		Input:          []any{countedJSON{calls: &marshals}},
 	}
-	if tr.Failed != "" || !strings.Contains(tr.Retry, "server_is_overloaded") || !strings.Contains(tr.Detail, "overloaded") {
-		t.Fatalf("Failed %q, Retry %q, Detail %q", tr.Failed, tr.Retry, tr.Detail)
+	prepared, err := PrepareRequest(req)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !tr.Started() || strings.Join(events, ",") != "message_start" {
-		t.Fatalf("events before the retry = %v", events)
+	if got := marshals.Load(); got != 1 {
+		t.Fatalf("MarshalJSON called %d times during preparation, want 1", got)
 	}
-	if err := tr.Run(strings.NewReader(upstreamStream)); err != nil || tr.Failed != "" {
-		t.Fatalf("second Run = %v, Failed %q", err, tr.Failed)
+	if !json.Valid(prepared.body) || !strings.Contains(string(prepared.body), `"counted"`) {
+		t.Fatalf("prepared body is not the serialized request: %s", prepared.body)
 	}
-	if n := strings.Count(strings.Join(events, ","), "message_start"); n != 1 {
-		t.Errorf("message_start sent %d times", n)
+
+	req.Model = "model-after"
+	req.PromptCacheKey = "session-after"
+	var tries atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			t.Errorf("read request: %v", readErr)
+		}
+		if string(body) != string(prepared.body) {
+			t.Errorf("wire body = %s, want snapshot %s", body, prepared.body)
+		}
+		if got := r.Header.Get("session-id"); got != "session-before" {
+			t.Errorf("session-id = %q, want snapshot", got)
+		}
+		if got := r.Header.Get("x-codex-routing-hint"); got != "model=model-before" {
+			t.Errorf("routing hint = %q, want snapshot", got)
+		}
+		if tries.Add(1) == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"new-token","refresh_token":"rt2"}`))
+	}))
+	defer issuer.Close()
+
+	session := testSession(t)
+	session.Client = &oauth.Client{Issuer: issuer.URL}
+	for range 2 {
+		resp, err := CallPrepared(context.Background(), backend.URL, session, prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
 	}
-	if events[len(events)-1] != "message_stop" {
-		t.Errorf("stream did not complete: %v", events)
+	if got := marshals.Load(); got != 1 {
+		t.Fatalf("MarshalJSON called %d times after prepared calls, want 1", got)
 	}
 }
 
-// Sent tells how far a stream got, which decides what the client does with a
-// failure: after thinking only it asks again, after text or a call it keeps them.
-func TestTranslatorSentNamesTheKindsOfBlocks(t *testing.T) {
-	created := `{"type":"response.created","response":{"id":"r"}}`
-	think := `{"type":"response.output_item.added","item":{"id":"rs","type":"reasoning"}}`
-	text := `{"type":"response.output_item.added","item":{"id":"m","type":"message"}}`
-	text2 := `{"type":"response.output_item.added","item":{"id":"m2","type":"message"}}`
-	call := `{"type":"response.output_item.added","item":{"id":"f","type":"function_call","call_id":"c","name":"Read"}}`
-	tests := []struct{ name, body, want string }{
-		{"nothing", sseBody(created, overloadedEvent), ""},
-		{"thinking only", sseBody(created, think, overloadedEvent), "thinking"},
-		{"thinking, text", sseBody(created, think, text, overloadedEvent), "thinking, text"},
-		{"a tool call", sseBody(created, think, call, overloadedEvent), "thinking, tool_use"},
-		{"a kind twice in a row is named once", sseBody(created, text, text2, overloadedEvent), "text"},
+func TestResponseDoesNotRetainUploadBody(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	resp, err := Call(context.Background(), backend.URL, testSession(t), &Request{
+		Model: "m", Input: []any{strings.Repeat("large upload body ", 256<<10)},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tr := &Translator{Model: "m", Emit: func(string, any) {}}
-			_ = tr.Run(strings.NewReader(tt.body))
-			if got := tr.Sent(); got != tt.want {
-				t.Errorf("Sent = %q, want %q", got, tt.want)
+	defer resp.Body.Close()
+	if resp.Request == nil {
+		t.Fatal("response has no request metadata")
+	}
+	if resp.Request.Body != http.NoBody {
+		t.Errorf("response request body = %T, want http.NoBody", resp.Request.Body)
+	}
+	if resp.Request.GetBody != nil {
+		t.Error("response request retains GetBody")
+	}
+	if resp.Request.URL == nil || resp.Request.URL.Host != strings.TrimPrefix(backend.URL, "http://") {
+		t.Errorf("response request URL metadata was not preserved: %v", resp.Request.URL)
+	}
+	if got := resp.Request.Header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("response request headers were not preserved: Content-Type = %q", got)
+	}
+	if resp.Request.Context() == nil {
+		t.Error("response request context was not preserved")
+	}
+}
+
+func benchmarkPreparedSession(b *testing.B) *oauth.Session {
+	b.Helper()
+	store := oauth.Store{Path: filepath.Join(b.TempDir(), "oauth.json")}
+	if err := store.Save(&oauth.Tokens{AccessToken: "tok", RefreshToken: "rt", LastRefresh: time.Now()}); err != nil {
+		b.Fatal(err)
+	}
+	return &oauth.Session{Store: store, Client: &oauth.Client{}}
+}
+
+func benchmarkRetryTransport(b *testing.B) {
+	old := HTTPClient
+	var calls atomic.Int32
+	HTTPClient = &http.Client{Transport: benchmarkRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			return nil, err
+		}
+		n := calls.Add(1) % 3
+		status := http.StatusServiceUnavailable
+		if n == 0 {
+			status = http.StatusOK
+		}
+		return &http.Response{
+			StatusCode: status,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    r,
+		}, nil
+	})}
+	b.Cleanup(func() { HTTPClient = old })
+}
+
+type benchmarkRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f benchmarkRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func benchmarkFiveMiBRequest() *Request {
+	body := strings.Repeat("previous conversation includes tools, results, and context. ", (5<<20)/59)
+	body = body[:5<<20]
+	return &Request{Model: "benchmark-model", Input: []any{map[string]any{"type": "message", "role": "user", "content": body}}}
+}
+
+func BenchmarkRequestRetries(b *testing.B) {
+	for _, mode := range []string{"BeforeEquivalent_CallEachRetry", "After_PrepareOnce"} {
+		b.Run(mode, func(b *testing.B) {
+			benchmarkRetryTransport(b)
+			session := benchmarkPreparedSession(b)
+			req := benchmarkFiveMiBRequest()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				var prepared *Prepared
+				if mode == "After_PrepareOnce" {
+					var err error
+					prepared, err = PrepareRequest(req)
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				for range 3 {
+					var resp *http.Response
+					var err error
+					if prepared == nil {
+						resp, err = Call(context.Background(), "https://benchmark.invalid", session, req)
+					} else {
+						resp, err = CallPrepared(context.Background(), "https://benchmark.invalid", session, prepared)
+					}
+					if err != nil {
+						b.Fatal(err)
+					}
+					_ = resp.Body.Close()
+				}
 			}
 		})
 	}
 }
 
-func TestTranslatorDoesNotRetry(t *testing.T) {
-	created := `{"type":"response.created","response":{"id":"r"}}`
-	text := `{"type":"response.output_item.added","item":{"id":"m","type":"message"}}`
+func TestNeedsNewerClient(t *testing.T) {
 	tests := []struct {
-		name  string
-		allow bool
-		body  string
+		name     string
+		status   int
+		body     string
+		required string
+		ok       bool
 	}{
-		{"retries not allowed", false, sseBody(created, overloadedEvent)},
-		{"content already sent", true, sseBody(created, text, overloadedEvent)},
-		{"not an overload", true, sseBody(created, `{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}`)},
+		{"backend wording", 400, `{"error":{"message":"The 'gpt-6.3-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.","type":"invalid_request_error"}}`, "", true},
+		{"version in the text", 400, `{"detail":"Codex 0.171.0 or newer is required: client version is too old"}`, "0.171.0", true},
+		{"version field", 426, `{"error":{"message":"unsupported client version","minimal_client_version":[0,172,3]}}`, "0.172.3", true},
+		{"string field", 400, `{"error":{"message":"x","minimum_client_version":"0.173.0"}}`, "0.173.0", true},
+		{"plan upsell", 403, `{"error":{"message":"Upgrade to Pro to use this model."}}`, "", false},
+		{"usage limit", 429, `{"error":{"type":"usage_limit_reached","message":"Upgrade to the latest plan"}}`, "", false},
+		{"unauthorized", 401, `{"error":{"message":"requires a newer version"}}`, "", false},
+		{"server error", 500, `{"error":{"message":"requires a newer version"}}`, "", false},
+		{"other 400", 400, `{"error":{"message":"Unsupported parameter: 'foo'"}}`, "", false},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tr := &Translator{Model: "m", AllowRetry: tt.allow, Emit: func(string, any) {}}
-			if err := tr.Run(strings.NewReader(tt.body)); errors.Is(err, ErrRetry) || tr.Failed == "" {
-				t.Fatalf("Run = %v, Failed %q: want a failed stream", err, tr.Failed)
-			}
-		})
+		required, ok := NeedsNewerClient(tt.status, []byte(tt.body))
+		if required != tt.required || ok != tt.ok {
+			t.Errorf("%s: got %q, %v; want %q, %v", tt.name, required, ok, tt.required, tt.ok)
+		}
 	}
 }
+
+// Inference presents the configured version the
+// way the official client does (originator/version); without one, as before.
+func TestClientVersionInUserAgent(t *testing.T) {
+	var agent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agent = r.Header.Get("User-Agent")
+	}))
+	defer srv.Close()
+	old := HTTPClient
+	HTTPClient = &http.Client{}
+	defer func() { HTTPClient = old }()
+
+	tok := &oauth.Tokens{AccessToken: "t"}
+	for _, tt := range []struct{ version, want string }{{"0.170.0", "codex_cli_rs/0.170.0 (ccgp)"}, {"", "codex_cli_rs (ccgp)"}} {
+		ctx := context.Background()
+		if tt.version != "" {
+			ctx = WithClientVersion(ctx, tt.version)
+		}
+		resp, err := post(ctx, srv.URL, []byte(`{}`), "", nil, tok)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if agent != tt.want {
+			t.Errorf("HTTP user agent = %q, want %q", agent, tt.want)
+		}
+	}
+}
+
+type routingRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f routingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func useRoutingTransport(t *testing.T, before func(*http.Request), responseState string) {
+	t.Helper()
+	var responseCount atomic.Int32
+	old := HTTPClient
+	HTTPClient = &http.Client{Transport: routingRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if before != nil {
+			before(r)
+		}
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err == nil && responseState != "" && responseCount.Add(1) == 1 {
+			delete(resp.Header, http.CanonicalHeaderKey("x-codex-turn-state"))
+			resp.Header["x-CoDeX-tUrN-sTaTe"] = []string{responseState}
+		}
+		return resp, err
+	})}
+	t.Cleanup(func() { HTTPClient = old })
+}
+
+func TestRoutingCapturesMixedCaseHeaderVerbatimAndReplaysOnNextCall(t *testing.T) {
+	initial := "  raw: initial \t do not parse, hash, or trim  "
+	returned := "  opaque: returned \t preserve, exactly  "
+	var requestsMu sync.Mutex
+	var requests []struct{ turnState, threadID, requestID, session, hint string }
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Write([]byte("data: ok\n\n"))
+	}))
+	defer backend.Close()
+	useRoutingTransport(t, func(r *http.Request) {
+		requestsMu.Lock()
+		defer requestsMu.Unlock()
+		requests = append(requests, struct{ turnState, threadID, requestID, session, hint string }{
+			r.Header.Get("x-codex-turn-state"), r.Header.Get("thread-id"),
+			r.Header.Get("x-client-request-id"), r.Header.Get("session-id"),
+			r.Header.Get("x-codex-routing-hint"),
+		})
+	}, returned)
+
+	var callback []string
+	var callbackMu sync.Mutex
+	routing := NewRouting("thread-17", initial, func(state string) {
+		callbackMu.Lock()
+		callback = append(callback, state)
+		callbackMu.Unlock()
+	})
+	ctx := WithRouting(context.Background(), routing)
+	req := &Request{Model: "gpt-test", PromptCacheKey: "session-9"}
+	resp, err := Call(ctx, backend.URL, testSession(t), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	// The custom RoundTripper inserts this mixed-case response header after
+	// parsing; the next call verifies exact state replay and case-fold capture.
+	resp, err = Call(ctx, backend.URL, testSession(t), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	requestsMu.Lock()
+	got := append([]struct{ turnState, threadID, requestID, session, hint string }(nil), requests...)
+	requestsMu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("captured %d requests, want 2", len(got))
+	}
+	if got[0].turnState != initial || got[1].turnState != returned {
+		t.Fatalf("sent turn-state values = %q, %q", got[0].turnState, got[1].turnState)
+	}
+	for i, request := range got {
+		if request.threadID != "thread-17" || request.requestID != "thread-17" || request.session != "session-9" || request.hint != "model=gpt-test" {
+			t.Errorf("request %d routing/session headers = %+v", i, request)
+		}
+	}
+	if got[0].requestID != "thread-17" || got[1].requestID != "thread-17" {
+		t.Errorf("request IDs = %q, %q, want thread ID on both", got[0].requestID, got[1].requestID)
+	}
+	if !routing.Sent() || !routing.Returned() {
+		t.Errorf("Sent()=%v Returned()=%v, want both true", routing.Sent(), routing.Returned())
+	}
+	callbackMu.Lock()
+	gotCallback := append([]string(nil), callback...)
+	callbackMu.Unlock()
+	if len(gotCallback) != 1 || gotCallback[0] != returned {
+		t.Errorf("state callbacks = %q, want [%q]", gotCallback, returned)
+	}
+}
+
+func TestRoutingReplaysReturnedStateOnCompressionFallback(t *testing.T) {
+	resetCompression(t)
+	var got []string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("x-codex-turn-state"))
+		_, _ = io.Copy(io.Discard, r.Body)
+		if r.Header.Get("Content-Encoding") != "" {
+			w.Header().Set("X-Codex-Turn-State", "after-compression-refusal;v=1")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte("data: ok\n\n"))
+	}))
+	defer backend.Close()
+
+	routing := NewRouting("thread-compress", "before-compression", nil)
+	resp, err := Call(WithRouting(context.Background(), routing), backend.URL, testSession(t), bigRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if len(got) != 2 || got[0] != "before-compression" || got[1] != "after-compression-refusal;v=1" {
+		t.Fatalf("turn-state values across compressed/plain POSTs = %q", got)
+	}
+	if !routing.Sent() || !routing.Returned() {
+		t.Errorf("Sent()=%v Returned()=%v, want both true", routing.Sent(), routing.Returned())
+	}
+}
+
+func TestRoutingReplaysReturnedStateOnOAuthRefresh(t *testing.T) {
+	var got []string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("x-codex-turn-state"))
+		if len(got) == 1 {
+			w.Header().Set("X-Codex-Turn-State", "after-401;opaque")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Write([]byte("data: ok\n\n"))
+	}))
+	defer backend.Close()
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"access_token":"new-token","refresh_token":"rt2"}`))
+	}))
+	defer issuer.Close()
+
+	store := oauth.Store{Path: filepath.Join(t.TempDir(), "oauth.json")}
+	if err := store.Save(&oauth.Tokens{AccessToken: "old-token", RefreshToken: "rt1", LastRefresh: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	session := &oauth.Session{Store: store, Client: &oauth.Client{Issuer: issuer.URL}}
+	routing := NewRouting("thread-oauth", "before-401", nil)
+	resp, err := Call(WithRouting(context.Background(), routing), backend.URL, session, &Request{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if len(got) != 2 || got[0] != "before-401" || got[1] != "after-401;opaque" {
+		t.Fatalf("turn-state values across OAuth POSTs = %q", got)
+	}
+	if !routing.Sent() || !routing.Returned() {
+		t.Errorf("Sent()=%v Returned()=%v, want both true", routing.Sent(), routing.Returned())
+	}
+}
+
+func TestRoutingPreservesStateWhenResponseHeaderIsMissing(t *testing.T) {
+	var got []string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("x-codex-turn-state"))
+		w.Write([]byte("data: ok\n\n"))
+	}))
+	defer backend.Close()
+	useRoutingTransport(t, nil, "returned-on-first-post")
+
+	routing := NewRouting("thread-preserve", "initial-state", nil)
+	ctx := WithRouting(context.Background(), routing)
+	for range 3 {
+		resp, err := Call(ctx, backend.URL, testSession(t), &Request{Model: "m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+	}
+	if len(got) != 3 || got[0] != "initial-state" || got[1] != "returned-on-first-post" || got[2] != "returned-on-first-post" {
+		t.Fatalf("turn-state values after a response without the header = %q", got)
+	}
+}
+
+func TestRoutingSentRemainsFalseWithoutOpaqueState(t *testing.T) {
+	var threadID, requestID, turnState string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("data: ok\n\n"))
+	}))
+	defer backend.Close()
+	useRoutingTransport(t, func(r *http.Request) {
+		threadID = r.Header.Get("thread-id")
+		requestID = r.Header.Get("x-client-request-id")
+		turnState = r.Header.Get("x-codex-turn-state")
+	}, "")
+
+	routing := NewRouting("thread-empty", "", nil)
+	resp, err := Call(WithRouting(context.Background(), routing), backend.URL, testSession(t), &Request{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if threadID != "thread-empty" || requestID != "thread-empty" || turnState != "" {
+		t.Errorf("routing headers: thread-id=%q x-client-request-id=%q turn-state=%q", threadID, requestID, turnState)
+	}
+	if routing.Sent() || routing.Returned() {
+		t.Errorf("Sent()=%v Returned()=%v, want both false", routing.Sent(), routing.Returned())
+	}
+}
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }

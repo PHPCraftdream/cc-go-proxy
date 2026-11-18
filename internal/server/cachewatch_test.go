@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 )
 
 func fp(key, system, tools string, items int) codex.Fingerprint {
@@ -160,14 +161,14 @@ func TestPromptTextJoinsTheFingerprintAndTheNote(t *testing.T) {
 func TestSummaryEndsWithThePrompt(t *testing.T) {
 	start := time.Unix(1000, 0)
 	u := &upstreamTrace{start: start, prompt: "key abcd1234, system 11111111, no tools, 9 input items; system prompt changed since the last request of this key"}
-	got := u.summary(&codex.Translator{Usage: codex.Usage{Input: 500000, Output: 10}}, start.Add(time.Second), 10)
+	got := u.summary(&sse.Translator{Usage: sse.Usage{Input: 500000, Output: 10}}, start.Add(time.Second), 10)
 	miss := strings.Index(got, "| cache miss")
 	prompt := strings.Index(got, "| prompt key abcd1234")
 	if miss < 0 || prompt < miss || !strings.HasSuffix(got, "system prompt changed since the last request of this key") {
 		t.Errorf("summary = %q", got)
 	}
 	u.prompt = ""
-	if got = u.summary(&codex.Translator{}, start.Add(time.Second), 10); strings.Contains(got, "prompt") {
+	if got = u.summary(&sse.Translator{}, start.Add(time.Second), 10); strings.Contains(got, "prompt") {
 		t.Errorf("a trace without a prompt says one: %q", got)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -603,7 +604,7 @@ func TestCanceledLineEndsWithTheIds(t *testing.T) {
 	t.Cleanup(func() { logOut = old })
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	tr := &codex.Translator{Failed: "client left"}
+	tr := &sse.Translator{Failed: "client left"}
 	up := &http.Response{Header: http.Header{"Cf-Ray": {"ray-1"}}}
 	trace := newUpstreamTrace()
 	trace.prompt = "key abcd1234, no system prompt, no tools, 1 input items"
@@ -707,7 +708,7 @@ func TestUpstreamEndFeedsTheCacheWatch(t *testing.T) {
 	trace.prev = registration.prev
 	trace.promptGeneration = registration.generation
 	trace.prompt = promptText(f, registration, time.Now())
-	tr := &codex.Translator{Usage: codex.Usage{Input: 640000, Cached: 600000, Output: 5}}
+	tr := &sse.Translator{Usage: sse.Usage{Input: 640000, Cached: 600000, Output: 5}}
 	logUpstreamEnd(context.Background(), tr, trace, &http.Response{Header: http.Header{}}, "codex", "a -> b", 10)
 	if buf.Len() != 0 {
 		t.Errorf("a fast reply was logged: %q", buf.String())

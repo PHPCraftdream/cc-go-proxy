@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
+	codexws "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -292,7 +294,7 @@ func TestCodexWebsocketOffUsesHTTPWithoutUpgrade(t *testing.T) {
 	if upgrades.Load() != 0 || posts.Load() != 1 {
 		t.Errorf("backend upgrades=%d POSTs=%d, want 0 and 1", upgrades.Load(), posts.Load())
 	}
-	if got := currentCodexWSManager().TakeStats(); got != (codex.WSStats{}) {
+	if got := currentCodexWSManager().TakeStats(); got != (codexws.WSStats{}) {
 		t.Errorf("websocket stats after HTTP request = %+v, want zero", got)
 	}
 }
@@ -941,9 +943,9 @@ func TestCodexRetryRequestFallsBackToHTTPAfterWebsocketRetryFails(t *testing.T) 
 			prepared.Add(1)
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("HTTP fallback"))}, nil
 		},
-		callWS: func(*codex.Request) (*http.Response, codex.WSInfo, error) {
+		callWS: func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
 			websocketCalls.Add(1)
-			return nil, codex.WSInfo{}, io.ErrUnexpectedEOF
+			return nil, codexws.WSInfo{}, io.ErrUnexpectedEOF
 		},
 	}
 	trace := newUpstreamTrace()
@@ -964,7 +966,7 @@ func TestCodexRetryRequestFallsBackToHTTPAfterWebsocketRetryFails(t *testing.T) 
 	if got := trace.transport; !strings.Contains(got, "fallback to HTTP") {
 		t.Errorf("transport note = %q, want websocket fallback", got)
 	}
-	if summary := trace.summary(&codex.Translator{}, time.Now(), 100); strings.Count(summary, "fallback to HTTP") != 1 {
+	if summary := trace.summary(&sse.Translator{}, time.Now(), 100); strings.Count(summary, "fallback to HTTP") != 1 {
 		t.Errorf("fallback transport was duplicated in summary: %q", summary)
 	}
 	if tls, sent, wrote := trace.linkSample(); tls != 0 || sent != 0 || wrote != 0 {
@@ -1029,9 +1031,9 @@ func TestCodexWebsocketCancellationDoesNotFallbackToHTTP(t *testing.T) {
 			prepared.Add(1)
 			return nil, nil
 		},
-		callWS: func(*codex.Request) (*http.Response, codex.WSInfo, error) {
+		callWS: func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
 			websocketCalls.Add(1)
-			return nil, codex.WSInfo{}, context.Canceled
+			return nil, codexws.WSInfo{}, context.Canceled
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1048,7 +1050,7 @@ func TestCodexWebsocketCancellationDoesNotFallbackToHTTP(t *testing.T) {
 	if got := trace.transport; !strings.Contains(got, "request canceled") {
 		t.Errorf("cancellation transport note = %q", got)
 	}
-	if summary := trace.summary(&codex.Translator{}, time.Now(), 10); strings.Count(summary, "request canceled") != 1 {
+	if summary := trace.summary(&sse.Translator{}, time.Now(), 10); strings.Count(summary, "request canceled") != 1 {
 		t.Errorf("cancellation transport duplicated in summary: %q", summary)
 	}
 }
@@ -1095,9 +1097,9 @@ func TestCodexWebsocketRetryResponseIsStampedForTiming(t *testing.T) {
 	trace.wire = &codex.Wire{}
 	callCount := 0
 	retry := &codexRetry{request: &codex.Request{Model: "gpt-test", Input: []any{"input"}}, websocket: true}
-	retry.callWS = func(*codex.Request) (*http.Response, codex.WSInfo, error) {
+	retry.callWS = func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
 		callCount++
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ws response"))}, codex.WSInfo{Mode: "full", SentBytes: 10}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ws response"))}, codexws.WSInfo{Mode: "full", SentBytes: 10}, nil
 	}
 	ctx := context.Background()
 	resp, err := retry.requestCall(ctx, trace, 100)

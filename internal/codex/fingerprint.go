@@ -31,7 +31,7 @@ func NewFingerprint(req *Request) Fingerprint {
 	f.Key = req.PromptCacheKey
 	f.Model = req.Model
 	if len(req.Input) > 0 {
-		if m, ok := req.Input[0].(messageItem); ok && m.Role == "developer" {
+		if m, ok := req.Input[0].(MessageItem); ok && m.Role == "developer" {
 			f.System = hash8(m)
 		}
 	}
@@ -60,7 +60,7 @@ func ItemHashes(req *Request) []uint64 {
 type Digest struct {
 	Fingerprint Fingerprint
 	hashes      []uint64
-	sizes       []int
+	Sizes       []int
 	last        []byte
 }
 
@@ -68,7 +68,7 @@ type Digest struct {
 // size and the encoding of the last one.
 func NewDigest(req *Request) *Digest {
 	hashes, sizes, last := itemDigests(req, true)
-	return &Digest{Fingerprint: NewFingerprint(req), hashes: hashes, sizes: sizes, last: last}
+	return &Digest{Fingerprint: NewFingerprint(req), hashes: hashes, Sizes: sizes, last: last}
 }
 
 // Hashes is the hash of every input item, for the cache watch.
@@ -79,6 +79,9 @@ func (d *Digest) Hashes() []uint64 {
 	return d.hashes
 }
 
+// Last is the encoded last item of the request's input; nil when it has none.
+func (d *Digest) Last() []byte { return d.last }
+
 type digestKey struct{}
 
 // WithDigest makes the codex call on ctx reuse d.
@@ -86,7 +89,7 @@ func WithDigest(ctx context.Context, d *Digest) context.Context {
 	return context.WithValue(ctx, digestKey{}, d)
 }
 
-func digestFrom(ctx context.Context) *Digest {
+func DigestFrom(ctx context.Context) *Digest {
 	d, _ := ctx.Value(digestKey{}).(*Digest)
 	return d
 }

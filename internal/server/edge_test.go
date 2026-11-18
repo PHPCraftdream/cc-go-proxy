@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -104,18 +105,18 @@ func TestEdgeError(t *testing.T) {
 func TestSummaryShowsTheCompressedSize(t *testing.T) {
 	start := time.Unix(1000, 0)
 	u := &upstreamTrace{start: start, wire: &codex.Wire{Raw: 6 << 20, Sent: 1 << 20, Encoding: "zstd"}}
-	if got := u.summary(&codex.Translator{}, start.Add(time.Second), 6<<20); !strings.Contains(got, "| request 6.0 MiB (zstd 1.0 MiB)") {
+	if got := u.summary(&sse.Translator{}, start.Add(time.Second), 6<<20); !strings.Contains(got, "| request 6.0 MiB (zstd 1.0 MiB)") {
 		t.Errorf("summary = %q", got)
 	}
 	ct := u.clientTrace()
 	ct.GetConn("h:443")
 	ct.GotConn(httptrace.GotConnInfo{})
 	u.got, u.wrote = start.Add(time.Second), start.Add(3*time.Second)
-	if got := u.summary(&codex.Translator{}, start.Add(5*time.Second), 6<<20); !strings.Contains(got, "| request 6.0 MiB (zstd 1.0 MiB, written in 2s)") {
+	if got := u.summary(&sse.Translator{}, start.Add(5*time.Second), 6<<20); !strings.Contains(got, "| request 6.0 MiB (zstd 1.0 MiB, written in 2s)") {
 		t.Errorf("summary = %q", got)
 	}
 	u.wire = &codex.Wire{Raw: 100, Sent: 100}
-	if got := u.summary(&codex.Translator{}, start.Add(5*time.Second), 100); !strings.Contains(got, "| request 100 B (written in 2s)") {
+	if got := u.summary(&sse.Translator{}, start.Add(5*time.Second), 100); !strings.Contains(got, "| request 100 B (written in 2s)") {
 		t.Errorf("plain summary = %q", got)
 	}
 }

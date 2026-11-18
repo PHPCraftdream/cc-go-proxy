@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 )
 
 func TestCacheStatsCountsBigPrompts(t *testing.T) {
@@ -17,12 +18,12 @@ func TestCacheStatsCountsBigPrompts(t *testing.T) {
 	if got, _ := s.Take(); got != "" {
 		t.Errorf("nothing counted, line %q", got)
 	}
-	s.Add(codex.Usage{Input: 100000, Cached: 100000})
-	s.Add(codex.Usage{Input: 100000, Cached: 50000})
-	s.Add(codex.Usage{Input: 100000, Cached: 0})
-	s.Add(codex.Usage{Input: cacheMissMin - 1})      // too small to be cached
-	s.Add(codex.Usage{})                             // no usage
-	s.Add(codex.Usage{Input: 100000, Cached: 90000}) // exactly the share: whole
+	s.Add(sse.Usage{Input: 100000, Cached: 100000})
+	s.Add(sse.Usage{Input: 100000, Cached: 50000})
+	s.Add(sse.Usage{Input: 100000, Cached: 0})
+	s.Add(sse.Usage{Input: cacheMissMin - 1})      // too small to be cached
+	s.Add(sse.Usage{})                             // no usage
+	s.Add(sse.Usage{Input: 100000, Cached: 90000}) // exactly the share: whole
 	want := "4 big prompts, 1 read from the cache in part (under 90%), 1 not at all; 60% of 400k input tokens came from the cache"
 	if got, _ := s.Take(); got != want {
 		t.Errorf("line %q, want %q", got, want)
@@ -41,7 +42,7 @@ func TestCacheStatsIsSafeForConcurrentUse(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 200 {
-				s.Add(codex.Usage{Input: 20000, Cached: 10000})
+				s.Add(sse.Usage{Input: 20000, Cached: 10000})
 			}
 		}()
 	}
@@ -68,7 +69,7 @@ func TestWriteCacheStats(t *testing.T) {
 	if b.Len() != 0 {
 		t.Errorf("a quiet period logged %q", b.String())
 	}
-	promptStats.Add(codex.Usage{Input: 640000, Cached: 600000})
+	promptStats.Add(sse.Usage{Input: 640000, Cached: 600000})
 	writeCacheStats(&b, time.Date(2026, 11, 8, 9, 10, 11, 0, time.Local))
 	if got := b.String(); !strings.HasPrefix(got, "[09:10:11] upstream cache [codex]: 1 big prompts, 0 read from the cache in part") || !strings.HasSuffix(got, "93% of 640k input tokens came from the cache\n") {
 		t.Errorf("line %q", got)
@@ -154,7 +155,7 @@ func TestSummaryShowsTheEdge(t *testing.T) {
 		{"", "LAX", ""},
 	} {
 		u := &upstreamTrace{start: start, prompt: "key abcd1234, no system prompt, no tools, 9 input items", prev: prevInfo{edge: c.prev}, edge: c.cur}
-		got := u.summary(&codex.Translator{}, start.Add(time.Second), 10)
+		got := u.summary(&sse.Translator{}, start.Add(time.Second), 10)
 		if c.want == "" {
 			if strings.Contains(got, "edge") {
 				t.Errorf("%+v: %q", c, got)
@@ -185,7 +186,7 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	t1.prev = reg1.prev
 	t1.promptGeneration = reg1.generation
 	t1.prompt = promptText(f1, reg1, time.Now())
-	logUpstreamEnd(context.Background(), &codex.Translator{Usage: codex.Usage{Input: 640000, Cached: 600000}}, t1,
+	logUpstreamEnd(context.Background(), &sse.Translator{Usage: sse.Usage{Input: 640000, Cached: 600000}}, t1,
 		&http.Response{Header: http.Header{"Cf-Ray": {"r1-LAX"}}}, "codex", "a -> b", 10)
 	if buf.Len() != 0 {
 		t.Fatalf("a fast reply was logged: %q", buf.String())
@@ -198,7 +199,7 @@ func TestEdgeFlowsFromOneRequestToTheNext(t *testing.T) {
 	t2.prev = reg2.prev
 	t2.promptGeneration = reg2.generation
 	t2.prompt = promptText(f2, reg2, time.Now())
-	tr := &codex.Translator{Failed: "boom", Usage: codex.Usage{Input: 650000, Cached: 400000}}
+	tr := &sse.Translator{Failed: "boom", Usage: sse.Usage{Input: 650000, Cached: 400000}}
 	logUpstreamEnd(context.Background(), tr, t2, &http.Response{Header: http.Header{"Cf-Ray": {"r2-PIT"}}}, "codex", "a -> b", 10)
 	got := buf.String()
 	if !strings.Contains(got, "; edge LAX -> PIT") || !strings.Contains(got, "cache partial 61% (400000 of 650000)") {
@@ -323,10 +324,10 @@ func TestEdgeGroup(t *testing.T) {
 
 func TestCacheStatsGroups(t *testing.T) {
 	s := &cacheStats{}
-	s.Add(codex.Usage{Input: 100000, Cached: 100000}, groupGapShort, groupEdgeSame)
-	s.Add(codex.Usage{Input: 100000, Cached: 50000}, groupGapShort, "")
-	s.Add(codex.Usage{Input: 200000, Cached: 20000}, groupGapLong, groupEdgeOther)
-	s.Add(codex.Usage{Input: 100}, groupGapLong, groupEdgeOther) // too small: nowhere
+	s.Add(sse.Usage{Input: 100000, Cached: 100000}, groupGapShort, groupEdgeSame)
+	s.Add(sse.Usage{Input: 100000, Cached: 50000}, groupGapShort, "")
+	s.Add(sse.Usage{Input: 200000, Cached: 20000}, groupGapLong, groupEdgeOther)
+	s.Add(sse.Usage{Input: 100}, groupGapLong, groupEdgeOther) // too small: nowhere
 	total, by := s.Take()
 	if !strings.HasPrefix(total, "3 big prompts, 2 read from the cache in part (under 90%), 0 not at all; 42% of 400k") {
 		t.Errorf("total %q", total)
@@ -340,7 +341,7 @@ func TestCacheStatsGroups(t *testing.T) {
 		t.Errorf("counts survived Take: %q %q", total, by)
 	}
 	// Prompts without any group still give a total and no group text.
-	s.Add(codex.Usage{Input: 100000, Cached: 100000})
+	s.Add(sse.Usage{Input: 100000, Cached: 100000})
 	if total, by = s.Take(); total == "" || by != "" {
 		t.Errorf("no groups: %q %q", total, by)
 	}
@@ -357,9 +358,9 @@ func TestCacheStatsTurnStateGroups(t *testing.T) {
 	}
 
 	s := &cacheStats{}
-	s.Add(codex.Usage{Input: 100000, Cached: 100000}, groupGapShort, groupEdgeSame, turnStateGroup(true))
-	s.Add(codex.Usage{Input: 200000, Cached: 50000}, groupGapLong, groupEdgeOther, turnStateGroup(false))
-	s.Add(codex.Usage{Input: 200000, Cached: 100000}, groupGapMiddle)
+	s.Add(sse.Usage{Input: 100000, Cached: 100000}, groupGapShort, groupEdgeSame, turnStateGroup(true))
+	s.Add(sse.Usage{Input: 200000, Cached: 50000}, groupGapLong, groupEdgeOther, turnStateGroup(false))
+	s.Add(sse.Usage{Input: 200000, Cached: 100000}, groupGapMiddle)
 	_, by := s.Take()
 	want := "started <5m before: 1 prompts, 100% cached; started 5-10m before: 1 prompts, 50% cached; started >10m before: 1 prompts, 25% cached; same edge: 1 prompts, 100% cached; other edge: 1 prompts, 25% cached; turn state sent: 1 prompts, 100% cached; turn state not sent: 1 prompts, 25% cached"
 	if by != want {
@@ -371,7 +372,7 @@ func TestWriteCacheStatsPrintsTheGroups(t *testing.T) {
 	old := promptStats
 	promptStats = &cacheStats{}
 	t.Cleanup(func() { promptStats = old })
-	promptStats.Add(codex.Usage{Input: 640000, Cached: 600000}, groupGapShort)
+	promptStats.Add(sse.Usage{Input: 640000, Cached: 600000}, groupGapShort)
 	var b bytes.Buffer
 	writeCacheStats(&b, time.Date(2026, 11, 8, 9, 10, 11, 0, time.Local))
 	lines := strings.Split(strings.TrimSuffix(b.String(), "\n"), "\n")
