@@ -105,8 +105,9 @@ type Profile struct {
 	CompactPercent int64 `json:"compact_percent"`
 	// Proxy overrides connections.proxy for this profile: a proxy URL, or
 	// "none" for no proxy. Absent: the global setting applies.
-	Proxy  string      `json:"proxy"`
-	Models []ModelRule `json:"models"`
+	Proxy      string            `json:"proxy"`
+	Models     []ModelRule       `json:"models"`
+	SpeedRules map[string]string `json:"speed_rules"`
 }
 
 // fileConfig is the Ktav config file shape.
@@ -229,6 +230,11 @@ func (fc *fileConfig) validate() error {
 		if err := validateProfileProxy(pf.Name, pf.Proxy); err != nil {
 			return err
 		}
+		for family, speed := range pf.SpeedRules {
+			if !validSpeedFamily(family) || (speed != SpeedFast && speed != SpeedStandard) {
+				return fmt.Errorf("profile %q: invalid speed rule %q: %q", pf.Name, family, speed)
+			}
+		}
 		if reservedProfiles[pf.Name] {
 			return fmt.Errorf("profiles[%d]: %q is a reserved profile name (claude is the ccgp --send endpoint)", i, pf.Name)
 		}
@@ -238,6 +244,9 @@ func (fc *fileConfig) validate() error {
 		}
 		if IsOwnType(ptype) && (pf.Proxy != "" || len(pf.Models) > 0 || pf.DefaultModel != "" || pf.ContextWindow != 0 || pf.CompactPercent != 0) {
 			return fmt.Errorf("profile %q: a %q profile does not go through ccgp, so proxy, models, default_model, context_window and compact_percent do not apply", pf.Name, ptype)
+		}
+		if ptype != ProviderTypeCodex && len(pf.SpeedRules) > 0 {
+			return fmt.Errorf("profile %q: speed_rules require a codex provider", pf.Name)
 		}
 		for j, r := range pf.Models {
 			if r.Match == "" || r.Model == "" {

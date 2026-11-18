@@ -175,6 +175,15 @@ const Gpt6InputLimit = 922_000
 
 var gpt6Re = regexp.MustCompile(`^gpt-(\d+(?:\.\d+)*)-(astra|sol|terra|luna)$`)
 
+// ModelFamily returns the logical catalog family of a model slug, or empty.
+func ModelFamily(slug string) string {
+	g := gpt6Re.FindStringSubmatch(slug)
+	if g == nil {
+		return ""
+	}
+	return g[2]
+}
+
 type release struct {
 	slug    string
 	version []int
