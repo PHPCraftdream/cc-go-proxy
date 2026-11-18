@@ -214,6 +214,21 @@ jobs:
 
     - run: node --test "scripts/npm/*.test.mjs" "scripts/ci/*.test.mjs"
 
+  # At most 1000 lines in a file and 7 code files in a directory, tests included.
+  limits:
+    name: Size limits
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+
+    - run: node scripts/ci/limits.mjs
+
   # The installers download the published release, so this checks them against
   # what users really get: a pinned version and the latest one.
   installers:
