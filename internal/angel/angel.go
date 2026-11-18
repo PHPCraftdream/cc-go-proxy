@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel/proc"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 )
 
@@ -81,7 +82,7 @@ func Start(exe string, args []string, logPath, base string, timeout time.Duratio
 
 	cmd := exec.Command(exe, args...)
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = log, log, nil
-	cmd.SysProcAttr = detachedAttr()
+	cmd.SysProcAttr = proc.DetachedAttr()
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -116,7 +117,7 @@ func Stop(base string, timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if err := terminate(p); err != nil {
+	if err := proc.Terminate(p); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(timeout)

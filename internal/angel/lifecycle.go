@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel/proc"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
@@ -76,7 +77,7 @@ func beginRun(dir, version string) (*Lifecycle, string) {
 	}
 	lc := &Lifecycle{dir: dir, stop: make(chan struct{}), Run: Run{
 		PID: strconv.Itoa(os.Getpid()), Started: time.Now().Format(timeFormat), Version: version,
-		Parent: strconv.Itoa(os.Getppid()), Job: jobNote(),
+		Parent: strconv.Itoa(os.Getppid()), Job: proc.JobNote(),
 	}}
 	_ = ktavfile.Write(runPath(dir), lc.Run)
 	lc.crash = openCrash(dir)

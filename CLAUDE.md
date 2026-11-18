@@ -29,7 +29,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/proxydial` | SOCKS5 and HTTP(S) CONNECT dialers; `Choice` (proxy / none / env) on the request context, cascade `connections.proxy` -> provider `proxy:` -> profile `proxy:` (the nearest level that sets one replaces the ones above whole; `none` = direct) in `Config.ProxyChoice`; default proxy for context-less calls set by `config.Load` |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) and their artifacts (tasks, file versions, plan: `artifacts.go`) between Claude Code config dirs; `--fork` gives a copy ids of its own (`forkids.go`); the failed end of a transcript (turns with only API errors) is left out (`failedtail.go`); `StripThinking` |
 | `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload; peak hours: `POST /v1/messages` in a provider's peak window is refused with a 400 before any upstream call (`peak.go`) |
-| `internal/angel` | detached background process, `/health`-based control; the server's run record (`server.run`), crash reports (`crash/`), the stop note (`StopBy`), the Windows job it lives in |
+| `internal/angel` | detached background process, `/health`-based control; the server's run record (`server.run`), crash reports (`crash/`), the stop note (`StopBy`); `angel/proc`: detach, terminate and the Windows job it lives in per OS |
 
 ## Invariants
 
