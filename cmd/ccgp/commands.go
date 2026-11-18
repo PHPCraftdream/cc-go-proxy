@@ -42,6 +42,7 @@ func commands() []command {
 		{name: "-i", args: "", desc: "Same as: ccgp --interactive", ensureConfig: true, run: interactiveCmd},
 		{name: "--config", args: "reset", desc: "Back up the config and regenerate the default one", run: configCmd, verbs: []string{"reset"}},
 		{name: "--connections", args: "[active N] [total N] [proxy URL|off [provider NAME | profile NAME]] [--json]", desc: "Show or set the upstream connections per backend (default 7 active, 10 total) and the proxy", ensureConfig: true, run: connectionsCmd, verbs: []string{"active", "total", "proxy", "proxy provider", "proxy profile"}},
+		{name: "--speed", args: "[<profile> <family> [fast|standard|unset|inherit]]", desc: "Show or set per-profile Codex family speed rules", run: speedCmd},
 		{name: "--peak", args: "[provider [set|add WINDOW...|rm N...|tz ZONE|clear|pause [DURATION]|resume]] [--json]", desc: "Show or set the peak hours of a provider, when its profiles' requests are refused", ensureConfig: true, run: peakCmd, verbs: []string{"set", "add", "rm", "tz", "clear", "pause", "resume"}},
 		{name: "--which", args: "<profile> <model> [--json]", desc: "Show where a Claude model is routed in a profile (offline)", ensureConfig: true, run: whichCmd},
 		{name: "--logs", args: "[-f] [-n N]", desc: "Show the background server log (-f follow, -n N lines, default 50)", run: logsCmd},

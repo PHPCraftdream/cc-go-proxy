@@ -10,6 +10,19 @@ import (
 // the command's name. Commands without an entry get the generic fallback from
 // commandHelpText, so rows added later still answer --help.
 var commandHelp = map[string]string{
+	"--speed": `ccgp --speed [<profile> <family> [fast|standard|unset|inherit]]
+
+List explicit Codex profile family rules, or inspect one rule and its source.
+Set fast or standard, or remove the rule with unset (inherit is an alias).
+Without a rule the client request determines speed. Family names are stable
+logical names such as astra, not pinned model versions. Rules are per profile.
+
+Examples:
+  ccgp --speed
+  ccgp --speed codex astra
+  ccgp --speed codex astra fast
+  ccgp --speed codex astra unset
+`,
 	"--serve": `ccgp --serve [-d] [-s]
 
 Run the proxy server in the foreground.

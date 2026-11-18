@@ -235,6 +235,15 @@ func commandCandidates(cmd string, sub []string, n completionNames) []string {
 		return []string{"active", "total", "proxy", "--json"}
 	case "--interactive", "-i":
 		return nil
+	case "--speed":
+		switch len(sub) {
+		case 0:
+			return call(n.profiles)
+		case 1:
+			return speedFamilies
+		case 2:
+			return []string{"fast", "standard", "unset", "inherit"}
+		}
 	case "--peak":
 		switch {
 		case len(sub) == 0:

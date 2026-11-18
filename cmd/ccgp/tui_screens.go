@@ -478,6 +478,80 @@ func providerMenu(name string) *menu {
 	}
 }
 
+func speedMenu() *menu {
+	return &menu{
+		head: func(*app) string { return "Codex speed rules: choose a profile" },
+		info: func(a *app) string {
+			var b bytes.Buffer
+			listSpeed(&b, a.cfg)
+			return strings.TrimSpace(b.String())
+		},
+		items: func(a *app) []menuItem {
+			var items []menuItem
+			for _, name := range sortedKeys(a.cfg.Profiles) {
+				p := a.cfg.Profiles[name]
+				if pr := a.cfg.Providers[p.Provider]; pr != nil && pr.Type == config.ProviderTypeCodex {
+					name := name
+					items = append(items, menuItem{id: "profile", label: name, run: push(func() screen { return speedFamilyMenu(name) })})
+				}
+			}
+			return items
+		},
+	}
+}
+
+func speedFamilyMenu(name string) *menu {
+	return &menu{
+		head: func(*app) string { return "Speed of " + name + ": choose a family" },
+		items: func(a *app) []menuItem {
+			p := a.cfg.Profiles[name]
+			if p == nil {
+				return nil
+			}
+			families := map[string]bool{}
+			for _, family := range speedFamilies {
+				families[family] = true
+			}
+			for family := range p.SpeedRules {
+				families[family] = true
+			}
+			var items []menuItem
+			for _, family := range sortedKeys(families) {
+				family := family
+				items = append(items, menuItem{id: "family", label: family + "  " + speedPolicy(name, family, p.SpeedFor(family)), run: push(func() screen { return speedModeMenu(name, family) })})
+			}
+			return items
+		},
+	}
+}
+
+func speedModeMenu(name, family string) *menu {
+	return &menu{
+		head: func(*app) string { return "Speed of " + name + " / " + family },
+		info: func(a *app) string { return speedPolicy(name, family, a.cfg.Profiles[name].SpeedFor(family)) },
+		items: func(*app) []menuItem {
+			var items []menuItem
+			for _, mode := range []string{"fast", "standard", "unset"} {
+				mode := mode
+				items = append(items, menuItem{id: mode, label: mode, run: func(a *app) tea.Cmd {
+					var b bytes.Buffer
+					if err := speed(&b, []string{name, family, mode}); err != nil {
+						a.errMsg = err.Error()
+						return nil
+					}
+					if err := a.reload(); err != nil {
+						a.errMsg = err.Error()
+						return nil
+					}
+					a.msg = strings.TrimSpace(b.String())
+					return nil
+				}})
+			}
+			return items
+		},
+	}
+}
+
 // ---- peak hours ----
 
 // peakListMenu lists the providers, to pick the one whose peak hours to edit.

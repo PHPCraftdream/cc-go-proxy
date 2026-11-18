@@ -130,7 +130,7 @@ func TestAngelServeArgs(t *testing.T) {
 func TestEnsureConfigPolicy(t *testing.T) {
 	noConfig := map[string]bool{
 		"--stop": true, "--status": true, "--config": true, "--logs": true, "--version": true, "--help": true,
-		"--completion": true, "--complete": true, "--doctor": true, "--update": true,
+		"--completion": true, "--complete": true, "--doctor": true, "--update": true, "--speed": true,
 	}
 	for _, c := range commands() {
 		if c.ensureConfig == noConfig[c.name] {
