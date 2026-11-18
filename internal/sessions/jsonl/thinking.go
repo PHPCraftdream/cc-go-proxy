@@ -1,4 +1,4 @@
-package sessions
+package jsonl
 
 import (
 	"bufio"
@@ -36,8 +36,8 @@ func StripThinking(data []byte) ([]byte, int, error) {
 // copied byte for byte. It returns the number of blocks removed; errors from w
 // are returned as they are.
 func StripThinkingStream(r io.Reader, w io.Writer) (int, error) {
-	br := bufio.NewReaderSize(r, copyBuf)
-	s := newThinkingStripper()
+	br := bufio.NewReaderSize(r, CopyBuf)
+	s := NewStripper()
 	for {
 		seg, rerr := br.ReadBytes('\n')
 		if len(seg) > 0 {
@@ -52,7 +52,7 @@ func StripThinkingStream(r io.Reader, w io.Writer) (int, error) {
 			}
 		}
 		if rerr == io.EOF {
-			return s.removed, nil
+			return s.Removed, nil
 		}
 		if rerr != nil {
 			return 0, rerr
@@ -60,24 +60,25 @@ func StripThinkingStream(r io.Reader, w io.Writer) (int, error) {
 	}
 }
 
-// thinkingStripper is StripThinkingStream one line at a time.
-type thinkingStripper struct {
+// Stripper is StripThinkingStream one line at a time.
+type Stripper struct {
 	redirect map[string]json.RawMessage // dropped line's uuid -> parentUuid to use instead
-	removed  int
+	Removed  int
 }
 
-func newThinkingStripper() *thinkingStripper {
-	return &thinkingStripper{redirect: map[string]json.RawMessage{}}
+// NewStripper returns a Stripper with no history.
+func NewStripper() *Stripper {
+	return &Stripper{redirect: map[string]json.RawMessage{}}
 }
 
 // line returns what seg, a line with its end of line, becomes: seg itself, its
 // rewritten form, or nil when it is dropped.
-func (s *thinkingStripper) line(seg []byte) ([]byte, error) {
-	out, note := preStrip(seg)
-	return s.finish(out, note)
+func (s *Stripper) line(seg []byte) ([]byte, error) {
+	out, note := PreStrip(seg)
+	return s.Finish(out, note)
 }
 
-// stripNote is what preStrip leaves for finish.
+// stripNote is what PreStrip leaves for finish.
 type stripNote struct {
 	removed int
 	drop    bool   // the line had nothing but thinking
@@ -91,9 +92,9 @@ type stripNote struct {
 	mustParse bool
 }
 
-// preStrip removes the thinking blocks of seg. It keeps no state, so it runs
+// PreStrip removes the thinking blocks of seg. It keeps no state, so it runs
 // on any goroutine; the links to dropped lines are finish's, in order.
-func preStrip(seg []byte) ([]byte, any) {
+func PreStrip(seg []byte) ([]byte, any) {
 	line := bytes.TrimRight(seg, "\r\n")
 	if len(line) == 0 || line[0] != '{' {
 		return seg, nil
@@ -162,7 +163,7 @@ var linkMarks = func() [][]byte {
 	return out
 }()
 
-// stripBlocks is preStrip's removal of the thinking blocks of line (seg
+// stripBlocks is PreStrip's removal of the thinking blocks of line (seg
 // without its end of line); a nil note: nothing to remove.
 func stripBlocks(seg, line []byte) ([]byte, *stripNote) {
 	var top map[string]json.RawMessage
@@ -205,9 +206,11 @@ func stripBlocks(seg, line []byte) ([]byte, *stripNote) {
 	return seg, &stripNote{err: err}
 }
 
-// finish completes preStrip's work on a line, in the order of the lines: it
+// finish completes PreStrip's work on a line, in the order of the lines: it
 // remembers a dropped line and points the links to it at its parent.
-func (s *thinkingStripper) finish(seg []byte, note any) ([]byte, error) {
+// Finish completes a line that PreStrip began: it drops or rewrites it by what
+// the lines before it did.
+func (s *Stripper) Finish(seg []byte, note any) ([]byte, error) {
 	n, _ := note.(*stripNote)
 	if n == nil {
 		return seg, nil // nothing removed, no link to look at
@@ -216,7 +219,7 @@ func (s *thinkingStripper) finish(seg []byte, note any) ([]byte, error) {
 		if n.err != nil {
 			return nil, n.err
 		}
-		s.removed += n.removed
+		s.Removed += n.removed
 		if n.drop {
 			if n.hasUUID {
 				parent := n.parent

@@ -1,11 +1,8 @@
-package sessions
+package forkids
 
-import "bytes"
-
-// Hand-written finders for the short ids and slugs a fork collects, in place
-// of regular expressions that ran over every line of a transcript (kept in
-// idfind_test.go, which proves both find the same). Each finds what
-// FindAllSubmatch did: leftmost first, a match never overlapping the last.
+import (
+	"bytes"
+)
 
 // isSpace is \s of Go's regular expressions.
 func isSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r' }

@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions/forkids"
 )
 
 // What Claude Code keeps of a session outside its transcript and the folder
@@ -59,7 +61,7 @@ func syncArtifacts(srcDir, dstDir string, s Session, as string, opt Options, res
 //
 // It returns how many files it wrote or took out; a session without tasks at
 // the source leaves the destination alone.
-func syncTasks(srcDir, dstDir, id, as string, ids *forkIDs) (int, error) {
+func syncTasks(srcDir, dstDir, id, as string, ids *forkids.IDs) (int, error) {
 	src := filepath.Join(srcDir, tasksDir, id)
 	entries, err := os.ReadDir(src)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -90,7 +92,7 @@ func syncTasks(srcDir, dstDir, id, as string, ids *forkIDs) (int, error) {
 		}
 		have[name] = true
 		if ids != nil && strings.HasSuffix(name, ".json") {
-			data = ids.line(data)
+			data = ids.Line(data)
 		}
 		wrote, err := putFile(filepath.Join(dst, name), data, info.ModTime(), stamp)
 		if err != nil {
@@ -185,12 +187,12 @@ func sameFile(src fs.DirEntry, path string) bool {
 // syncPlans copies the plan files of the session: plans/<slug>.md for each
 // slug its transcript names. A plan that differs is written anew; one changed
 // at the destination after the source's is kept as a backup first. A fork has
-// slugs of its own (ids.slugs), so that it and the original, in one Claude
+// slugs of its own (ids.Slugs), so that it and the original, in one Claude
 // Code, do not write the same plan file. It returns how many files it wrote.
-func syncPlans(srcDir, dstDir, transcript string, ids *forkIDs) (int, error) {
+func syncPlans(srcDir, dstDir, transcript string, ids *forkids.IDs) (int, error) {
 	slugs := map[string]string{}
 	if ids != nil {
-		slugs = ids.slugs
+		slugs = ids.Slugs
 	} else {
 		for _, s := range transcriptSlugs(transcript) {
 			slugs[s] = s
@@ -209,7 +211,7 @@ func syncPlans(srcDir, dstDir, transcript string, ids *forkIDs) (int, error) {
 			return n, err
 		}
 		if ids != nil {
-			data = ids.line(data)
+			data = ids.Line(data)
 		}
 		wrote, err := putFile(filepath.Join(dstDir, plansDir, as+".md"), data, info.ModTime(), stamp)
 		if err != nil {

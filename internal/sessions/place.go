@@ -2,8 +2,6 @@ package sessions
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,10 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-)
 
-// copyBuf is the I/O chunk size; transcripts can be gigabytes.
-const copyBuf = 1 << 20
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions/forkids"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/sessions/jsonl"
+)
 
 // errDiverged aborts a copy whose source differs from what the destination
 // already holds.
@@ -33,7 +31,7 @@ type copied struct {
 // stripped of thinking blocks; the failed end of a transcript (opt.trimTail)
 // is compared with the destination but never written. prog, when set,
 // receives the bytes of src consumed so far (throttled by opt.ProgressEvery).
-func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (Status, copied, error) {
+func syncFile(src, dst string, isJSONL bool, opt Options, prog func(done, total int64)) (Status, copied, error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return 0, copied{}, err
@@ -44,14 +42,14 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		return 0, copied{}, err
 	}
 	size := info.Size()
-	if jsonl {
+	if isJSONL {
 		if size, err = completeLen(f, size); err != nil {
 			return 0, copied{}, err
 		}
 	}
 	cut, failed := size, 0
-	if jsonl && opt.trimTail {
-		if cut, failed, err = failedTail(f, size); err != nil {
+	if isJSONL && opt.trimTail {
+		if cut, failed, err = jsonl.FailedTail(f, size); err != nil {
 			return 0, copied{}, err
 		}
 	}
@@ -70,11 +68,11 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 		}
 		in = &progressReader{r: in, total: size, every: every, last: time.Now(), fn: prog}
 	}
-	rewrite := lineRewrite(opt, jsonl, src)
-	stamp := lineStamp(opt, jsonl)
-	var strip *thinkingStripper
-	if jsonl && opt.StripThinking {
-		strip = newThinkingStripper()
+	rewrite := lineRewrite(opt, isJSONL, src)
+	stamp := lineStamp(opt, isJSONL)
+	var strip *jsonl.Stripper
+	if isJSONL && opt.StripThinking {
+		strip = jsonl.NewStripper()
 	}
 	if rewrite != nil || strip != nil || stamp != nil {
 		// The work without state runs on several goroutines; the strip's links
@@ -86,23 +84,23 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 				}
 			}
 			if strip != nil {
-				return preStrip(line)
+				return jsonl.PreStrip(line)
 			}
 			return line, nil
 		}
-		s := &swapReader{src: newLines(in, work, size)}
-		defer s.src.close()
+		s := &swapReader{src: jsonl.NewLines(in, work, size)}
+		defer s.src.Close()
 		switch {
 		case strip != nil && stamp != nil:
 			s.fn = func(line []byte, note any) ([]byte, error) {
-				out, err := strip.finish(line, note)
+				out, err := strip.Finish(line, note)
 				if err != nil || len(out) == 0 {
 					return out, err
 				}
 				return stamp(out), nil
 			}
 		case strip != nil:
-			s.fn = strip.finish
+			s.fn = strip.Finish
 		case stamp != nil:
 			s.fn = func(line []byte, _ any) ([]byte, error) { return stamp(line), nil }
 		}
@@ -113,10 +111,10 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 	} else if cut < size {
 		p.compareFrom(cut)
 	}
-	_, err = io.CopyBuffer(p, in, make([]byte, min(max(size, 32<<10), copyBuf)))
+	_, err = io.CopyBuffer(p, in, make([]byte, min(max(size, 32<<10), jsonl.CopyBuf)))
 	var c copied
 	if strip != nil {
-		c.removed = strip.removed
+		c.removed = strip.Removed
 	}
 	if errors.Is(err, errDiverged) {
 		return Diverged, c, nil
@@ -134,8 +132,8 @@ func syncFile(src, dst string, jsonl bool, opt Options, prog func(done, total in
 // place is syncFile plus Options.Force: a destination that diverged from the
 // source or is ahead of it is renamed to <dst>.bak-<time> and written afresh.
 // backup is that path, empty when nothing was replaced.
-func place(src, dst string, jsonl bool, opt Options, prog func(done, total int64)) (st Status, c copied, backup string, err error) {
-	st, c, err = syncFile(src, dst, jsonl, opt, prog)
+func place(src, dst string, isJSONL bool, opt Options, prog func(done, total int64)) (st Status, c copied, backup string, err error) {
+	st, c, err = syncFile(src, dst, isJSONL, opt, prog)
 	if err != nil || !opt.Force || (st != Diverged && st != Ahead) {
 		return st, c, "", err
 	}
@@ -150,29 +148,11 @@ func place(src, dst string, jsonl bool, opt Options, prog func(done, total int64
 	if err = os.Rename(dst, backup); err != nil {
 		return 0, copied{}, "", err
 	}
-	if _, c, err = syncFile(src, dst, jsonl, opt, prog); err != nil {
+	if _, c, err = syncFile(src, dst, isJSONL, opt, prog); err != nil {
 		_ = os.Rename(backup, dst) // nothing was written: put the old file back
 		return 0, copied{}, "", err
 	}
 	return Replaced, c, backup, nil
-}
-
-// forkID is the id a diverged session is written under: derived from the
-// original, so the next fork of it lands on the same file and extends it.
-func forkID(id string) string { return uuidOf("ccgp fork " + id) }
-
-// forkUUID is the id the fork fid has in place of the uuid u (of a message, a
-// prompt, …): a fork that kept the original's message ids would be the same
-// conversation to Claude Code, which lists only one of the two.
-func forkUUID(fid, u string) string { return uuidOf("ccgp fork " + fid + " " + u) }
-
-// uuidOf derives a version 4 layout id from s, as Claude Code's own ids.
-func uuidOf(s string) string {
-	h := sha256.Sum256([]byte(s))
-	h[6] = h[6]&0x0f | 0x40
-	h[8] = h[8]&0x3f | 0x80
-	x := hex.EncodeToString(h[:16])
-	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
 }
 
 // relocatedKey is the field of a relocated line that names the directory.
@@ -200,27 +180,27 @@ func isMarker(line []byte, want string) bool {
 //   - a fork gets its own ids, and no owner: the session-owner lines name the
 //     account of the source's Claude Code, and Claude Code stamps a transcript
 //     that has none with the account that opens it.
-func lineRewrite(opt Options, jsonl bool, src string) func([]byte) []byte {
+func lineRewrite(opt Options, isJSONL bool, src string) func([]byte) []byte {
 	ids := opt.rewrite
-	if !jsonl && !rewritable(src) {
+	if !isJSONL && !forkids.Rewritable(src) {
 		ids = nil
 	}
 	var home []byte
-	if jsonl && opt.home != "" {
+	if isJSONL && opt.home != "" {
 		home, _ = json.Marshal(opt.home)
 	}
 	if ids == nil && home == nil {
 		return nil
 	}
 	return func(line []byte) []byte {
-		if jsonl && ids != nil && isMarker(line, "session-owner") {
+		if isJSONL && ids != nil && isMarker(line, "session-owner") {
 			return nil
 		}
 		if home != nil && isMarker(line, "relocated") {
 			line = setRelocated(line, home)
 		}
 		if ids != nil {
-			line = ids.line(line)
+			line = ids.Line(line)
 		}
 		return line
 	}
@@ -228,8 +208,8 @@ func lineRewrite(opt Options, jsonl bool, src string) func([]byte) []byte {
 
 // lineStamp adds what opt.stamp says after a line in its final form (the
 // thinking strip parses single lines), nil when there is nothing to add.
-func lineStamp(opt Options, jsonl bool) func([]byte) []byte {
-	if !jsonl || !opt.stamp || opt.home == "" {
+func lineStamp(opt Options, isJSONL bool) func([]byte) []byte {
+	if !isJSONL || !opt.stamp || opt.home == "" {
 		return nil
 	}
 	home, _ := json.Marshal(opt.home)
@@ -285,7 +265,7 @@ func setRelocated(line, home []byte) []byte {
 // either leaves empty is left out. When mark is set, it is called once with
 // the length of the output so far as the line at input offset cut is reached.
 type swapReader struct {
-	src  lineSource
+	src  jsonl.Source
 	fn   func([]byte, any) ([]byte, error)
 	buf  []byte
 	err  error
@@ -322,7 +302,7 @@ func (s *swapReader) next() {
 		s.mark(s.out)
 		s.mark = nil
 	}
-	line, note, n, err := s.src.next()
+	line, note, n, err := s.src.Next()
 	s.in += int64(n)
 	s.err = err
 	if len(line) == 0 && note == nil {

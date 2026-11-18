@@ -1,15 +1,9 @@
-package sessions
+package forkids
 
 import (
 	"bytes"
 	"strings"
 )
-
-// Hand-written finders for the ids of a fork. A transcript runs to gigabytes,
-// and the regular expressions these replace (kept in fastscan_test.go, which
-// proves both agree) start with a character class, so Go's engine tried them at
-// every byte: twice in the first pass and three times in the second. These jump
-// from anchor to anchor ('-' of a uuid, '_' of an API id) with bytes.IndexByte.
 
 func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
 
@@ -62,7 +56,7 @@ func collectUUIDValues(b []byte, set map[string]bool) {
 
 // mapUUIDsTo is mapUUIDs appending to dst; changed is false when nothing was
 // replaced (dst is then to be ignored).
-func (m *forkIDs) mapUUIDsTo(dst, b []byte) ([]byte, bool) {
+func (m *IDs) mapUUIDsTo(dst, b []byte) ([]byte, bool) {
 	out, changed := dst, false
 	last := 0
 	var low [36]byte
@@ -76,7 +70,7 @@ func (m *forkIDs) mapUUIDsTo(dst, b []byte) ([]byte, bool) {
 		if !m.uuids[string(low[:])] {
 			return
 		}
-		out = append(append(out, b[last:at]...), forkUUID(m.fid, string(low[:]))...)
+		out = append(append(out, b[last:at]...), ForkUUID(m.FID, string(low[:]))...)
 		last = at + 36
 		changed = true
 	})
@@ -93,7 +87,7 @@ var apiPrefixes = map[string]bool{"srvtoolu": true, "toolu": true, "msg": true, 
 
 // mapAPIIDsTo is mapAPIIDs appending to dst; changed is false when nothing
 // was replaced (dst is then to be ignored).
-func (m *forkIDs) mapAPIIDsTo(dst, b []byte) ([]byte, bool) {
+func (m *IDs) mapAPIIDsTo(dst, b []byte) ([]byte, bool) {
 	out, changed := dst, false
 	last := 0
 	for i := 0; i < len(b); {
@@ -125,7 +119,7 @@ func (m *forkIDs) mapAPIIDsTo(dst, b []byte) ([]byte, bool) {
 		if !anthropic && len(bytes.Trim(body, hexDigits)) == 0 {
 			alphabet = hexDigits
 		}
-		out = append(append(out, b[last:keep]...), derive(m.fid, string(b[start:end]), alphabet, end-keep)...)
+		out = append(append(out, b[last:keep]...), derive(m.FID, string(b[start:end]), alphabet, end-keep)...)
 		last = end
 		i = end
 		changed = true
