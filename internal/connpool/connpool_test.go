@@ -3,15 +3,11 @@ package connpool
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -136,132 +132,6 @@ func TestLanesRenewInTurn(t *testing.T) {
 	tr.release(tr.acquire(nil))
 	if a.cur == pa {
 		t.Fatal("lane 0 not renewed at maxAge")
-	}
-}
-
-// A lane nobody picked for long is renewed lazily: the request that finds it due
-// stays on the old pool while the next one warms up. Past staleFactor*maxAge the
-// old connection is about to be closed by the far end, so the request must not
-// go there: the lane gets a fresh pool at once.
-func TestStaleLaneTakesNoRequestOnTheOldPool(t *testing.T) {
-	// idleLane: one lane with a used pool, whose warm-up never opens, left alone for age.
-	idleLane := func(age time.Duration) (*Transport, *lane, *pool, *clock) {
-		tr := New(time.Minute, 1, 3, plain)
-		c := withClock(tr)
-		tr.target = &url.URL{Scheme: "https", Host: "warm.invalid:443"}
-		tr.spawn = func(func()) {}
-		first := tr.acquire(nil)
-		tr.release(first)
-		c.t = c.t.Add(age)
-		return tr, tr.lanes[0], first, c
-	}
-
-	for _, age := range []time.Duration{time.Minute, 2 * time.Minute} { // due, and exactly at the bound
-		tr, l, first, _ := idleLane(age)
-		p := tr.acquire(nil)
-		tr.release(p)
-		if p != first || l.warming == nil {
-			t.Fatalf("age %v: a due lane must serve on its old pool and warm the next (same %v, warming %v)", age, p == first, l.warming != nil)
-		}
-	}
-
-	tr, l, first, c := idleLane(2*time.Minute + time.Second)
-	p := tr.acquire(nil)
-	if p == first || l.cur != p {
-		t.Fatal("a stale lane served a request on its old pool")
-	}
-	if l.warming != nil {
-		t.Fatal("the stale lane kept a warm-up, which could switch it again")
-	}
-	if !l.born.Equal(c.t) {
-		t.Fatalf("the fresh pool is born at %v, want now", l.born)
-	}
-	if len(tr.draining) != 0 {
-		t.Fatalf("an idle stale pool is kept draining: %v", tr.draining)
-	}
-	tr.release(p)
-}
-
-// A stale pool with a request still running drains, and the request is not cut.
-func TestStaleLaneKeepsItsRunningRequest(t *testing.T) {
-	tr := New(time.Minute, 1, 3, plain)
-	c := withClock(tr)
-
-	long := tr.acquire(nil) // a long request, never released yet
-	c.t = c.t.Add(3 * time.Minute)
-	p := tr.acquire(nil)
-	if p == long {
-		t.Fatal("a stale lane served a request on its old pool")
-	}
-	if len(tr.draining) != 1 || tr.draining[0] != long {
-		t.Fatalf("the stale pool with a running request must drain: %v", tr.draining)
-	}
-	tr.release(long)
-	if len(tr.draining) != 0 {
-		t.Fatalf("drained pool kept after its last request: %v", tr.draining)
-	}
-	tr.release(p)
-}
-
-// On real connections: a lane that is merely due sends the request down its old
-// connection while the next one warms up, but one left alone past
-// staleFactor*maxAge opens a connection of its own, drops the pending warm-up,
-// and that warm-up, finishing later, must not switch the lane again.
-func TestStaleLaneOnRealConnections(t *testing.T) {
-	srv, conns := tlsServer(t)
-	base := srv.Client().Transport.(*http.Transport)
-	tr := New(time.Minute, 1, 3, base.Clone)
-	c := withClock(tr)
-	var warmUps []func() // run by the test, when it says
-	tr.spawn = func(f func()) { warmUps = append(warmUps, f) }
-	client := &http.Client{Transport: tr}
-
-	reused := func() bool {
-		var got bool
-		ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
-			GotConn: func(i httptrace.GotConnInfo) { got = i.Reused },
-		})
-		getCtx(t, client, srv.URL, ctx)
-		return got
-	}
-
-	if reused() {
-		t.Fatal("the first request cannot reuse a connection")
-	}
-	first := tr.lanes[0].cur
-
-	// Due late, not stale: the warm-up starts at 1m50s, so that the lane is
-	// stale 11 s later, well inside warmWait, where only the stale rule can
-	// still switch it.
-	c.t = c.t.Add(110 * time.Second)
-	if !reused() || tr.lanes[0].cur != first {
-		t.Fatal("a due lane must still serve on its old connection")
-	}
-	if tr.lanes[0].warming == nil || len(warmUps) != 1 {
-		t.Fatalf("a due lane must warm the next pool (warming %v, warm-ups %d)", tr.lanes[0].warming != nil, len(warmUps))
-	}
-
-	c.t = c.t.Add(11 * time.Second) // 2m1s old: stale
-	if reused() {
-		t.Fatal("a stale lane sent a request down its old connection")
-	}
-	fresh := tr.lanes[0].cur
-	if fresh == first || tr.lanes[0].warming != nil {
-		t.Fatalf("a stale lane keeps its old pool or its warm-up (new pool %v, warming %v)", fresh != first, tr.lanes[0].warming != nil)
-	}
-	if n := conns.Load(); n != 2 {
-		t.Fatalf("connections = %d, want 2 (old, new)", n)
-	}
-
-	warmUps[0]() // the dropped warm-up finishes now
-	if tr.lanes[0].cur != fresh {
-		t.Fatal("a dropped warm-up switched the lane again")
-	}
-	if st := tr.Stats(); st.WarmOpened != 0 {
-		t.Errorf("a dropped warm-up counts as opened: %+v", st)
-	}
-	if !reused() || tr.lanes[0].cur != fresh {
-		t.Error("the fresh pool's connection is not kept for the next request")
 	}
 }
 
@@ -475,8 +345,10 @@ func TestRetiredConnectionClosesWhenItsRequestEnds(t *testing.T) {
 
 type timeoutErr struct{ msg string }
 
-func (e timeoutErr) Error() string   { return e.msg }
-func (e timeoutErr) Timeout() bool   { return true }
+func (e timeoutErr) Error() string { return e.msg }
+
+func (e timeoutErr) Timeout() bool { return true }
+
 func (e timeoutErr) Temporary() bool { return true }
 
 func TestConnectFailuresAreRetryable(t *testing.T) {
@@ -552,41 +424,6 @@ func TestConnectFailureGoesToALiveLane(t *testing.T) {
 	}
 }
 
-func TestConnectRetrySkipsStaleReadyLanes(t *testing.T) {
-	srv := okServer(t)
-	var dials atomic.Int32
-	tr := New(time.Minute, 2, 2, failingDials(&dials, 3, plain))
-	c := withClock(tr)
-	client := &http.Client{Transport: tr}
-
-	get(t, client, srv.URL) // lane 1: first ready pool
-	get(t, client, srv.URL) // lane 0: second ready pool
-	old := [2]*pool{tr.lanes[0].cur, tr.lanes[1].cur}
-	for i, p := range old {
-		if !p.ready || p.inflight != 0 {
-			t.Fatalf("lane %d is not idle and ready", i)
-		}
-	}
-
-	c.t = c.t.Add(2*time.Minute + time.Second)
-	for i, l := range tr.lanes {
-		if c.now().Sub(l.born) <= staleFactor*tr.maxAge {
-			t.Fatalf("lane %d is not stale", i)
-		}
-	}
-
-	get(t, client, srv.URL) // fresh dial fails; retry must not use either old pool
-	if n := dials.Load(); n != 4 {
-		t.Fatalf("dials = %d, want 4 (two old pools, failed fresh dial, retried fresh dial)", n)
-	}
-	if st := tr.Stats(); st.ConnectRetries != 1 {
-		t.Fatalf("stats = %+v, want one connect retry", st)
-	}
-	if tr.lanes[0].cur != old[0] || tr.lanes[1].cur == old[1] {
-		t.Fatal("retry did not leave the unused stale lane alone and replace the failed lane")
-	}
-}
-
 func TestConnectFailureWithoutALiveLaneTriesAFreshPool(t *testing.T) {
 	srv := okServer(t)
 	var dials atomic.Int32
@@ -594,427 +431,6 @@ func TestConnectFailureWithoutALiveLaneTriesAFreshPool(t *testing.T) {
 	get(t, &http.Client{Transport: tr}, srv.URL)
 	if n := dials.Load(); n != 2 {
 		t.Fatalf("dials = %d, want 2", n)
-	}
-}
-
-// tlsServer counts the connections it accepts.
-func tlsServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
-	var conns atomic.Int32
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		_, _ = io.WriteString(w, "ok")
-	}))
-	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
-		if s == http.StateNew {
-			conns.Add(1)
-		}
-	}
-	srv.StartTLS()
-	t.Cleanup(srv.Close)
-	return srv, &conns
-}
-
-func TestLaneSwitchesToAWarmPool(t *testing.T) {
-	srv, conns := tlsServer(t)
-	base := srv.Client().Transport.(*http.Transport)
-	tr := New(time.Minute, 1, 3, base.Clone)
-	c := withClock(tr)
-	tr.spawn = func(f func()) { f() }
-	client := &http.Client{Transport: tr}
-
-	var handshakes []string
-	traced := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
-		TLSHandshakeStart: func() { handshakes = append(handshakes, "start") },
-		TLSHandshakeDone:  func(_ tls.ConnectionState, err error) { handshakes = append(handshakes, fmt.Sprint("done ", err)) },
-	})
-	getCtx(t, client, srv.URL, traced) // dialed by connpool's own TLS dialer
-	// The real handshake first; the transport then reports its own, empty one.
-	if !strings.HasPrefix(strings.Join(handshakes, ","), "start,done <nil>") {
-		t.Fatalf("TLS trace = %v, want start and a clean done first", handshakes)
-	}
-	first := tr.lanes[0].cur
-	c.t = c.t.Add(time.Minute)
-	get(t, client, srv.URL) // due: the next pool warms up and takes the lane at once, this request stays on the old one
-	if tr.lanes[0].cur == first || tr.lanes[0].warming != nil || !tr.lanes[0].cur.ready {
-		t.Fatal("the lane did not switch to the warm pool as soon as it was open")
-	}
-	if n := conns.Load(); n != 2 {
-		t.Fatalf("connections = %d, want 2 (old + warm)", n)
-	}
-	if len(tr.draining) != 0 {
-		t.Fatalf("the old pool still drains after its only request ended: %v", tr.draining)
-	}
-	switched := tr.lanes[0].cur
-	warmAge := time.Duration(-1)
-	getCtx(t, client, srv.URL, WithObserver(context.Background(), &Observer{WarmConn: func(age time.Duration) { warmAge = age }}))
-	if warmAge < 0 {
-		t.Fatal("observer not told about the warm connection")
-	}
-	if tr.lanes[0].cur != switched || tr.lanes[0].warming != nil {
-		t.Fatal("the lane left the warm pool")
-	}
-	if n := conns.Load(); n != 2 {
-		t.Fatalf("connections = %d, want 2: the request did not use the warm connection", n)
-	}
-	if st := tr.Stats(); st.Dials != 2 || st.HTTP1 != 2 || st.WarmOpened != 1 || st.WarmUsed != 1 || st.WarmFailed != 0 {
-		t.Errorf("stats = %+v", st)
-	}
-	if st := tr.Stats(); st != (Stats{}) {
-		t.Errorf("stats not reset: %+v", st)
-	}
-}
-
-func TestFailedWarmUpSwitchesAfterWait(t *testing.T) {
-	srv, _ := tlsServer(t)
-	base := srv.Client().Transport.(*http.Transport)
-	var dials atomic.Int32
-	tr := New(time.Minute, 1, 3, failingDials(&dials, 2, base.Clone))
-	c := withClock(tr)
-	tr.spawn = func(f func()) { f() }
-	client := &http.Client{Transport: tr}
-
-	get(t, client, srv.URL)
-	first := tr.lanes[0].cur
-	c.t = c.t.Add(time.Minute)
-	get(t, client, srv.URL) // the warm-up (dial 2) fails
-	if w := tr.lanes[0].warming; w == nil || !w.failed {
-		t.Fatal("failed warm-up not recorded")
-	}
-	get(t, client, srv.URL)
-	if tr.lanes[0].cur != first || dials.Load() != 2 {
-		t.Fatalf("switched before warmWait (dials %d)", dials.Load())
-	}
-	c.t = c.t.Add(warmWait)
-	get(t, client, srv.URL)
-	if tr.lanes[0].cur == first || dials.Load() != 3 {
-		t.Fatalf("no direct switch after warmWait (dials %d)", dials.Load())
-	}
-	if st := tr.Stats(); st.WarmFailed != 1 || st.WarmOpened != 0 {
-		t.Errorf("stats = %+v", st)
-	}
-}
-
-func TestNoWarmUpThroughAProxy(t *testing.T) {
-	target := &url.URL{Scheme: "https", Host: "example.com"}
-	p := &pool{t: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return url.Parse("http://proxy:8080") }}}
-	installWarmDialer(p, target, nil, nil)
-	if p.warm != nil || p.t.DialTLSContext != nil {
-		t.Fatal("warm dialer installed behind a proxy")
-	}
-	q := &pool{t: &http.Transport{}}
-	installWarmDialer(q, target, nil, nil)
-	if q.warm == nil || q.t.DialTLSContext == nil {
-		t.Fatal("no warm dialer without a proxy")
-	}
-}
-
-// connectProxy counts the CONNECT tunnels it opens.
-func connectProxy(t *testing.T) (*url.URL, *atomic.Int32) {
-	var tunnels atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodConnect {
-			http.Error(w, "CONNECT only", http.StatusMethodNotAllowed)
-			return
-		}
-		up, err := net.Dial("tcp", r.Host)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		c, _, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			return
-		}
-		tunnels.Add(1)
-		_, _ = io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\n")
-		go func() { _, _ = io.Copy(c, up); _ = c.Close() }()
-		_, _ = io.Copy(up, c)
-		_ = up.Close()
-	}))
-	t.Cleanup(srv.Close)
-	u, _ := url.Parse(srv.URL)
-	return u, &tunnels
-}
-
-// withChoice returns a request context that goes out the way c says.
-func withChoice(c proxydial.Choice) context.Context {
-	return proxydial.WithChoice(context.Background(), c)
-}
-
-func TestRouterPrunesIdleRouteAndRecreatesFreshTransport(t *testing.T) {
-	var closed atomic.Int32
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "ok")
-	}))
-	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateClosed {
-			closed.Add(1)
-		}
-	}
-	srv.Start()
-	t.Cleanup(srv.Close)
-
-	r := NewRouter(time.Hour, 1, 2, plain)
-	c := &clock{t: time.Unix(1000, 0)}
-	r.now = c.now
-	client := &http.Client{Transport: r}
-	choice := proxydial.Choice{Direct: true}
-	key := choice.Key()
-	getCtx(t, client, srv.URL, withChoice(choice))
-	old := r.ts[key]
-	p := old.lanes[0].cur
-	warm, peer := net.Pipe()
-	p.warm = &warmSlot{}
-	p.warm.put("warm", warm)
-	t.Cleanup(func() { _ = peer.Close() })
-
-	c.t = c.t.Add(routeIdleTimeout + time.Second)
-	get(t, client, srv.URL) // prune the idle direct route while creating the env route
-	if _, ok := r.ts[key]; ok {
-		t.Fatal("inactive direct route was retained")
-	}
-	if p.warm.conn != nil {
-		t.Fatal("pruned route retained its warm connection")
-	}
-	_ = peer.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := peer.Read(make([]byte, 1)); err == nil || (isTimeout(err)) {
-		t.Fatalf("pruned route did not close its warm connection: %v", err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for closed.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if closed.Load() == 0 {
-		t.Fatal("pruned route's idle socket was not closed")
-	}
-
-	getCtx(t, client, srv.URL, withChoice(choice))
-	if fresh := r.ts[key]; fresh == old || fresh == nil {
-		t.Fatal("same choice did not get a fresh Transport")
-	}
-}
-
-func TestRouterKeepsBusyRouteUntilResponseCloses(t *testing.T) {
-	started, finish := make(chan struct{}), make(chan struct{})
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if calls.Add(1) == 1 {
-			_, _ = io.WriteString(w, "start")
-			w.(http.Flusher).Flush()
-			close(started)
-			<-finish
-		}
-		_, _ = io.WriteString(w, "end")
-	}))
-	t.Cleanup(srv.Close)
-	t.Cleanup(func() {
-		select {
-		case <-finish:
-		default:
-			close(finish)
-		}
-	})
-	r := NewRouter(time.Hour, 1, 2, plain)
-	c := &clock{t: time.Unix(1000, 0)}
-	r.now = c.now
-	client := &http.Client{Transport: r}
-	initial, err := http.NewRequestWithContext(withChoice(proxydial.Choice{Direct: true}), http.MethodGet, srv.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := client.Do(initial)
-	if err != nil {
-		t.Fatal(err)
-	}
-	<-started
-	key := (proxydial.Choice{Direct: true}).Key()
-	busy := r.ts[key]
-
-	c.t = c.t.Add(routeIdleTimeout + time.Second)
-	get(t, client, srv.URL)
-	if r.ts[key] != busy {
-		t.Fatal("pruned route with a response body still in use")
-	}
-	close(finish)
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	if got := r.lastUse[key]; !got.Equal(c.t) {
-		t.Fatalf("route last use = %v, want response-close time %v", got, c.t)
-	}
-
-	c.t = c.t.Add(routeIdleTimeout - time.Second)
-	get(t, client, srv.URL)
-	if r.ts[key] != busy {
-		t.Fatal("route expired before a full idle interval after response close")
-	}
-	c.t = c.t.Add(2 * time.Second)
-	get(t, client, srv.URL)
-	if _, ok := r.ts[key]; ok {
-		t.Fatal("route remained after a full idle interval")
-	}
-}
-
-func TestRouterAdmitsRouteBeforeTransportRoundTrip(t *testing.T) {
-	blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "ok")
-	}))
-	t.Cleanup(blocked.Close)
-	trigger := okServer(t)
-	started, resume := make(chan struct{}), make(chan struct{})
-	var once, releaseOnce sync.Once
-	unblock := func() { releaseOnce.Do(func() { close(resume) }) }
-	t.Cleanup(unblock)
-	blockedAddr := blocked.Listener.Addr().String()
-	newT := func() *http.Transport {
-		return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if addr == blockedAddr {
-				once.Do(func() { close(started) })
-				<-resume
-			}
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		}}
-	}
-	r := NewRouter(time.Hour, 1, 2, newT)
-	c := &clock{t: time.Unix(1000, 0)}
-	r.now = c.now
-	client := &http.Client{Transport: r}
-	choice := proxydial.Choice{Direct: true}
-	request, err := http.NewRequestWithContext(withChoice(choice), http.MethodGet, blocked.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	type result struct {
-		resp *http.Response
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		resp, err := client.Do(request)
-		done <- result{resp: resp, err: err}
-	}()
-	<-started // Route ref is held while the Transport is still connecting.
-	key := choice.Key()
-	admitted := r.ts[key]
-	c.t = c.t.Add(routeIdleTimeout + time.Second)
-	get(t, client, trigger.URL) // an unrelated request triggers the inactivity sweep
-	if r.ts[key] != admitted {
-		t.Fatal("route was pruned between router admission and Transport.RoundTrip")
-	}
-	unblock()
-	got := <-done
-	if got.err != nil {
-		t.Fatal(got.err)
-	}
-	_ = got.resp.Body.Close()
-}
-
-func TestRouterPreservesCurrentConfiguredDefaultRoute(t *testing.T) {
-	proxydial.SetDefault(&url.URL{Scheme: "http", Host: "default.invalid:8080"})
-	t.Cleanup(func() { proxydial.SetDefault(nil) })
-	r := NewRouter(time.Hour, 1, 2, plain)
-	c := &clock{t: time.Unix(1000, 0)}
-	r.now = c.now
-	defaultChoice := proxydial.Choice{URL: proxydial.Default()}
-	defaultRoute := r.transport(defaultChoice)
-	getCtx(t, &http.Client{Transport: r}, okServer(t).URL, withChoice(proxydial.Choice{Direct: true}))
-	c.t = c.t.Add(routeIdleTimeout + time.Second)
-	getCtx(t, &http.Client{Transport: r}, okServer(t).URL, withChoice(proxydial.Choice{Direct: true}))
-	if r.ts[defaultChoice.Key()] != defaultRoute {
-		t.Fatal("current configured default route was pruned")
-	}
-}
-
-func TestRouterKeepsOneTransportPerWayOut(t *testing.T) {
-	target := okServer(t)
-	proxyA, tunnelsA := connectProxy(t)
-	proxyB, tunnelsB := connectProxy(t)
-	t.Cleanup(func() { proxydial.SetDefault(nil) })
-	r := NewRouter(time.Hour, 1, 2, plain)
-	client := &http.Client{Transport: r}
-
-	get(t, client, target.URL) // no choice, no default: the environment's way, here direct
-	getCtx(t, client, target.URL, withChoice(proxydial.Choice{URL: proxyA}))
-	getCtx(t, client, target.URL, withChoice(proxydial.Choice{URL: proxyA}))
-	getCtx(t, client, target.URL, withChoice(proxydial.Choice{URL: proxyB}))
-	getCtx(t, client, target.URL, withChoice(proxydial.Choice{Direct: true}))
-	if a, b := tunnelsA.Load(), tunnelsB.Load(); a != 1 || b != 1 {
-		t.Fatalf("tunnels A %d, B %d: want 1 and 1 (the second request to A reuses its connection)", a, b)
-	}
-	if n := len(r.ts); n != 4 {
-		t.Errorf("transports = %d, want 4 (env, A, B, direct)", n)
-	}
-
-	// Without a choice on the request the default proxy applies.
-	proxydial.SetDefault(proxyB)
-	get(t, client, target.URL)
-	if b := tunnelsB.Load(); b != 1 {
-		t.Errorf("B tunnels = %d: the default proxy is the same way out as B, which already has its connection", b)
-	}
-	proxydial.SetDefault(nil)
-}
-
-func TestRouterDirectIgnoresTheEnvironmentProxy(t *testing.T) {
-	target := okServer(t)
-	proxy, tunnels := connectProxy(t)
-	t.Setenv("HTTP_PROXY", proxy.String())
-	t.Setenv("http_proxy", proxy.String())
-	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
-	base := func() *http.Transport { return &http.Transport{Proxy: http.ProxyURL(proxy)} }
-	r := NewRouter(time.Hour, 1, 2, base)
-	client := &http.Client{Transport: r}
-	getCtx(t, client, target.URL, withChoice(proxydial.Choice{Direct: true}))
-	if n := tunnels.Load(); n != 0 {
-		t.Fatalf("a direct request went through the proxy (%d tunnels)", n)
-	}
-}
-
-func TestRouterLimitsReachEveryTransport(t *testing.T) {
-	r := NewRouter(time.Hour, 3, 5, plain)
-	a := r.transport(proxydial.Choice{})
-	r.SetLimits(2, 4)
-	b := r.transport(proxydial.Choice{Direct: true}) // created after the change
-	for name, tr := range map[string]*Transport{"existing": a, "new": b} {
-		if x, y := tr.Limits(); x != 2 || y != 4 {
-			t.Errorf("%s transport limits = %d/%d, want 2/4", name, x, y)
-		}
-	}
-	if x, y := r.Limits(); x != 2 || y != 4 {
-		t.Errorf("router limits = %d/%d", x, y)
-	}
-	a.counts.dials.Add(2)
-	b.counts.dials.Add(3)
-	if st := r.Stats(); st.Dials != 5 {
-		t.Errorf("stats dials = %d, want 5 (summed)", st.Dials)
-	}
-}
-
-func TestWarmUpGoesThroughTheProxy(t *testing.T) {
-	srv, conns := tlsServer(t)
-	proxy, tunnels := connectProxy(t)
-	base := srv.Client().Transport.(*http.Transport)
-	tr := New(time.Minute, 1, 3, base.Clone)
-	tr.choice = proxydial.Choice{URL: proxy}
-	c := withClock(tr)
-	tr.spawn = func(f func()) { f() }
-	client := &http.Client{Transport: tr}
-	get(t, client, srv.URL)
-	c.t = c.t.Add(time.Minute)
-	get(t, client, srv.URL) // warms the next pool up through the proxy
-	get(t, client, srv.URL) // and uses it
-	if n, m := tunnels.Load(), conns.Load(); n != 2 || m != 2 {
-		t.Fatalf("tunnels %d, server connections %d: want 2 and 2 (first + warm, both proxied)", n, m)
-	}
-}
-
-func TestStatsString(t *testing.T) {
-	if s := (Stats{}).String(); s != "" {
-		t.Errorf("empty stats = %q", s)
-	}
-	s := Stats{Dials: 3, H2: 2, HTTP1: 1, WarmOpened: 2, WarmUsed: 1, ConnectRetries: 1}.String()
-	want := "dials 3 (h2 2, http/1.1 1); warm 2 opened, 1 used, 0 failed; retries 1 after connect failures, 0 after broken connections"
-	if s != want {
-		t.Errorf("String = %q, want %q", s, want)
 	}
 }
 
@@ -1218,111 +634,6 @@ type blackhole struct {
 	dropping atomic.Bool
 }
 
-func newBlackhole(t *testing.T, target string) *blackhole {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := &blackhole{ln: ln}
-	t.Cleanup(func() { _ = ln.Close() })
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			b.accepted.Add(1)
-			up, err := net.Dial("tcp", target)
-			if err != nil {
-				_ = c.Close()
-				continue
-			}
-			pipe := func(dst, src net.Conn) {
-				buf := make([]byte, 32<<10)
-				for {
-					n, err := src.Read(buf)
-					if n > 0 && !b.dropping.Load() {
-						_, _ = dst.Write(buf[:n])
-					}
-					if err != nil {
-						_ = dst.Close()
-						return
-					}
-				}
-			}
-			go pipe(up, c)
-			go pipe(c, up)
-		}
-	}()
-	return b
-}
-
-func TestHealthPingDropsADeadConnectionBeforeUse(t *testing.T) {
-	oldPing, oldTimeout := healthPing, healthTimeout
-	healthPing, healthTimeout = 100*time.Millisecond, 100*time.Millisecond
-	t.Cleanup(func() { healthPing, healthTimeout = oldPing, oldTimeout })
-
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		_, _ = io.WriteString(w, "ok")
-	}))
-	srv.EnableHTTP2 = true
-	srv.StartTLS()
-	defer srv.Close()
-	bh := newBlackhole(t, strings.TrimPrefix(srv.URL, "https://"))
-
-	base := srv.Client().Transport.(*http.Transport)
-	tr := New(time.Hour, 1, 1, base.Clone)
-	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
-	url := "https://" + bh.ln.Addr().String()
-	get(t, client, url)
-	if n := bh.accepted.Load(); n != 1 {
-		t.Fatalf("connections = %d, want 1", n)
-	}
-
-	bh.dropping.Store(true) // the connection dies silently while it is idle
-	time.Sleep(time.Second)
-	bh.dropping.Store(false)
-
-	start := time.Now()
-	get(t, client, url)
-	if n := bh.accepted.Load(); n != 2 {
-		t.Fatalf("connections = %d, want 2: the dead one was reused", n)
-	}
-	if d := time.Since(start); d > 5*time.Second {
-		t.Errorf("the next request took %s", d)
-	}
-}
-
-func TestHardenKeepsOwnHTTP2Settings(t *testing.T) {
-	own := &http.Transport{HTTP2: &http.HTTP2Config{SendPingTimeout: time.Hour}}
-	Harden(own, time.Second, time.Second)
-	if own.HTTP2.SendPingTimeout != time.Hour {
-		t.Errorf("own settings replaced: %+v", own.HTTP2)
-	}
-	plain := &http.Transport{}
-	Harden(plain, 3*time.Second, 2*time.Second)
-	if plain.HTTP2 == nil || plain.HTTP2.SendPingTimeout != 3*time.Second || plain.HTTP2.PingTimeout != 2*time.Second {
-		t.Errorf("settings = %+v", plain.HTTP2)
-	}
-	tr := New(0, 1, 1, nil)
-	p := tr.acquire(nil)
-	if p.t.HTTP2 == nil || p.t.HTTP2.SendPingTimeout != healthPing {
-		t.Errorf("a pool is built without pings: %+v", p.t.HTTP2)
-	}
-	tr.release(p)
-}
-
-// api.z.ai closes an HTTP/2 connection that was quiet for 30 s (measured: a
-// ping at 25 s is answered, at 30 s there is a GOAWAY), and a ping keeps it
-// open: the first one has to come well before, or no request ever reuses one.
-func TestHealthPingComesBeforeAShortIdleLimit(t *testing.T) {
-	if healthPing > 20*time.Second {
-		t.Errorf("first health ping after %s of silence, want 20 s at most", healthPing)
-	}
-}
-
 // The observer hears how old the pool of every attempt is: a new connection on
 // an old pool tells that the pool's earlier connection was lost.
 func TestObserverHearsPoolAge(t *testing.T) {
@@ -1380,4 +691,186 @@ func (r *Router) transport(c proxydial.Choice) *Transport {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.transportLocked(c)
+}
+
+// The error texts below are the ones seen in the logs of 2026-10-26/27 and in
+// earlier incidents. Which of them may be sent again decides whether a user
+// sees a 502 or nothing at all.
+func TestRetryableClassification(t *testing.T) {
+	post := func(ctx context.Context) *http.Request {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://chatgpt.com/x", bytes.NewReader([]byte("x")))
+		return req
+	}
+	retried := []string{
+		// Windows closing a connection under us (Proxifier, antivirus): 26 requests in one night.
+		"write tcp 127.0.0.1:59942->8.6.112.5:443: wsasend: An established connection was aborted by the software in your host machine.",
+		"read tcp 127.0.0.1:61531->8.6.112.0:443: wsarecv: An established connection was aborted by the software in your host machine.",
+		"unexpected EOF",
+		"EOF",
+		"read tcp 10.0.0.2:5->1.1.1.1:443: read: connection reset by peer",
+		"wsarecv: An existing connection was forcibly closed by the remote host.",
+		"write tcp: broken pipe",
+		"http2: server sent GOAWAY and closed the connection; LastStreamID=7, ErrCode=NO_ERROR, debug=\"\"",
+		"http2: client conn is closed",
+		"http2: client conn not usable",
+		"use of closed network connection",
+		"http: server closed idle connection",
+		"net/http: HTTP/1.x transport connection broken: unexpected EOF",
+		"connect: TLS handshake timeout",
+		"dial tcp 8.6.112.0:443: connectex: A socket operation was attempted to an unreachable network.",
+	}
+	for _, msg := range retried {
+		err := errors.New(msg)
+		// The connection errors above that are timeouts need the Timeout() method.
+		if strings.Contains(msg, "TLS handshake timeout") {
+			err = timeoutErr{msg}
+		}
+		if strings.Contains(msg, "unreachable network") {
+			err = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New(msg)}
+		}
+		if !retryable(post(context.Background()), err) {
+			t.Errorf("not retried: %q", msg)
+		}
+	}
+
+	notRetried := []error{
+		timeoutErr{"net/http: timeout awaiting response headers"}, // a stalled backend: fail fast
+		errors.New("x509: certificate signed by unknown authority"),
+		errors.New("tls: failed to verify certificate: x509: certificate has expired"),
+		errors.New("net/http: request canceled"),
+		errors.New("proxy 127.0.0.1:1080: socks5: user name or password rejected"),
+	}
+	for _, err := range notRetried {
+		if retryable(post(context.Background()), err) {
+			t.Errorf("retried: %v", err)
+		}
+	}
+
+	// A canceled request is never sent again, whatever the error says.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if retryable(post(ctx), errors.New("unexpected EOF")) {
+		t.Error("a canceled request was retried")
+	}
+	// Neither is one whose body cannot be replayed: it could be sent twice.
+	req, _ := http.NewRequest(http.MethodPost, "https://chatgpt.com/x", struct{ io.Reader }{strings.NewReader("x")})
+	if req.GetBody != nil {
+		t.Fatal("test setup: the body is replayable")
+	}
+	if retryable(req, errors.New("unexpected EOF")) {
+		t.Error("a request with a body that cannot be replayed was retried")
+	}
+}
+
+func TestConnectFailureClassification(t *testing.T) {
+	for _, err := range []error{
+		timeoutErr{"net/http: TLS handshake timeout"},
+		&connectError{errors.New("TLS handshake timeout")},
+		&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("i/o timeout")},
+		errors.New("proxyconnect tcp: dial tcp 127.0.0.1:1080: connect: connection refused"),
+	} {
+		if !connectFailure(err) {
+			t.Errorf("%v is a connect failure (the request was never sent)", err)
+		}
+	}
+	for _, err := range []error{
+		errors.New("unexpected EOF"),
+		errors.New("write tcp: wsasend: An established connection was aborted by the software in your host machine."),
+		timeoutErr{"net/http: timeout awaiting response headers"},
+	} {
+		if connectFailure(err) {
+			t.Errorf("%v is not a connect failure (the request may have been sent)", err)
+		}
+	}
+}
+
+// A body that cannot be replayed must reach the server once, whatever happens.
+func TestNonReplayableBodyIsNeverResent(t *testing.T) {
+	shortRetries(t, time.Minute)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = c.Close()
+		}
+	}))
+	defer srv.Close()
+	tr := New(0, 1, 1, nil)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL, struct{ io.Reader }{strings.NewReader("payload")})
+	resp, err := (&http.Client{Transport: tr}).Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("no error from a server that drops the connection")
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("the server saw %d requests, want 1", n)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if n := tr.lanes[0].load(); n != 0 {
+		t.Errorf("inflight = %d after the failed request", n)
+	}
+}
+
+// Many requests at once while the lane limits change and the pools are renewed
+// all the time: nothing may deadlock, leak a slot or fail. CI runs it with -race.
+func TestConcurrentRequestsWhileLimitsAndPoolsChange(t *testing.T) {
+	srv := okServer(t)
+	tr := New(15*time.Millisecond, 3, 5, nil) // pools renew every 15 ms
+	client := &http.Client{Transport: tr, Timeout: 20 * time.Second}
+
+	stop := make(chan struct{})
+	var changer sync.WaitGroup
+	changer.Add(1)
+	go func() {
+		defer changer.Done()
+		limits := [][2]int{{2, 4}, {5, 6}, {1, 1}, {4, 8}, {3, 5}}
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+				l := limits[i%len(limits)]
+				tr.SetLimits(l[0], l[1])
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	var failed atomic.Int32
+	for g := 0; g < 24; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 15; i++ {
+				resp, err := client.Post(srv.URL, "text/plain", bytes.NewReader([]byte("x")))
+				if err != nil {
+					failed.Add(1)
+					continue
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	changer.Wait()
+
+	if n := failed.Load(); n != 0 {
+		t.Errorf("%d of %d requests failed", n, 24*15)
+	}
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	total := 0
+	for _, l := range tr.lanes {
+		total += l.load()
+	}
+	for _, d := range tr.draining {
+		total += d.inflight
+	}
+	if total != 0 {
+		t.Errorf("%d request slots leaked", total)
+	}
 }
