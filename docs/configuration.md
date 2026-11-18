@@ -242,6 +242,7 @@ and the window in an error, and a running server keeps the previous settings unt
 | `compact_percent` | Optional 1-100: compact earlier than Claude Code's default. |
 | `proxy` | Optional: a proxy URL for this profile, or `none` for a direct connection; without it the proxy of its provider applies, else the global `connections.proxy` ([the cascade](#layout)). |
 | `default_model` | Legacy; prefer a final `match: *` rule. |
+| `speed_rules` | Codex only: family-to-`fast` or `standard` overrides. Missing families inherit the client request; see [Codex Fast mode](codex-fast-mode.md). |
 
 A rule is `match` (glob on the Claude model name, e.g. `*opus*`), `model` (what the backend is asked for)
 and `context_window` (that model's input window in tokens). Without any rule, the tiers map to `gpt-5` / `gpt-5-mini`.

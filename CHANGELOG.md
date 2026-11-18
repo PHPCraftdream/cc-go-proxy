@@ -9,6 +9,9 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 
 ## [Unreleased]
 
+### Added
+- Codex profile and model-family speed rules via `--speed` and the interactive interface. Fast requests use the account catalog's Fast service-tier ID; the requested tier does not confirm actual speed. See [Codex Fast mode](docs/codex-fast-mode.md) for quota and availability limits.
+
 ### Fixed
 - `ccgp --update` no longer fails on Windows with `cannot move the old binary aside: Access is denied` when a process
   started before the previous update (an open Claude Code session) still holds `ccgp.exe.old`: the current binary then

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -71,6 +73,82 @@ func TestFastRequestPoliciesAndFallback(t *testing.T) {
 	if len(requests) != 3 || catalogCalls != 2 {
 		t.Fatalf("unsupported called inference: catalog=%d requests=%v", catalogCalls, requests)
 	}
+}
+
+func TestPersistedFastPolicyRequests(t *testing.T) {
+	var mu sync.Mutex
+	var catalogs int
+	var requests []string
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+codexWSTestAccessToken {
+			t.Errorf("missing synthetic OAuth authorization on %s", r.URL.Path)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/models") {
+			catalogs++
+			_, _ = io.WriteString(w, `{"models":[{"slug":"gpt-6.2-astra","service_tiers":[{"id":"fixture-priority","name":"Fast"}]},{"slug":"gpt-6.3-astra","service_tiers":[{"id":"fixture-new","name":"Fast"}]}]}`)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		requests = append(requests, string(body))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\"}}\n\n")
+	})
+	h := newCodexWSTestHarness(t, backend, "http")
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	text := fmt.Sprintf("providers: [\n    {\n        name: codex\n        type: codex\n        base_url: %s\n    }\n]\nprofiles: [\n    {\n        name: codex\n        provider: codex\n    }\n    {\n        name: other\n        provider: codex\n    }\n]\n", h.backend.URL)
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.ConfigFileEnv, path)
+	edit := func(value string) string {
+		t.Helper()
+		backup, err := config.EditFile(path, func(s string) (string, error) {
+			return config.SetProfileSpeedText(s, "codex", "astra", value)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return backup
+	}
+	post := func(profile, model, speed, tier string, wantCatalogs int) {
+		t.Helper()
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected, err := cfg.ForProfile(profile, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected.CodexTransport = "http"
+		*h.cfg = *selected
+		body := fmt.Sprintf(`{"model":%q,"speed":%q,"stream":true,"messages":[{"role":"user","content":"hi"}]}`, model, speed)
+		if status, reply := h.post(t, body); status != 200 {
+			t.Fatalf("%s %s: %d %s", profile, speed, status, reply)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		request := requests[len(requests)-1]
+		if catalogs != wantCatalogs || !strings.Contains(request, `"model":"`+model+`"`) || (tier == "" && strings.Contains(request, `"service_tier"`)) || (tier != "" && !strings.Contains(request, `"service_tier":"`+tier+`"`)) {
+			t.Fatalf("catalogs=%d want=%d request=%s tier=%q", catalogs, wantCatalogs, request, tier)
+		}
+	}
+	post("codex", "gpt-6.2-astra", "standard", "", 0)
+	edit("fast")
+	post("codex", "gpt-6.2-astra", "standard", "fixture-priority", 1)
+	post("other", "gpt-6.2-astra", "standard", "", 1)
+	post("codex", "gpt-6.3-astra", "standard", "fixture-new", 2)
+	edit("standard")
+	post("codex", "gpt-6.2-astra", "fast", "", 2)
+	edit("")
+	post("codex", "gpt-6.2-astra", "standard", "", 2)
+	post("codex", "gpt-6.2-astra", "fast", "fixture-priority", 2)
+	if backup := edit(""); backup != "" {
+		t.Fatal("repeated unset created a backup")
+	}
+	post("other", "gpt-6.2-astra", "standard", "", 2)
 }
 
 func TestFastWebsocketSwitch(t *testing.T) {
