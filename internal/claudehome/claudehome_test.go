@@ -139,8 +139,8 @@ func TestPrepareIsIdempotentAndFollowsSource(t *testing.T) {
 	if err := Prepare(src, filepath.Join(root, "none.json"), dst); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dst, "CLAUDE.md")); err == nil {
-		t.Error("CLAUDE.md removed at the source is still mirrored")
+	if _, err := os.Stat(filepath.Join(dst, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Errorf("tracked CLAUDE.md not removed: %v", err)
 	}
 	if read(t, filepath.Join(dst, "keybindings.json")) != "{}" {
 		t.Error("keybindings.json not mirrored")

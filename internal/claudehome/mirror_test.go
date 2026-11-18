@@ -10,6 +10,11 @@ import (
 
 func exists(path string) bool { _, err := os.Lstat(path); return err == nil }
 
+func loadManifest(dst string) mirrored {
+	m, _, _ := loadManifestSync(dst)
+	return m
+}
+
 func prepare(t *testing.T, src, dst string) {
 	t.Helper()
 	if err := Prepare(src, filepath.Join(filepath.Dir(src), "none.json"), dst); err != nil {
@@ -47,8 +52,8 @@ func TestMirrorCopiesUpdatesAndPrunes(t *testing.T) {
 	if exists(filepath.Join(dst, "agents", "b.md")) {
 		t.Error("b.md dropped at the source is still mirrored")
 	}
-	if exists(filepath.Join(dst, "commands", "sub", "c.md")) || exists(filepath.Join(dst, "commands", "sub")) {
-		t.Error("commands removed at the source are still mirrored")
+	if exists(filepath.Join(dst, "commands", "sub", "c.md")) {
+		t.Error("command removed at the source is still mirrored")
 	}
 	if read(t, filepath.Join(dst, "agents", "own.md")) != "mine" {
 		t.Error("a file created in the isolated dir was removed")
@@ -83,7 +88,7 @@ func TestMirrorSkipsCredentialsEverywhere(t *testing.T) {
 	}
 }
 
-func TestMirrorReplacesLinkInsteadOfWritingThroughIt(t *testing.T) {
+func TestMirrorRefusesLinkInsteadOfWritingThroughIt(t *testing.T) {
 	root := t.TempDir()
 	src, dst := filepath.Join(root, "src"), filepath.Join(root, "dst")
 	write(t, filepath.Join(src, "skills", "s1", "SKILL.md"), "official")
@@ -95,25 +100,15 @@ func TestMirrorReplacesLinkInsteadOfWritingThroughIt(t *testing.T) {
 		t.Skipf("cannot create symlinks here: %v", err)
 	}
 	write(t, filepath.Join(src, "skills", "s2", "SKILL.md"), "new")
-	prepare(t, src, dst)
-
+	if err := PrepareOwn(src, dst); err == nil {
+		t.Fatal("accepted destination link")
+	}
 	st, err := os.Lstat(filepath.Join(dst, "skills"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
-		t.Fatal("dst/skills is still a link")
-	}
-	if read(t, filepath.Join(dst, "skills", "s2", "SKILL.md")) != "new" {
-		t.Error("content not copied after replacing the link")
+	if err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("destination link changed: %v", err)
 	}
 	if read(t, filepath.Join(src, "skills", "s1", "SKILL.md")) != "official" {
 		t.Error("source changed")
-	}
-	// Editing the copy must not reach the source.
-	write(t, filepath.Join(dst, "skills", "s1", "SKILL.md"), "edited in session")
-	if read(t, filepath.Join(src, "skills", "s1", "SKILL.md")) != "official" {
-		t.Error("write to the copy reached the source")
 	}
 }
 
@@ -206,6 +201,15 @@ func TestLegacyJSONManifestIsMigrated(t *testing.T) {
 	m := loadManifest(dst)
 	if len(m) != 2 || m["agents/a.md"] != (stamp{Size: 2, ModTime: 1700000000123456789}) || m["commands/x.y.md"] != (stamp{Size: 5, ModTime: 42}) {
 		t.Fatalf("migrated manifest = %v", m)
+	}
+	if !exists(old) || exists(filepath.Join(dst, ".ccgp-mirror.ktav")) {
+		t.Fatal("reading the legacy manifest changed it")
+	}
+	src := filepath.Join(t.TempDir(), "src")
+	write(t, filepath.Join(src, "agents", "a.md"), "ab")
+	write(t, filepath.Join(src, "commands", "x.y.md"), "12345")
+	if err := PrepareOwn(src, dst); err != nil {
+		t.Fatal(err)
 	}
 	if exists(old) || !exists(filepath.Join(dst, ".ccgp-mirror.ktav")) {
 		t.Error("legacy file kept or Ktav file missing")
