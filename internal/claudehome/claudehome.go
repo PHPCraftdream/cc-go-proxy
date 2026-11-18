@@ -222,7 +222,7 @@ func seedState(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, data, 0o600)
+	return publishFile(dst, bytes.NewReader(data), nil, true)
 }
 
 // addPreferences gives an existing dst the preferenceKeys of src that it lacks: a
@@ -264,11 +264,7 @@ func writeIfChanged(path string, data []byte) error {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
 		return nil
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return publishFile(path, bytes.NewReader(data), nil, false)
 }
 
 func removeIfExists(path string) error {
