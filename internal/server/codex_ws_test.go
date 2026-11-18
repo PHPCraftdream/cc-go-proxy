@@ -38,6 +38,7 @@ const (
 type codexWSTestHarness struct {
 	backend       *httptest.Server
 	app           *fiber.App
+	cfg           *config.Config
 	access        *syncBuf
 	stream        *syncBuf
 	waitForStream func()
@@ -91,7 +92,7 @@ func newCodexWSTestHarness(t *testing.T, backend http.Handler, transport string)
 	app.Post("/call/:token/v1/messages", func(c *fiber.Ctx) error {
 		return handleCodexMessages(c, cfg, session)
 	})
-	harness = &codexWSTestHarness{backend: server, app: app, access: accessLogWriter, stream: streamLog}
+	harness = &codexWSTestHarness{backend: server, app: app, cfg: cfg, access: accessLogWriter, stream: streamLog}
 	return harness
 }
 

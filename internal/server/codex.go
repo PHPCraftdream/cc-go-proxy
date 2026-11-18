@@ -416,14 +416,27 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 	if err != nil {
 		return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", err.Error())
 	}
-	if cfg.Debug {
-		b, _ := json.Marshal(req)
-		fmt.Printf("\n=== CODEX REQUEST (%s → %s) ===\n%s\n", probe.Model, model, b)
-	}
-
 	baseURL := ""
 	if pr := cfg.Providers[cfg.ProviderName]; pr != nil {
 		baseURL = pr.BaseURL
+	}
+	if cfg.Profiles[cfg.Profile].EffectiveFast(codex.ModelFamily(model), parsed.ClientFast()) {
+		var status int
+		req.ServiceTier, status, err = fastTier(context.Background(), cfg, baseURL, model, s)
+		if err != nil {
+			typ := "api_error"
+			switch status {
+			case fiber.StatusUnauthorized:
+				typ = "authentication_error"
+			case fiber.StatusBadRequest:
+				typ = "invalid_request_error"
+			}
+			return anthropicError(c, status, typ, err.Error())
+		}
+	}
+	if cfg.Debug {
+		b, _ := json.Marshal(req)
+		fmt.Printf("\n=== CODEX REQUEST (%s → %s) ===\n%s\n", probe.Model, model, b)
 	}
 	digest := codex.NewDigest(req)
 	fingerprint := digest.Fingerprint

@@ -11,6 +11,7 @@ import (
 // connection: the full input it was sent (as hashes) and the output it produced.
 type WSChain struct {
 	responseID  string
+	serviceTier string
 	fingerprint Fingerprint
 	inputLen    int // items of the full input the backend holds (hashes cover their content)
 	hashes      []uint64
@@ -42,6 +43,7 @@ func newChain(req *Request, d *Digest, responseID string, outputItems []json.Raw
 	}
 	chain := &WSChain{
 		responseID:  responseID,
+		serviceTier: req.ServiceTier,
 		fingerprint: d.Fingerprint,
 		inputLen:    len(req.Input),
 		hashes:      d.hashes,
@@ -82,6 +84,9 @@ func (c *WSChain) delta(next *Request, d *Digest) (items []any, ok bool, reason 
 	}
 	if c == nil {
 		return nil, false, "no chain", nil
+	}
+	if c.serviceTier != next.ServiceTier {
+		return nil, false, "service tier changed", nil
 	}
 	if c.responseID == "" {
 		return nil, false, "no response id", nil
@@ -313,6 +318,7 @@ func WSCreatePayload(req *Request, previousResponseID string, input []any) ([]by
 		Include            []string   `json:"include"`
 		PromptCacheKey     string     `json:"prompt_cache_key,omitempty"`
 		PreviousResponseID string     `json:"previous_response_id,omitempty"`
+		ServiceTier        string     `json:"service_tier,omitempty"`
 	}{
 		Type:               "response.create",
 		Model:              req.Model,
@@ -326,6 +332,7 @@ func WSCreatePayload(req *Request, previousResponseID string, input []any) ([]by
 		Include:            req.Include,
 		PromptCacheKey:     req.PromptCacheKey,
 		PreviousResponseID: previousResponseID,
+		ServiceTier:        req.ServiceTier,
 	}
 	return json.Marshal(payload)
 }
