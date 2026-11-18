@@ -10,6 +10,13 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 ## [Unreleased]
 
 ### Added
+- `codex.client_version` in `config.ktav`: the Codex CLI version presented to the Codex backend (model catalog and
+  the `User-Agent` of model requests) now comes only from the config. ccgp writes its built-in default there on first
+  use and raises it by itself: `ccgp --models apply` and the refresh after `ccgp --login codex` move it to the newest
+  Codex CLI release, and a model request the backend refuses for an outdated client raises it (to the version the
+  error names, else the newest release), refreshes the managed model mappings and answers `503` so Claude Code
+  retries with the new version. A running server picks the change up without a restart. See
+  [configuration](docs/configuration.md#codexclient_version).
 - Codex profile and model-family speed rules via `--speed` and the interactive interface. Fast requests use the account catalog's Fast service-tier ID; the requested tier does not confirm actual speed. See [Codex Fast mode](docs/codex-fast-mode.md) for quota and availability limits.
 
 ### Fixed

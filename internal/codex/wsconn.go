@@ -168,7 +168,7 @@ func DialWS(ctx context.Context, baseURL string, s *oauth.Session, h WSHandshake
 		handshakeCtx, cancel := context.WithTimeout(ctx, wsHandshakeTimeout)
 		conn, resp, dialErr := websocket.Dial(handshakeCtx, endpoint, &websocket.DialOptions{
 			HTTPClient:      client,
-			HTTPHeader:      wsHandshakeHeaders(h, tok),
+			HTTPHeader:      wsHandshakeHeaders(ctx, h, tok),
 			CompressionMode: websocket.CompressionDisabled,
 			OnPingReceived:  func(context.Context, []byte) bool { activity.touch(); return true },
 			OnPongReceived: func(context.Context, []byte) {
@@ -271,7 +271,7 @@ func ensureWSALPN(config *tls.Config) *tls.Config {
 	return config
 }
 
-func wsHandshakeHeaders(h WSHandshake, tok *oauth.Tokens) http.Header {
+func wsHandshakeHeaders(ctx context.Context, h WSHandshake, tok *oauth.Tokens) http.Header {
 	headers := sessionHeaders(h.Request).Clone()
 	headers.Set("Content-Type", "application/json")
 	headers.Set("Accept", "text/event-stream")
@@ -281,7 +281,7 @@ func wsHandshakeHeaders(h WSHandshake, tok *oauth.Tokens) http.Header {
 		headers.Set("ChatGPT-Account-ID", tok.AccountID)
 	}
 	headers.Set("originator", originator)
-	headers.Set("User-Agent", originator+" (ccgp)")
+	headers.Set("User-Agent", userAgent(ctx))
 	if h.Routing != nil {
 		threadID, state := h.Routing.outgoing()
 		headers.Set("thread-id", threadID)

@@ -296,6 +296,12 @@ func serve(args []string) error {
 	if h, err := angel.Check(angel.BaseURL(cfg.Host, cfg.Port)); err == nil {
 		return fmt.Errorf("already running (pid %d)", h.PID)
 	}
+	// From here on the Codex client version comes only from the config.
+	if seeded, err := config.SeedCodexClientVersion(cfg); err != nil {
+		fmt.Printf("[WARN] could not write codex.client_version: %v\n", err)
+	} else if seeded {
+		fmt.Printf("codex.client_version %s written to %s\n", cfg.CodexClientVersion(), cfg.ConfigFile)
+	}
 	return server.Start(cfg)
 }
 

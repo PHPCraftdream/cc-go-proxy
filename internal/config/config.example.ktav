@@ -33,6 +33,13 @@ connections.total: 10
 ## level that sets one replaces the ones above it whole: profile, then provider, then this one.
 ## connections.proxy: socks5://127.0.0.1:1080
 
+## The Codex CLI version ccgp presents to the Codex backend, which lists a model
+## generation only to a client at least as new as the one that brought it. ccgp
+## raises it by itself when the backend asks for a newer client and when
+## `ccgp --models apply` (or a login) finds a newer Codex CLI release; it never
+## lowers it. The running server picks a change up without a restart.
+codex.client_version:: 0.169.0
+
 ## A real Claude Code with an account of its own (no proxy, a clean config directory) is
 ## created with `ccgp --profile add work --type claude`, which adds to providers:
 ##     { name: work   type: claude }       (one object per line group, as below)

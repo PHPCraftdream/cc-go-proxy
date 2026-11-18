@@ -106,5 +106,5 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 // one; see config.ProxyChoice) on the context of an upstream request. The
 // clients' connpool.Router sends the request over the pools of that choice.
 func upstreamCtx(ctx context.Context, cfg *config.Config) context.Context {
-	return proxydial.WithChoice(ctx, cfg.ProxyChoice(cfg.Profile))
+	return codex.WithClientVersion(proxydial.WithChoice(ctx, cfg.ProxyChoice(cfg.Profile)), cfg.CodexClientVersion())
 }

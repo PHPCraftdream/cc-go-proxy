@@ -169,7 +169,8 @@ Show the newest Codex models and how they map to the Claude model tiers (and
 the built-in mapping of providers with a preset, such as z.ai). With "apply",
 write the mapping into the ccgp:managed-models block of the profile in
 config.ktav. Without a profile name, every generated profile is shown or
-written. Needs config.ktav.
+written. Needs config.ktav. The Codex catalog is read as the newest Codex CLI
+release; "apply" also raises codex.client_version in config.ktav to it.
 
   apply            write the mapping into the config
   --json           print the mapping as JSON (the show form only)

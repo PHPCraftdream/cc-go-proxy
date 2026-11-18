@@ -103,12 +103,14 @@ func TestPickCatalogWith62(t *testing.T) {
 	}
 }
 
-// The backend lists gpt-6.2 only to a client new enough: the catalog request
-// must carry a version that is, in the query and the header alike.
+// The catalog request carries the configured client version, in the query,
+// the version header and the user agent alike; without one it is not sent.
 func TestFetchCatalogSendsClientVersion(t *testing.T) {
-	var query, header string
+	var query, header, agent string
+	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query, header = r.URL.Query().Get("client_version"), r.Header.Get("version")
+		calls++
+		query, header, agent = r.URL.Query().Get("client_version"), r.Header.Get("version"), r.Header.Get("User-Agent")
 		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-6.2-sol"}]}`))
 	}))
 	defer srv.Close()
@@ -116,16 +118,15 @@ func TestFetchCatalogSendsClientVersion(t *testing.T) {
 	HTTPClient = &http.Client{}
 	defer func() { HTTPClient = old }()
 
-	ms, err := FetchCatalog(context.Background(), srv.URL, &oauth.Tokens{AccessToken: "t"})
+	if _, err := FetchCatalog(context.Background(), srv.URL, &oauth.Tokens{AccessToken: "t"}); err == nil || calls != 0 {
+		t.Fatalf("without a version: err = %v, calls = %d; want an error and no call", err, calls)
+	}
+	ms, err := FetchCatalog(WithClientVersion(context.Background(), "0.170.1"), srv.URL, &oauth.Tokens{AccessToken: "t"})
 	if err != nil || len(ms) != 1 {
 		t.Fatalf("FetchCatalog = %v, %v", ms, err)
 	}
-	if query != catalogClientVersion || header != catalogClientVersion {
-		t.Errorf("client_version = %q, version header = %q, want %q", query, header, catalogClientVersion)
-	}
-	got, ok := parseVersion(catalogClientVersion)
-	if !ok || cmpVersion(got, []int{0, 169, 0}) < 0 {
-		t.Errorf("catalogClientVersion %q is older than 0.169.0, which brought gpt-6.2", catalogClientVersion)
+	if query != "0.170.1" || header != "0.170.1" || agent != "codex_cli_rs/0.170.1 (ccgp)" {
+		t.Errorf("client_version = %q, version header = %q, user agent = %q", query, header, agent)
 	}
 }
 

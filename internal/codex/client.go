@@ -38,6 +38,28 @@ func newClient(headerTimeout time.Duration) *http.Client {
 	})}
 }
 
+type clientVersionKey struct{}
+
+// WithClientVersion sets the Codex CLI version presented to the backend
+// (config's codex.client_version) on the calls made with ctx.
+func WithClientVersion(ctx context.Context, version string) context.Context {
+	return context.WithValue(ctx, clientVersionKey{}, version)
+}
+
+// ClientVersion returns the version set by WithClientVersion, or "".
+func ClientVersion(ctx context.Context) string {
+	v, _ := ctx.Value(clientVersionKey{}).(string)
+	return v
+}
+
+// userAgent is what the official client sends (originator/version), marked as ccgp.
+func userAgent(ctx context.Context) string {
+	if v := ClientVersion(ctx); v != "" {
+		return originator + "/" + v + " (ccgp)"
+	}
+	return originator + " (ccgp)"
+}
+
 // Routing carries Codex conversation routing state across calls and retries.
 // Its opaque state is sent verbatim and is never interpreted by the client.
 type Routing struct {
@@ -187,7 +209,7 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 		r.Header.Set("ChatGPT-Account-ID", tok.AccountID)
 	}
 	r.Header.Set("originator", originator)
-	r.Header.Set("User-Agent", originator+" (ccgp)")
+	r.Header.Set("User-Agent", userAgent(ctx))
 	for k, v := range hdr {
 		r.Header[k] = v
 	}
