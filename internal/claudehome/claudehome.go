@@ -84,21 +84,67 @@ func PrepareOwn(src, dst string) error {
 // mirrorShared copies the instructions, settings (without credential entries),
 // agents, commands, skills, output styles and plugins from src to dst.
 func mirrorShared(src, dst string) error {
-	for _, name := range mirroredFiles {
-		if err := mirrorFile(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+	man, legacy, err := loadManifestSync(dst)
+	if err != nil {
+		return err
+	}
+	if err := validateManifest(man); err != nil {
+		return err
+	}
+	previous := make(mirrored, len(man))
+	for key, value := range man {
+		previous[key] = value
+	}
+	recovery, err := loadRecovery(dst)
+	if err != nil {
+		return err
+	}
+	protected, err := reconcileRecovery(dst, recovery, man)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	var staged []*stagedFile
+	defer func() {
+		for _, file := range staged {
+			file.discard()
+		}
+	}()
+	for _, name := range append(append([]string(nil), mirroredFiles...), "settings.json") {
+		if err := planTopLevel(src, dst, name, man, seen, &staged); err != nil {
 			return err
 		}
 	}
-	if err := mirrorSettings(filepath.Join(src, "settings.json"), filepath.Join(dst, "settings.json")); err != nil {
-		return err
-	}
-	man := loadManifest(dst)
 	for _, name := range mirroredDirs {
-		if err := mirrorTree(src, dst, name, man); err != nil {
+		if err := mirrorTree(src, dst, name, man, seen, &staged); err != nil {
 			return fmt.Errorf("claudehome: %w", err)
 		}
 	}
+	for key := range protected {
+		if !seen[key] {
+			delete(man, key)
+		}
+	}
+	if err := recordRecovery(dst, recovery, staged, previous); err != nil {
+		return err
+	}
+	for _, file := range staged {
+		if err := file.publish(false); err != nil {
+			return err
+		}
+	}
+	if err := pruneStale(dst, man, seen); err != nil {
+		return err
+	}
 	if err := man.save(dst); err != nil {
+		return err
+	}
+	if legacy {
+		if err := os.Remove(filepath.Join(dst, ".ccgp-mirror.json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	if err := os.Remove(filepath.Join(dst, recoveryFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -122,33 +168,6 @@ func sameFile(a, b string) bool {
 	infoA, errA := os.Stat(a)
 	infoB, errB := os.Stat(b)
 	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
-}
-
-// mirrorFile copies src to dst, or removes dst when src is gone.
-func mirrorFile(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if errors.Is(err, fs.ErrNotExist) {
-		return removeIfExists(dst)
-	}
-	if err != nil {
-		return err
-	}
-	return writeIfChanged(dst, data)
-}
-
-func mirrorSettings(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if errors.Is(err, fs.ErrNotExist) {
-		return removeIfExists(dst)
-	}
-	if err != nil {
-		return err
-	}
-	clean, err := SanitizeSettings(data)
-	if err != nil {
-		return fmt.Errorf("claudehome: %s: %w", src, err)
-	}
-	return writeIfChanged(dst, clean)
 }
 
 // authEnvKeys are removed from settings.json's "env": they would re-point the
@@ -266,13 +285,6 @@ func writeIfChanged(path string, data []byte) error {
 		return nil
 	}
 	return publishFile(path, bytes.NewReader(data), nil, false)
-}
-
-func removeIfExists(path string) error {
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return nil
 }
 
 // HasCredentials reports whether dir contains an official credential file.
