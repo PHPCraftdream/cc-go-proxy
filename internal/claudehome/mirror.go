@@ -1,15 +1,19 @@
 package claudehome
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
@@ -17,12 +21,13 @@ import (
 const manifestFile = ".ccgp-mirror" + ktavfile.Ext
 
 // mirrored is the one-way copy state: slash-separated path relative to the
-// destination root -> source size and modification time at copy time.
+// destination root -> source metadata and content hash at copy time.
 type mirrored map[string]stamp
 
 type stamp struct {
-	Size    int64 `json:"size"`
-	ModTime int64 `json:"mtime"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"mtime"`
+	Hash    string `json:"hash,omitempty"`
 }
 
 // manifestData is the manifest file: a list, since the keys are file paths
@@ -35,6 +40,7 @@ type manifestEntry struct {
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`
 	ModTime int64  `json:"mtime"`
+	Hash    string `json:"hash,omitempty"`
 }
 
 // legacyManifest reads the .ccgp-mirror.json of earlier versions (path -> stamp).
@@ -50,7 +56,7 @@ func legacyManifest(data []byte, v any) error {
 func (m mirrored) data() manifestData {
 	d := manifestData{Files: make([]manifestEntry, 0, len(m))}
 	for p, st := range m {
-		d.Files = append(d.Files, manifestEntry{Path: p, Size: st.Size, ModTime: st.ModTime})
+		d.Files = append(d.Files, manifestEntry{Path: p, Size: st.Size, ModTime: st.ModTime, Hash: st.Hash})
 	}
 	sort.Slice(d.Files, func(i, j int) bool { return d.Files[i].Path < d.Files[j].Path })
 	return d
@@ -59,10 +65,10 @@ func (m mirrored) data() manifestData {
 func loadManifest(dst string) mirrored {
 	m := mirrored{}
 	var d manifestData
-	// A damaged manifest only costs a full re-copy.
+	// A damaged manifest falls back to comparing destination contents.
 	if err := ktavfile.Read(filepath.Join(dst, manifestFile), &d, legacyManifest); err == nil {
 		for _, e := range d.Files {
-			m[e.Path] = stamp{Size: e.Size, ModTime: e.ModTime}
+			m[e.Path] = stamp{Size: e.Size, ModTime: e.ModTime, Hash: e.Hash}
 		}
 	}
 	return m
@@ -82,7 +88,7 @@ func isCredential(name string) bool { return strings.EqualFold(name, credentials
 // mirrorTree copies the directory name under src into the same name under
 // dst (one-way, official -> isolated). The source is never modified.
 //
-//   - New or changed files are copied (compared by size and mtime).
+//   - New or changed source contents are mirrored.
 //   - Files copied by an earlier run that no longer exist at the source are
 //     removed. Files created in the isolated dir by the session are kept.
 //   - Credential files are never copied; symlinks are skipped.
@@ -136,19 +142,12 @@ func mirrorTree(src, dst, name string, man mirrored) error {
 		}
 		key := filepath.ToSlash(filepath.Join(name, rel))
 		seen[key] = true
-		want := stamp{info.Size(), info.ModTime().UnixNano()}
-		// Unchanged at the source and still present: leave the copy alone. Its
-		// size is not compared, because rewritePluginPaths (and the session)
-		// legitimately change mirrored files.
-		if man[key] == want {
-			if _, err := os.Stat(target); err == nil {
-				return nil
-			}
-		}
-		if err := copyFile(p, target, info.ModTime()); err != nil {
+		previous, tracked := man[key]
+		hash, err := mirrorTreeFile(p, target, src, dst, name, rel, info, previous, tracked)
+		if err != nil {
 			return err
 		}
-		man[key] = want
+		man[key] = stamp{Size: info.Size(), ModTime: info.ModTime().UnixNano(), Hash: hash}
 		return nil
 	})
 	if err != nil {
@@ -220,16 +219,86 @@ func guardNotInside(dst, resolvedSrc string) error {
 	return nil
 }
 
-func copyFile(src, dst string, mtime time.Time) error {
-	in, err := os.Open(src)
+func mirrorTreeFile(srcFile, target, src, dst, name, rel string, info fs.FileInfo, previous stamp, tracked bool) (string, error) {
+	in, err := os.Open(srcFile)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() { _ = in.Close() }()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return err
+	plugin := name == "plugins" && filepath.Dir(rel) == "." && strings.HasSuffix(rel, ".json")
+	var raw []byte
+	h := sha256.New()
+	if plugin {
+		raw, err = io.ReadAll(in)
+		if err != nil {
+			return "", err
+		}
+		_, _ = h.Write(raw)
+	} else if _, err := io.Copy(h, in); err != nil {
+		return "", err
 	}
-	return publishFile(dst, in, &mtime, false)
+	hash := hex.EncodeToString(h.Sum(nil))
+	st, statErr := os.Lstat(target)
+	regular := statErr == nil && st.Mode().IsRegular()
+	// Legacy stamps cannot distinguish a same-size, same-time source edit.
+	legacyMatch := tracked && previous.Hash == "" && previous.Size == info.Size() && previous.ModTime == info.ModTime().UnixNano()
+	if regular && (previous.Hash != "" && previous.Hash == hash || legacyMatch) {
+		return hash, nil
+	}
+	var content io.Reader
+	finalHash := hash
+	if plugin {
+		s := string(raw)
+		srcPlug, dstPlug := filepath.Join(src, "plugins"), filepath.Join(dst, "plugins")
+		for _, pair := range [][2]string{{jsonEscape(srcPlug), jsonEscape(dstPlug)}, {filepath.ToSlash(srcPlug), filepath.ToSlash(dstPlug)}, {srcPlug, dstPlug}} {
+			s = strings.ReplaceAll(s, pair[0], pair[1])
+		}
+		b := []byte(s)
+		sum := sha256.Sum256(b)
+		finalHash = hex.EncodeToString(sum[:])
+		content = bytes.NewReader(b)
+	} else {
+		if _, err := in.Seek(0, io.SeekStart); err != nil {
+			return "", err
+		}
+		content = in
+	}
+	if regular {
+		old, err := os.Open(target)
+		if err != nil {
+			return "", err
+		}
+		oldHash := sha256.New()
+		_, err = io.Copy(oldHash, old)
+		_ = old.Close()
+		if err != nil {
+			return "", err
+		}
+		if hex.EncodeToString(oldHash.Sum(nil)) == finalHash {
+			return hash, nil
+		}
+	}
+	mtime := info.ModTime()
+	verified := &digestReader{reader: content, expected: finalHash, hash: sha256.New()}
+	if err := publishFile(target, verified, &mtime, false); err != nil {
+		return "", err
+	}
+	return hash, nil
+}
+
+type digestReader struct {
+	reader   io.Reader
+	hash     hash.Hash
+	expected string
+}
+
+func (r *digestReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	_, _ = r.hash.Write(p[:n])
+	if err == io.EOF && hex.EncodeToString(r.hash.Sum(nil)) != r.expected {
+		return n, errors.New("claudehome: source changed while mirroring")
+	}
+	return n, err
 }
 
 // removeEmptyDirs deletes empty directories below root (root itself stays).
@@ -244,42 +313,6 @@ func removeEmptyDirs(root string) {
 	for i := len(dirs) - 1; i >= 0; i-- {
 		_ = os.Remove(dirs[i]) // fails (and is kept) when not empty
 	}
-}
-
-// rewritePluginPaths points the absolute paths stored in the mirrored plugin
-// metadata (plugins/*.json) at the isolated copy instead of the source.
-func rewritePluginPaths(src, dst string) error {
-	srcPlug, dstPlug := filepath.Join(src, "plugins"), filepath.Join(dst, "plugins")
-	entries, err := os.ReadDir(dstPlug)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	pairs := [][2]string{
-		{jsonEscape(srcPlug), jsonEscape(dstPlug)},
-		{filepath.ToSlash(srcPlug), filepath.ToSlash(dstPlug)},
-		{srcPlug, dstPlug},
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		p := filepath.Join(dstPlug, e.Name())
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		s := string(b)
-		for _, pr := range pairs {
-			s = strings.ReplaceAll(s, pr[0], pr[1])
-		}
-		if err := writeIfChanged(p, []byte(s)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func jsonEscape(s string) string { return strings.ReplaceAll(s, `\`, `\\`) }

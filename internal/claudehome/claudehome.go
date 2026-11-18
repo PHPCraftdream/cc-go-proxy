@@ -97,9 +97,6 @@ func mirrorShared(src, dst string) error {
 	if err := man.save(dst); err != nil {
 		return err
 	}
-	if err := rewritePluginPaths(src, dst); err != nil {
-		return fmt.Errorf("claudehome: %w", err)
-	}
 	return nil
 }
 
