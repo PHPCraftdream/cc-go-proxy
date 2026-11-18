@@ -6,9 +6,9 @@ Guidance for Claude Code when working in this repository.
 
 `ccgp` translates Anthropic Messages API requests from Claude Code to:
 
-- OpenAI-compatible Chat Completions (`internal/converter`, `internal/server/handlers.go`);
+- OpenAI-compatible Chat Completions (`internal/converter`, `internal/server/chat/handlers.go`);
 - the ChatGPT Codex Responses API via OAuth (`internal/codex`, `internal/oauth`,
-  `internal/server/codex.go`).
+  `internal/server/codexh/codex.go`).
 
 ## Layout
 
@@ -24,11 +24,11 @@ Guidance for Claude Code when working in this repository.
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client (large bodies zstd-compressed with a plain fallback, `compress.go`; websocket transport with delta requests (default `CODEX_TRANSPORT=auto`, HTTP fallback)); subpackages `codex/catalog` (the model catalog, picks, Fast tier), `codex/sse` (Responses SSE → Messages events), `codex/ws` (the websocket manager: `wsmanager.go`, side requests, lifetimes), `codex/ws/chain` (delta requests, divergence), `codex/ws/conn` (the connection and handshake) |
-| `internal/clientver` | `codex.client_version` upkeep: newest Codex CLI release (GitHub), `Upgrader.Raise` (only raises, lookups at most every 10 min), `RefreshMappings` (managed blocks from the catalog); the server calls it on a backend refusal that asks for a newer client (`codex.NeedsNewerClient`, `server/clientver.go`), the CLI before `--models` and the login refresh |
+| `internal/clientver` | `codex.client_version` upkeep: newest Codex CLI release (GitHub), `Upgrader.Raise` (only raises, lookups at most every 10 min), `RefreshMappings` (managed blocks from the catalog); the server calls it on a backend refusal that asks for a newer client (`codex.NeedsNewerClient`, `server/codexh/tier/clientver.go`), the CLI before `--models` and the login refresh |
 | `internal/connpool` | upstream transport: active window of lanes (fewest in flight; `connections.active`, default 7), pools renewed every 10 min at staggered times, old pools drained and capped with the active ones by `connections.total` (default 10; renewal waits, running requests are never cut), next pool warmed up in the background and the lane switches the moment it is open; the warm connection goes to the next request (ties prefer its lane) or is dropped after 20 s (`warm.go`), HTTP/2 health pings (quiet 15 s -> ping, no answer 30 s -> closed), a connect failure is retried on lanes with a working connection for up to 30 s (backoff), a connection broken before the reply at most twice; `Observer.Discard` gives a lane a fresh pool at once (the server calls it when the edge answers a request with an HTML block page) |
 | `internal/proxydial` | SOCKS5 and HTTP(S) CONNECT dialers; `Choice` (proxy / none / env) on the request context, cascade `connections.proxy` -> provider `proxy:` -> profile `proxy:` (the nearest level that sets one replaces the ones above whole; `none` = direct) in `Config.ProxyChoice`; default proxy for context-less calls set by `config.Load` |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) and their artifacts (tasks, file versions, plan: `artifacts.go`) between Claude Code config dirs; `--fork` gives a copy ids of its own (`forkids.go`); the failed end of a transcript (turns with only API errors) is left out (`failedtail.go`); `jsonl.StripThinking`; subpackages `sessions/jsonl` (line streams in parallel, thinking stripper, failed-tail finder) and `sessions/forkids` (the ids of a fork: scan, map, derive) |
-| `internal/server` | fiber app, `/call/:token/...` auth, per-profile config, hot config reload; peak hours: `POST /v1/messages` in a provider's peak window is refused with a 400 before any upstream call (`peak.go`) |
+| `internal/server` | fiber app (`server.go`), `/call/:token/...` auth, per-profile config, hot config reload; peak hours: `POST /v1/messages` in a provider's peak window is refused with a 400 before any upstream call (`peak.go`); subpackages: `shared` (helpers, `OwnString`, auth, rate limit, `Sessions`), `obs` (cache stats, link and trace logging), `rt` (request runtime: active requests, client watch, access log, upstream context), `chat` (Anthropic/OpenAI-compatible handlers and error mapping), `codexh` (Codex handler; `codexh/wsh`: websocket path and retry, `codexh/tier`: Fast tier and client version) |
 | `internal/angel` | detached background process, `/health`-based control; the server's run record (`server.run`), crash reports (`crash/`), the stop note (`StopBy`); `angel/proc`: detach, terminate and the Windows job it lives in per OS |
 
 ## Invariants
@@ -78,8 +78,8 @@ Guidance for Claude Code when working in this repository.
   be in the interface goes into `cliOnly` with its reason. Help, completion, README, `docs/cli.md` follow.
 - Strings from the fiber context (`c.Get`, `c.Params`, `c.Query`, …) alias fasthttp's request buffer, which the next
   request overwrites. Kept anywhere (a variable, a header of an upstream request) they must be copied with
-  `ownString`: the HTTP/2 transport keeps header strings in its HPACK table, and strings that change under it panic the
-  whole server (`id (N) <= evictCount (M)`, in a goroutine that cannot be recovered). `header_strings_test.go` checks
+  `shared.OwnString`: the HTTP/2 transport keeps header strings in its HPACK table, and strings that change under it panic the
+  whole server (`id (N) <= evictCount (M)`, in a goroutine that cannot be recovered). `header_strings_test.go` (in `internal/server`) checks
   the source for it.
 - Windows finds a `ccgp.exe` in the current directory before `PATH`: a stale build in the repo root hides the
   installed one (it is git-ignored; `scripts\deploy.cmd` installs into `%USERPROFILE%\bin`).

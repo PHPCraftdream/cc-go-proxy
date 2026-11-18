@@ -10,19 +10,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
-	"strings"
+	"sort"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/converter"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/chat"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/codexh"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/codexh/wsh"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/obs"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/rt"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/shared"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 )
@@ -53,98 +61,17 @@ func errorHandler(c *fiber.Ctx, err error) error {
 		if fe.Code == fiber.StatusRequestEntityTooLarge {
 			hint = "; raise listen.max_body_mb"
 		}
-		_, _ = fmt.Fprintf(logOut, "[%s] %d - rejected %s %s: %s (content-length %d%s)\n", time.Now().Format("15:04:05"),
-			fe.Code, c.Method(), maskToken(c.Path()), fe.Message, c.Request().Header.ContentLength(), hint)
+		_, _ = fmt.Fprintf(shared.LogOut, "[%s] %d - rejected %s %s: %s (content-length %d%s)\n", time.Now().Format("15:04:05"),
+			fe.Code, c.Method(), shared.MaskToken(c.Path()), fe.Message, c.Request().Header.ContentLength(), hint)
 	}
 	return fiber.DefaultErrorHandler(c, err)
 }
 
-// maxLogErr caps the error text of a log line.
-const maxLogErr = 300
-
-// oneLine flattens s to a single line of at most n bytes.
-func oneLine(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > n {
-		s = strings.ToValidUTF8(s[:n], "") + "…"
-	}
-	return s
-}
-
-// quietRoute reports a request that says nothing when it succeeds: the model
-// lookup and the health check, which Claude Code and ccgp repeat all day.
-func quietRoute(c *fiber.Ctx) bool {
-	return c.Method() == fiber.MethodGet && (c.Path() == "/health" || strings.HasSuffix(c.Path(), "/model"))
-}
-
-// accessLog prints one line per request: start time, status, duration, route,
-// and for failures (status >= 400) the error message. A successful quietRoute
-// request gets no line.
-func accessLog(w io.Writer) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		start := time.Now()
-		err := c.Next()
-		if status := c.Response().StatusCode(); status < 400 && quietRoute(c) {
-			return err
-		}
-		profile := ""
-		if rc := requestConfig(c); rc != nil {
-			profile = " [" + rc.Profile + "]"
-		}
-		if m, _ := c.Locals(localsModel).(string); m != "" {
-			profile += " " + m
-		}
-		status := c.Response().StatusCode()
-		if m, _ := c.Locals(localsErr).(string); m != "" && status >= 400 {
-			profile += ": " + oneLine(m, maxLogErr)
-		}
-		if m, _ := c.Locals(localsConn).(string); m != "" {
-			profile += " | " + m
-		}
-		_, _ = fmt.Fprintf(w, "[%s] %d - %s %s %s%s\n", start.Format("15:04:05"),
-			status, time.Since(start), c.Method(), maskToken(c.Path()), profile)
-		return err
-	}
-}
-
-// sessions caches one OAuth session per codex provider.
-type sessions struct {
-	store creds.Store
-	mu    sync.Mutex
-	m     map[string]*oauth.Session
-	peak  *peak.Pauses
-}
-
-// pauses are the pauses of peak hours (`ccgp --peak <provider> pause`), kept in
-// the creds directory.
-func (s *sessions) pauses() *peak.Pauses {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.peak == nil {
-		s.peak = peak.NewPauses(s.store.Dir)
-	}
-	return s.peak
-}
-
-func (s *sessions) get(provider string) *oauth.Session {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.m == nil {
-		s.m = map[string]*oauth.Session{}
-	}
-	if ss, ok := s.m[provider]; ok {
-		return ss
-	}
-	ss := &oauth.Session{Store: oauth.Store{Path: s.store.OAuthPath(provider)}, Client: &oauth.Client{}}
-	s.m[provider] = ss
-	return ss
-}
-
 // registerCallRoutes mounts every token-protected endpoint under /call/:token/.
-func registerCallRoutes(app *fiber.App, auth fiber.Handler, s *sessions) {
+func registerCallRoutes(app *fiber.App, auth fiber.Handler, s *shared.Sessions) {
 	// Proxy info (token-protected: exposes routing config)
-	app.Get(callPrefix+":token/", auth, func(c *fiber.Ctx) error {
-		rc := requestConfig(c)
+	app.Get(shared.CallPrefix+":token/", auth, func(c *fiber.Ctx) error {
+		rc := shared.RequestConfig(c)
 		return c.JSON(fiber.Map{
 			"version":  ProxyVersion,
 			"profile":  rc.Profile,
@@ -155,7 +82,7 @@ func registerCallRoutes(app *fiber.App, auth fiber.Handler, s *sessions) {
 		})
 	})
 
-	app.Get(callPrefix+":token/model", auth, modelRoute)
+	app.Get(shared.CallPrefix+":token/model", auth, chat.ModelRoute)
 
 	// Claude API endpoints
 	setupClaudeEndpoints(app, auth, s)
@@ -170,17 +97,17 @@ func Start(cfg *config.Config) error {
 	store := creds.Store{Dir: dir}
 	index, build := profileResolver(cfg, store)
 
-	logOut = newDayWriter(os.Stdout)
+	shared.LogOut = obs.NewDayWriter(os.Stdout)
 	app := fiber.New(appConfig(cfg.MaxBodyBytes()))
 
 	// Middleware. No CORS: browsers must not reach the proxy.
 	app.Use(recover.New())
-	flight := &inFlight{}
-	app.Use(flight.middleware())
+	flight := &rt.InFlight{}
+	app.Use(flight.Middleware())
 
 	// Enable HTTP logging only when simple log mode is enabled
 	if cfg.SimpleLog {
-		app.Use(accessLog(logOut))
+		app.Use(rt.AccessLog(shared.LogOut))
 	}
 
 	// Health check endpoint; pid lets `ccgp --stop` verify the process,
@@ -190,7 +117,7 @@ func Start(cfg *config.Config) error {
 		return c.JSON(healthPayload(flight, exe, exeMod))
 	})
 
-	registerCallRoutes(app, requireProfile(index, build), &sessions{store: store})
+	registerCallRoutes(app, shared.RequireProfile(index, build), shared.NewSessions(store))
 
 	// Graceful shutdown
 	go func() {
@@ -202,7 +129,7 @@ func Start(cfg *config.Config) error {
 	}()
 
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
-	fmt.Printf("✅ ccgp listening on http://%s%s<token>\n", addr, callPrefix)
+	fmt.Printf("✅ ccgp listening on http://%s%s<token>\n", addr, shared.CallPrefix)
 	for name, p := range cfg.Profiles {
 		fmt.Printf("   profile %s → provider %s (%s)\n", name, p.Provider, cfg.Providers[p.Provider].Type)
 	}
@@ -217,7 +144,7 @@ func Start(cfg *config.Config) error {
 	if cfg.ConnectionsProxy != "" {
 		fmt.Printf("   upstream proxy: %s\n", proxyText(cfg))
 	}
-	go logUpstreamStats(logOut)
+	go logUpstreamStats(shared.LogOut)
 
 	// Once the port is ours: the record of this server, its crash file, and a word
 	// about a previous server that vanished (angel.BeginRun).
@@ -226,10 +153,10 @@ func Start(cfg *config.Config) error {
 		var note string
 		life, note = angel.BeginRun(ProxyVersion)
 		if note != "" {
-			_, _ = fmt.Fprintf(logOut, "[%s] %s\n", time.Now().Format("15:04:05"), note)
+			_, _ = fmt.Fprintf(shared.LogOut, "[%s] %s\n", time.Now().Format("15:04:05"), note)
 		}
 		if life != nil && life.Run.Job != "none" {
-			_, _ = fmt.Fprintf(logOut, "   server process: pid %s, started by pid %s, in a job: %s\n",
+			_, _ = fmt.Fprintf(shared.LogOut, "   server process: pid %s, started by pid %s, in a job: %s\n",
 				life.Run.PID, life.Run.Parent, life.Run.Job)
 		}
 		return nil
@@ -240,7 +167,7 @@ func Start(cfg *config.Config) error {
 }
 
 // profileResolver builds the token index and per-profile config factory.
-func profileResolver(cfg *config.Config, store creds.Store) (*creds.TokenIndex, profileBuilder) {
+func profileResolver(cfg *config.Config, store creds.Store) (*creds.TokenIndex, shared.ProfileBuilder) {
 	if cfg.IsEnvMode() {
 		// Single env token; base config already holds env provider + tier overrides.
 		return creds.StaticIndex(config.EnvProfile, cfg.Token),
@@ -287,28 +214,171 @@ func getRoutingMode(cfg *config.Config) string {
 	return "pattern-based (" + converter.DefaultOpusModel + " / " + converter.DefaultHaikuModel + ")"
 }
 
-func setupClaudeEndpoints(app *fiber.App, auth fiber.Handler, ss *sessions) {
+func setupClaudeEndpoints(app *fiber.App, auth fiber.Handler, ss *shared.Sessions) {
 	// Messages endpoint - main Claude API
-	app.Post(callPrefix+":token/v1/messages", auth, func(c *fiber.Ctx) error {
-		cfg := requestConfig(c)
-		if msg := peakRefusal(cfg, ss.pauses(), time.Now()); msg != "" {
-			return anthropicError(c, fiber.StatusBadRequest, "invalid_request_error", msg)
+	app.Post(shared.CallPrefix+":token/v1/messages", auth, func(c *fiber.Ctx) error {
+		cfg := shared.RequestConfig(c)
+		if msg := peakRefusal(cfg, ss.Pauses(), time.Now()); msg != "" {
+			return shared.AnthropicError(c, fiber.StatusBadRequest, "invalid_request_error", msg)
 		}
 		switch cfg.ProviderType {
 		case config.ProviderTypeCodex:
-			return handleCodexMessages(c, cfg, ss.get(cfg.ProviderName))
+			return codexh.HandleCodexMessages(c, cfg, ss.Get(cfg.ProviderName))
 		case config.ProviderTypeAnthropicCompat:
-			return handleAnthropicCompat(c, cfg)
+			return chat.HandleAnthropicCompat(c, cfg)
 		}
-		return handleMessages(c, cfg)
+		return chat.HandleMessages(c, cfg)
 	})
 
 	// Token counting endpoint
-	app.Post(callPrefix+":token/v1/messages/count_tokens", auth, func(c *fiber.Ctx) error {
-		cfg := requestConfig(c)
+	app.Post(shared.CallPrefix+":token/v1/messages/count_tokens", auth, func(c *fiber.Ctx) error {
+		cfg := shared.RequestConfig(c)
 		if cfg.ProviderType == config.ProviderTypeAnthropicCompat {
-			return handleAnthropicCountTokens(c, cfg)
+			return chat.HandleAnthropicCountTokens(c, cfg)
 		}
-		return handleCountTokens(c, cfg)
+		return chat.HandleCountTokens(c, cfg)
 	})
+}
+
+// exeInfo captures the running binary's path and modification time; called
+// once at server start so /health reports the code the server runs.
+func exeInfo() (path string, mod int64) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", 0
+	}
+	if fi, err := os.Stat(path); err == nil {
+		mod = fi.ModTime().UnixNano()
+	}
+	return path, mod
+}
+
+// healthPayload is the /health body. exe/exe_mod let the CLI detect a server
+// started from an older binary; active reports in-flight model requests.
+func healthPayload(f *rt.InFlight, exe string, exeMod int64) fiber.Map {
+	return fiber.Map{
+		"status":  "ok",
+		"service": "ccgp",
+		"version": ProxyVersion,
+		"pid":     os.Getpid(),
+		"exe":     exe,
+		"exe_mod": exeMod,
+		"active":  f.Count(),
+	}
+}
+
+// cfgSource reloads config.ktav when it changes, so profiles and mappings
+// edited while the server runs apply without restart, connection limits
+// included. Listen address changes still need a restart.
+type cfgSource struct {
+	mu  sync.Mutex
+	cfg *config.Config
+	mod time.Time
+}
+
+func newCfgSource(cfg *config.Config) *cfgSource {
+	s := &cfgSource{cfg: cfg}
+	if st, err := os.Stat(cfg.ConfigFile); err == nil {
+		s.mod = st.ModTime()
+	}
+	return s
+}
+
+func (s *cfgSource) get() *config.Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.IsEnvMode() {
+		return s.cfg
+	}
+	st, err := os.Stat(s.cfg.ConfigFile)
+	if err != nil || st.ModTime().Equal(s.mod) {
+		return s.cfg
+	}
+	next, err := config.Load()
+	if err != nil {
+		fmt.Printf("[WARN] config reload failed, keeping previous: %v\n", err)
+		s.mod = st.ModTime() // don't retry until the file changes again
+		return s.cfg
+	}
+	next.Debug, next.SimpleLog = s.cfg.Debug, s.cfg.SimpleLog
+	next.Host, next.Port = s.cfg.Host, s.cfg.Port
+	reapplyConnectionLimits(s.cfg, next)
+	s.cfg, s.mod = next, st.ModTime()
+	return s.cfg
+}
+
+// applyConnectionLimits sizes the connection pools of every upstream client
+// from connections.active / .total; it returns the values applied.
+func applyConnectionLimits(cfg *config.Config) (active, total int) {
+	active, total = cfg.ConnectionLimits()
+	for _, rt := range []http.RoundTripper{codex.HTTPClient.Transport, chat.UpstreamClient.Transport, rt.OpenAITransport} {
+		if r, ok := rt.(*connpool.Router); ok {
+			r.SetLimits(active, total)
+		}
+	}
+	return active, total
+}
+
+// reapplyConnectionLimits applies next's limits, printing them and the proxy
+// when they changed (config.Load has already made next's proxy the default).
+func reapplyConnectionLimits(prev, next *config.Config) {
+	pa, pt := prev.ConnectionLimits()
+	a, t := applyConnectionLimits(next)
+	if a != pa || t != pt {
+		fmt.Printf("   upstream connections: %d active, %d total\n", a, t)
+	}
+	if prev.ConnectionsProxy != next.ConnectionsProxy {
+		fmt.Printf("   upstream proxy: %s\n", proxyText(next))
+	}
+}
+
+// proxyText names the proxy for the log, without its password.
+func proxyText(cfg *config.Config) string {
+	if cfg.ConnectionsProxy == "" {
+		return "none"
+	}
+	return proxydial.Redact(cfg.ConnectionsProxy)
+}
+
+// statsEvery is how often the connection counts of the upstream clients are logged.
+const statsEvery = 10 * time.Minute
+
+// upstreamTransports names the connection pools of the upstream clients.
+func upstreamTransports() map[string]*connpool.Router {
+	out := map[string]*connpool.Router{}
+	for name, rt := range map[string]http.RoundTripper{
+		"codex": codex.HTTPClient.Transport, "anthropic": chat.UpstreamClient.Transport, "openai": rt.OpenAITransport,
+	} {
+		if r, ok := rt.(*connpool.Router); ok {
+			out[name] = r
+		}
+	}
+	return out
+}
+
+// writeUpstreamStats prints one line per client that did anything since the
+// last call: dials and their protocol, warm-ups, retries.
+func writeUpstreamStats(w io.Writer, now time.Time, ts map[string]*connpool.Router) {
+	names := make([]string, 0, len(ts))
+	for n := range ts {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if s := ts[n].Stats().String(); s != "" {
+			_, _ = fmt.Fprintf(w, "[%s] upstream stats [%s]: %s\n", now.Format("15:04:05"), n, s)
+		}
+	}
+}
+
+// logUpstreamStats writes the stats lines every statsEvery, for the server's life.
+func logUpstreamStats(w io.Writer) {
+	ts := upstreamTransports()
+	for now := range time.Tick(statsEvery) {
+		writeUpstreamStats(w, now, ts)
+		wsh.WriteCodexWebsocketStats(w, now)
+		obs.WriteLinkStats(w, now)
+		obs.WriteSpeedStats(w, now)
+		obs.WriteCacheStats(w, now)
+	}
 }
