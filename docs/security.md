@@ -49,6 +49,13 @@ directory at every launch, one way:
   directory are kept, credential files are never copied. Absolute paths in `plugins/*.json` are rewritten to
   point at the copy. Links and junctions are never followed, so a session cannot write into your own directory.
 
+Preparation locks each destination across ccgp processes; different profile directories can prepare independently.
+Changed mirror files are staged before publication, and stale managed files are cleaned up only after all staged
+publications succeed. Publication is per file, not an all-or-nothing snapshot: readers can see a mixture of old and
+new files, and a failed preparation can leave some files published. A later preparation reconciles interrupted
+publications and preserves subsequent local edits; this recovery is not a guarantee of durability after power loss.
+The lock coordinates ccgp preparations, not arbitrary session or external writes.
+
 History, sessions and projects stay separate; move chosen ones with [`ccgp --send`](sessions.md). The one
 exception is the launch of a profile that has no session of the current directory yet, which copies the latest
 session of this directory from your Claude Code (read only on your side).

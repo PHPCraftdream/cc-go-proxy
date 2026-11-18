@@ -13,6 +13,10 @@ history is kept in [docs/upstream-changelog.md](docs/upstream-changelog.md).
 - Codex profile and model-family speed rules via `--speed` and the interactive interface. Fast requests use the account catalog's Fast service-tier ID; the requested tier does not confirm actual speed. See [Codex Fast mode](docs/codex-fast-mode.md) for quota and availability limits.
 
 ### Fixed
+- Profile mirror preparation serializes per destination across processes, stages changed files before publication,
+  and cleans up stale managed files after successful publications. Interrupted publications are reconciled on retry;
+  visibility is per file, not transactional, and recovery does not guarantee power-loss durability. See
+  [security](docs/security.md).
 - `ccgp --update` no longer fails on Windows with `cannot move the old binary aside: Access is denied` when a process
   started before the previous update (an open Claude Code session) still holds `ccgp.exe.old`: the current binary then
   goes aside as `ccgp.exe.old-<time>`, and leftovers of earlier updates are removed once nothing holds them.
