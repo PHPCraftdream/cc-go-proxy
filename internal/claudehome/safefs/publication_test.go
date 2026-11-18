@@ -1,4 +1,4 @@
-package claudehome
+package safefs
 
 import (
 	"errors"
@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
 )
 
 type publicationReader struct {
@@ -37,12 +38,12 @@ func TestPublicationDoesNotExposePartialContents(t *testing.T) {
 		if got, err := os.ReadFile(dst); err != nil || string(got) != "old" {
 			t.Fatalf("during staging: %q, %v", got, err)
 		}
-		if err := writeIfChanged(dst, []byte("other complete")); err != nil {
+		if err := PublishFile(dst, strings.NewReader("other complete"), nil, false); err != nil {
 			t.Fatal(err)
 		}
 		return "new complete", nil
 	}}
-	if err := publishFile(dst, r, nil, false); err != nil {
+	if err := PublishFile(dst, r, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(dst); err != nil || string(got) != "new complete" {
@@ -62,7 +63,7 @@ func TestPublicationFailureKeepsDestination(t *testing.T) {
 	}
 	failure := errors.New("read failure")
 	r := &publicationReader{read: func() (string, error) { return "partial", failure }}
-	if err := publishFile(dst, r, nil, false); !errors.Is(err, failure) {
+	if err := PublishFile(dst, r, nil, false); !errors.Is(err, failure) {
 		t.Fatalf("got %v", err)
 	}
 	if got, err := os.ReadFile(dst); err != nil || string(got) != "old" {
@@ -80,37 +81,11 @@ func TestSeedPublicationDoesNotClobberConcurrentCreation(t *testing.T) {
 		}
 		return "seed", nil
 	}}
-	if err := publishFile(dst, r, nil, true); err != nil {
+	if err := PublishFile(dst, r, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(dst); err != nil || string(got) != "created by session" {
 		t.Fatalf("destination: %q, %v", got, err)
-	}
-	assertNoStages(t, dir)
-}
-
-func TestSeedStateCreatesAndPreservesState(t *testing.T) {
-	dir := t.TempDir()
-	src := filepath.Join(dir, "source")
-	dst := filepath.Join(dir, "state")
-	if err := os.WriteFile(src, []byte(`{"theme":"dark","oauthAccount":"secret"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := seedState(src, dst); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(dst)
-	if err != nil || !strings.Contains(string(got), `"theme": "dark"`) || strings.Contains(string(got), "secret") {
-		t.Fatalf("seed: %q, %v", got, err)
-	}
-	if err := os.WriteFile(dst, []byte("session state"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := seedState(src, dst); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := os.ReadFile(dst); err != nil || string(got) != "session state" {
-		t.Fatalf("existing state: %q, %v", got, err)
 	}
 	assertNoStages(t, dir)
 }

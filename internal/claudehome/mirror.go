@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome/safefs"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/ktavfile"
 )
 
@@ -113,7 +114,7 @@ func (m mirrored) save(dst string) error {
 	return writeIfChanged(filepath.Join(dst, manifestFile), []byte(s))
 }
 
-func planTopLevel(src, dst, name string, man mirrored, seen map[string]bool, staged *[]*stagedFile) error {
+func planTopLevel(src, dst, name string, man mirrored, seen map[string]bool, staged *[]*safefs.Staged) error {
 	source := filepath.Join(src, name)
 	data, err := os.ReadFile(source)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -146,14 +147,14 @@ func planTopLevel(src, dst, name string, man mirrored, seen map[string]bool, sta
 			return readErr
 		}
 		if !bytes.Equal(old, data) {
-			file, err := stageFile(target, bytes.NewReader(data), nil)
+			file, err := safefs.Stage(target, bytes.NewReader(data), nil)
 			if err != nil {
 				return err
 			}
 			*staged = append(*staged, file)
 		}
 	} else if errors.Is(statErr, fs.ErrNotExist) {
-		file, err := stageFile(target, bytes.NewReader(data), nil)
+		file, err := safefs.Stage(target, bytes.NewReader(data), nil)
 		if err != nil {
 			return err
 		}
@@ -177,7 +178,7 @@ func isCredential(name string) bool { return strings.EqualFold(name, credentials
 //   - Files copied by an earlier run that no longer exist at the source are
 //     removed. Files created in the isolated dir by the session are kept.
 //   - Credential files are never copied; symlinks are skipped.
-func mirrorTree(src, dst, name string, man mirrored, seen map[string]bool, staged *[]*stagedFile) error {
+func mirrorTree(src, dst, name string, man mirrored, seen map[string]bool, staged *[]*safefs.Staged) error {
 	srcRoot := filepath.Join(src, name)
 	dstRoot := filepath.Join(dst, name)
 
@@ -329,7 +330,7 @@ func safeRecoveryPath(dst, key string) error {
 		if err != nil {
 			return err
 		}
-		redirected, err := isRedirect(current, st)
+		redirected, err := safefs.IsRedirect(current, st)
 		if err != nil {
 			return err
 		}
@@ -349,7 +350,7 @@ func unlink(path string) error {
 	if err != nil {
 		return err
 	}
-	redirected, err := isRedirect(path, st)
+	redirected, err := safefs.IsRedirect(path, st)
 	if err != nil {
 		return err
 	}
@@ -372,7 +373,7 @@ func guardNotInside(dst, resolvedSrc string) error {
 	return nil
 }
 
-func mirrorTreeFile(srcFile, target, src, dst, name, rel string, info fs.FileInfo, previous stamp, tracked bool, staged *[]*stagedFile, outputHash *string) (string, error) {
+func mirrorTreeFile(srcFile, target, src, dst, name, rel string, info fs.FileInfo, previous stamp, tracked bool, staged *[]*safefs.Staged, outputHash *string) (string, error) {
 	in, err := os.Open(srcFile)
 	if err != nil {
 		return "", err
@@ -440,7 +441,7 @@ func mirrorTreeFile(srcFile, target, src, dst, name, rel string, info fs.FileInf
 	}
 	mtime := info.ModTime()
 	verified := &digestReader{reader: content, expected: finalHash, hash: sha256.New()}
-	file, err := stageFile(target, verified, &mtime)
+	file, err := safefs.Stage(target, verified, &mtime)
 	if err != nil {
 		return "", err
 	}

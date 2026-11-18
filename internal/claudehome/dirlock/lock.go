@@ -1,4 +1,6 @@
-package claudehome
+// Package dirlock serializes the preparation of one profile directory across
+// processes, with a lock file that stays in the directory.
+package dirlock
 
 import (
 	"errors"
@@ -11,7 +13,8 @@ import (
 
 const destinationLockFile = ".ccgp-mirror.lock"
 
-var acquireDestinationLock = lockFile
+// Acquire takes the lock on an open lock file, waiting for it; tests replace it.
+var Acquire = LockFile
 
 // resolvedPath resolves existing ancestors without creating anything.
 func resolvedPath(path string) (string, error) {
@@ -40,7 +43,10 @@ func resolvedPath(path string) (string, error) {
 	}
 }
 
-func lockDestination(src, dst string) (func(), error) {
+// Lock takes the lock of destination dst of a mirror of src, waiting for another
+// holder, and returns the function that releases it. dst is created. It refuses
+// a destination inside src and a lock file that is not a plain file.
+func Lock(src, dst string) (func(), error) {
 	source, err := resolvedPath(src)
 	if err != nil {
 		return nil, err
@@ -83,17 +89,17 @@ func lockDestination(src, dst string) (func(), error) {
 	if !current.Mode().IsRegular() || !os.SameFile(opened, current) {
 		return fail(fmt.Errorf("claudehome: unsafe lock file: %s", path))
 	}
-	if err := acquireDestinationLock(f); err != nil {
+	if err := Acquire(f); err != nil {
 		return fail(err)
 	}
 	current, err = os.Lstat(path)
 	if err != nil || !current.Mode().IsRegular() || !os.SameFile(opened, current) {
-		_ = unlockFile(f)
+		_ = UnlockFile(f)
 		return fail(fmt.Errorf("claudehome: lock file changed while waiting: %s", path))
 	}
 	// The lock file is intentionally never removed: waiters must lock the same object.
 	return func() {
-		_ = unlockFile(f)
+		_ = UnlockFile(f)
 		_ = f.Close()
 	}, nil
 }

@@ -1,4 +1,4 @@
-package claudehome
+package safefs
 
 import (
 	"os"
@@ -6,7 +6,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func isRedirect(path string, info os.FileInfo) (bool, error) {
+// IsRedirect reports whether a path is a link, junction or other redirection.
+func IsRedirect(path string, info os.FileInfo) (bool, error) {
 	if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
 		return true, nil
 	}
