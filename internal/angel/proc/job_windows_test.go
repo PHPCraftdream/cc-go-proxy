@@ -1,4 +1,4 @@
-package angel
+package proc
 
 import "testing"
 
@@ -25,7 +25,7 @@ func TestJobText(t *testing.T) {
 
 // Whatever job the test runner is in, asking about it works.
 func TestJobNoteAnswers(t *testing.T) {
-	if jobNote() == "" {
-		t.Error("jobNote is empty")
+	if JobNote() == "" {
+		t.Error("JobNote is empty")
 	}
 }

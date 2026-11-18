@@ -1,6 +1,6 @@
 //go:build windows
 
-package angel
+package proc
 
 import (
 	"fmt"
@@ -33,10 +33,10 @@ type jobInfo struct {
 	CPURate         uint32 // of the hard cap, in 1/100 percent
 }
 
-// jobNote describes the job object this process lives in ("none" outside of
+// JobNote describes the job object this process lives in ("none" outside of
 // one). A job that kills its processes when it closes (wnice, capc) takes the
 // server along with the terminal or program that owns it.
-func jobNote() string {
+func JobNote() string {
 	var ext windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
 	// A nil job handle asks about the job of the calling process; outside of a
 	// job the call fails.
