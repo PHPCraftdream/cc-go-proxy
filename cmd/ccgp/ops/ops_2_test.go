@@ -472,7 +472,7 @@ func TestEnsureServerNotRunningStartsSilently(t *testing.T) {
 
 // The platforms --update knows are exactly the archives release.yml builds.
 func TestReleasePlatformsMatchReleaseWorkflow(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "release.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
