@@ -11,6 +11,8 @@ import (
 
 const destinationLockFile = ".ccgp-mirror.lock"
 
+var acquireDestinationLock = lockFile
+
 // resolvedPath resolves existing ancestors without creating anything.
 func resolvedPath(path string) (string, error) {
 	path, err := filepath.Abs(path)
@@ -81,7 +83,7 @@ func lockDestination(src, dst string) (func(), error) {
 	if !current.Mode().IsRegular() || !os.SameFile(opened, current) {
 		return fail(fmt.Errorf("claudehome: unsafe lock file: %s", path))
 	}
-	if err := lockFile(f); err != nil {
+	if err := acquireDestinationLock(f); err != nil {
 		return fail(err)
 	}
 	current, err = os.Lstat(path)
