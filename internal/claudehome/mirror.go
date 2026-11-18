@@ -329,11 +329,11 @@ func safeRecoveryPath(dst, key string) error {
 		if err != nil {
 			return err
 		}
-		resolved, err := filepath.EvalSymlinks(current)
+		redirected, err := isRedirect(current, st)
 		if err != nil {
 			return err
 		}
-		if !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(current)) || st.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 || (i < len(parts)-1 && !st.IsDir()) || (i == len(parts)-1 && !st.Mode().IsRegular()) {
+		if redirected || (i < len(parts)-1 && !st.IsDir()) || (i == len(parts)-1 && !st.Mode().IsRegular()) {
 			return fmt.Errorf("claudehome: unsafe managed path %s", current)
 		}
 	}
@@ -349,19 +349,12 @@ func unlink(path string) error {
 	if err != nil {
 		return err
 	}
-	if st.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+	redirected, err := isRedirect(path, st)
+	if err != nil {
+		return err
+	}
+	if redirected {
 		return fmt.Errorf("claudehome: refusing link %s", path)
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return err
-	}
-	if !strings.EqualFold(filepath.Clean(resolved), filepath.Clean(abs)) {
-		return fmt.Errorf("claudehome: refusing redirected path %s", path)
 	}
 	return nil
 }
