@@ -58,7 +58,7 @@ func TestBackendAskingForNewerClientRaisesConfig(t *testing.T) {
 
 	body := `{"model":"gpt-6.3-astra","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
 	status, reply := h.post(t, body)
-	if status != fiber.StatusServiceUnavailable || !strings.Contains(reply, "raised codex.client_version 0.169.0 -> 0.170.0") ||
+	if status != fiber.StatusServiceUnavailable || !strings.Contains(reply, "raised codex.client_version 0.169.0 -") || !strings.Contains(reply, "0.170.0;") ||
 		!strings.Contains(reply, "refreshed the model mapping of codex") {
 		t.Fatalf("first reply %d: %s", status, reply)
 	}

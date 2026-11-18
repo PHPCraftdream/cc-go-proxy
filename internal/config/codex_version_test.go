@@ -85,7 +85,7 @@ func TestSetCodexClientVersionText(t *testing.T) {
 }
 
 func TestRaiseAndSeedCodexClientVersion(t *testing.T) {
-	path := writeKtav(t, "connections.total: 5\n"+codexProviderKtav)
+	path := writeKtav(t, "connections.total: 10\n"+codexProviderKtav)
 	t.Setenv(ConfigFileEnv, path)
 	cfg, err := Load()
 	if err != nil {
