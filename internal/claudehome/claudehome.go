@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome/dirlock"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome/safefs"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,7 +45,7 @@ func Prepare(src, srcState, dst string) error {
 	if same(src, dst) {
 		return errors.New("claudehome: destination is the user's own Claude Code config dir")
 	}
-	unlock, err := lockDestination(src, dst)
+	unlock, err := dirlock.Lock(src, dst)
 	if err != nil {
 		return err
 	}
@@ -73,7 +75,7 @@ func PrepareOwn(src, dst string) error {
 	if same(src, dst) {
 		return errors.New("claudehome: destination is the user's own Claude Code config dir")
 	}
-	unlock, err := lockDestination(src, dst)
+	unlock, err := dirlock.Lock(src, dst)
 	if err != nil {
 		return err
 	}
@@ -104,10 +106,10 @@ func mirrorShared(src, dst string) error {
 		return err
 	}
 	seen := make(map[string]bool)
-	var staged []*stagedFile
+	var staged []*safefs.Staged
 	defer func() {
 		for _, file := range staged {
-			file.discard()
+			file.Discard()
 		}
 	}()
 	for _, name := range append(append([]string(nil), mirroredFiles...), "settings.json") {
@@ -129,7 +131,7 @@ func mirrorShared(src, dst string) error {
 		return err
 	}
 	for _, file := range staged {
-		if err := file.publish(false); err != nil {
+		if err := file.Publish(false); err != nil {
 			return err
 		}
 	}
@@ -242,7 +244,7 @@ func seedState(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	return publishFile(dst, bytes.NewReader(data), nil, true)
+	return safefs.PublishFile(dst, bytes.NewReader(data), nil, true)
 }
 
 // addPreferences gives an existing dst the preferenceKeys of src that it lacks: a
@@ -284,7 +286,7 @@ func writeIfChanged(path string, data []byte) error {
 	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
 		return nil
 	}
-	return publishFile(path, bytes.NewReader(data), nil, false)
+	return safefs.PublishFile(path, bytes.NewReader(data), nil, false)
 }
 
 // HasCredentials reports whether dir contains an official credential file.

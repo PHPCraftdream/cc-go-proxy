@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/claudehome/safefs"
 	"io"
 	"io/fs"
 	"os"
@@ -106,9 +107,9 @@ func reconcileRecovery(dst string, state recoveryState, man mirrored) (map[strin
 	return protected, nil
 }
 
-func recordRecovery(dst string, state recoveryState, staged []*stagedFile, previous mirrored) error {
+func recordRecovery(dst string, state recoveryState, staged []*safefs.Staged, previous mirrored) error {
 	for _, file := range staged {
-		rel, err := filepath.Rel(dst, file.dst)
+		rel, err := filepath.Rel(dst, file.Dst)
 		if err != nil {
 			return err
 		}
@@ -122,7 +123,7 @@ func recordRecovery(dst string, state recoveryState, staged []*stagedFile, previ
 				expected = old.Hash
 			}
 			if expected != "" {
-				actual, err := fileDigest(file.dst)
+				actual, err := fileDigest(file.Dst)
 				if err != nil && !errors.Is(err, fs.ErrNotExist) {
 					return err
 				}
@@ -137,7 +138,7 @@ func recordRecovery(dst string, state recoveryState, staged []*stagedFile, previ
 				}
 			}
 		}
-		hash, err := fileDigest(file.tmp)
+		hash, err := fileDigest(file.Tmp)
 		if err != nil {
 			return err
 		}
