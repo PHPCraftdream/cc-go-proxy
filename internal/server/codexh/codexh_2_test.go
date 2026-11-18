@@ -631,13 +631,14 @@ func TestCodexPreparedRequestIsSerializedOnceForAttempts(t *testing.T) {
 				case "PrepareRequest":
 					prepares++
 				case "CallPrepared":
-					preparedCalls++
-				}
-				if sel.Sel.Name == "callAgain" {
+					// codex.CallPrepared is the direct call, retry.CallPrepared an attempt.
+					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "retry" {
+						retryCalls++
+					} else {
+						preparedCalls++
+					}
+				case "CallAgain":
 					againCalls++
-				}
-				if sel.Sel.Name == "callPrepared" {
-					retryCalls++
 				}
 			}
 		case *ast.FuncLit:
@@ -651,8 +652,8 @@ func TestCodexPreparedRequestIsSerializedOnceForAttempts(t *testing.T) {
 		}
 		return true
 	})
-	// callPrepared: the first call, the short rate-limit retry and the edge-error loop;
-	// the again closure goes through callAgain (websocket or HTTP).
+	// retry.CallPrepared: the first call, the short rate-limit retry and the edge-error loop;
+	// the again closure goes through CallAgain (websocket or HTTP).
 	if prepares != 1 || retryCalls != 3 || againCalls != 1 || preparedCalls != 1 || capturedReq {
 		t.Fatalf("handler prepares=%d retry calls=%d again calls=%d direct prepared calls=%d closure captures req=%v; want 1, 3, 1, 1, false", prepares, retryCalls, againCalls, preparedCalls, capturedReq)
 	}
