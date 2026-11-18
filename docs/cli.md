@@ -342,6 +342,7 @@ after printing the JSON.
 | `--connections [active N] [total N] [proxy URL|off [provider NAME \| profile NAME]] [--json]` | Show or set the connections per backend (default 7 active, 10 total) and the proxy: global, of one provider or of one profile; each level replaces the ones above it (`none` = direct, `inherit` = the level above again); see [configuration](configuration.md#layout) |
 | `--interactive`, `-i` | Full-screen interface to view, edit and add profiles, providers and peak hours; needs a terminal; see [interactive mode](#interactive-mode) |
 | `--speed [PROFILE FAMILY [fast\|standard\|unset\|inherit]]` | List explicit speed rules, inspect a profile and logical family, or set `fast` or `standard`. `unset` removes the rule; `inherit` is an alias. Without a rule, speed follows the client request. Codex profiles only; rules are isolated per profile. Use a stable family such as `astra`, not a pinned model version. |
+| `--speed [<profile> <family> [fast\|standard\|unset\|inherit]]` | Show or set a Codex profile-family speed rule; see [Codex Fast mode](codex-fast-mode.md) for tier and quota limits |
 | `--peak [provider [set\|add WINDOW...\|rm N...\|tz ZONE\|clear\|pause [LEN]\|resume]] [--json]` | Show or set the peak hours of a provider, when the requests of its profiles are refused; see [peak hours](peak-hours.md) |
 
 ```sh
