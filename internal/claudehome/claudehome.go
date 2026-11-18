@@ -43,9 +43,11 @@ func Prepare(src, srcState, dst string) error {
 	if same(src, dst) {
 		return errors.New("claudehome: destination is the user's own Claude Code config dir")
 	}
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+	unlock, err := lockDestination(src, dst)
+	if err != nil {
 		return err
 	}
+	defer unlock()
 
 	// A login made inside the isolated session must not persist.
 	if err := os.Remove(filepath.Join(dst, credentialsFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -71,9 +73,11 @@ func PrepareOwn(src, dst string) error {
 	if same(src, dst) {
 		return errors.New("claudehome: destination is the user's own Claude Code config dir")
 	}
-	if err := os.MkdirAll(dst, 0o700); err != nil {
+	unlock, err := lockDestination(src, dst)
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	return mirrorShared(src, dst)
 }
 
