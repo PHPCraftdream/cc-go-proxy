@@ -87,6 +87,7 @@ func features() []feature {
 		{[]string{"--connections proxy provider"}, []string{"providers/provider/proxy"}},
 		{[]string{"--connections proxy profile"}, []string{"profiles/profile/proxy"}},
 
+		{[]string{"--speed"}, []string{"speed", "speed/profile", "speed/profile/family", "speed/profile/family/fast", "speed/profile/family/standard", "speed/profile/family/unset"}},
 		{[]string{"--peak"}, append([]string{"peak"}, peakAt...)},
 		{[]string{"--peak set"}, under(peakAt, "set")},
 		{[]string{"--peak add"}, under(peakAt, "add")},
@@ -485,6 +486,8 @@ func editRuns() []editRun {
 		{[]string{"--provider set base_url"}, []string{"--provider", "set", "api", "base_url", "https://gw.example"}, nil, field([]string{"profiles", "profile:api", "base_url"}, "https://gw.example")},
 		{[]string{"--provider set base_url"}, []string{"--provider", "set", "api", "base_url", "https://gw.example"}, nil, field([]string{"providers", "provider:api", "base_url"}, "https://gw.example")},
 
+		{[]string{"--speed"}, []string{"--speed", "codex", "astra", "fast"}, nil, func(h *tui) { h.open("speed", "profile:codex", "family:astra", "fast") }},
+		{[]string{"--speed"}, []string{"--speed", "codex", "terra", "standard"}, nil, func(h *tui) { h.open("speed", "profile:codex", "family:terra", "standard") }},
 		{[]string{"--peak set"}, []string{"--peak", "zai", "set", "sat,sun", "10:00-12:00"}, nil, field(peakZai("set"), "sat,sun 10:00-12:00")},
 		{[]string{"--peak add"}, []string{"--peak", "zai", "add", "sat,sun", "10:00-12:00"}, nil, func(h *tui) { h.open(peakZai("add")...); h.typ("sat,sun 10:00-12:00"); h.press("enter") }},
 		{[]string{"--peak rm"}, []string{"--peak", "zai", "rm", "1"}, nil, func(h *tui) { h.open(peakZai("rm", "window:mon-fri")...) }},
