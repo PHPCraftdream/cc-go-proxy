@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 	"github.com/gofiber/fiber/v2"
@@ -234,7 +235,7 @@ func TestUpstreamEndNamesANonStreamReply(t *testing.T) {
 		trace := newUpstreamTrace()
 		trace.nonStream = nonStream
 		trace.start = time.Now().Add(-slowTotal - time.Second)
-		logUpstreamEnd(context.Background(), &codex.Translator{}, trace, &http.Response{Header: http.Header{}}, "codex", "a -> b", 10)
+		logUpstreamEnd(context.Background(), &sse.Translator{}, trace, &http.Response{Header: http.Header{}}, "codex", "a -> b", 10)
 		want := "] slow stream "
 		if nonStream {
 			want = "] slow non-stream reply "

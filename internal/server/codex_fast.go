@@ -9,13 +9,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/catalog"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
 const fastCatalogTTL = 2 * time.Minute
+
 const fastCatalogTimeout = 15 * time.Second
+
 const fastCatalogMaxEntries = 128
 
 type fastTierEntry struct {
@@ -50,11 +52,11 @@ func fastTier(ctx context.Context, cfg *config.Config, baseURL, model string, s 
 	}
 	delete(fastTiers.entries, key)
 	fastTiers.Unlock()
-	models, err := codex.FetchCatalog(ctx, baseURL, tok)
+	models, err := catalog.FetchCatalog(ctx, baseURL, tok)
 	if err != nil {
 		return "", 502, fmt.Errorf("codex: Fast catalog lookup failed: %w", err)
 	}
-	tier, err := codex.FastServiceTier(models, model)
+	tier, err := catalog.FastServiceTier(models, model)
 	if err != nil {
 		return "", 400, err
 	}

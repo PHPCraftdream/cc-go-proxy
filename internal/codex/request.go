@@ -1,5 +1,6 @@
 // Package codex converts Anthropic Messages requests/streams to and from the
 // OpenAI Responses API as served by the ChatGPT Codex backend.
+
 package codex
 
 import (
@@ -99,39 +100,39 @@ type Reasoning struct {
 	Summary string `json:"summary"`
 }
 
-type contentPart struct {
+type ContentPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
 }
 
-type messageItem struct {
+type MessageItem struct {
 	Type    string        `json:"type"`
 	Role    string        `json:"role"`
-	Content []contentPart `json:"content"`
+	Content []ContentPart `json:"content"`
 }
 
-type functionCallItem struct {
+type FunctionCallItem struct {
 	Type      string `json:"type"`
 	CallID    string `json:"call_id"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-type functionOutputItem struct {
+type FunctionOutputItem struct {
 	Type   string `json:"type"`
 	CallID string `json:"call_id"`
 	Output string `json:"output"`
 }
 
-type summaryPart struct {
+type SummaryPart struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-type reasoningItem struct {
+type ReasoningItem struct {
 	Type             string        `json:"type"`
-	Summary          []summaryPart `json:"summary"`
+	Summary          []SummaryPart `json:"summary"`
 	EncryptedContent string        `json:"encrypted_content"`
 }
 
@@ -176,9 +177,9 @@ func (p *ParsedRequest) Convert(model, cacheScope string) (req *Request, wantStr
 	}
 
 	if sys := identity.Rewrite(systemText(in.System), in.Model, model); sys != "" {
-		out.Input = append(out.Input, messageItem{
+		out.Input = append(out.Input, MessageItem{
 			Type: "message", Role: "developer",
-			Content: []contentPart{{Type: "input_text", Text: sys}},
+			Content: []ContentPart{{Type: "input_text", Text: sys}},
 		})
 	}
 	for i, m := range in.Messages {
@@ -341,37 +342,37 @@ func convertMessage(m anthropicMsg, requested, backend string) ([]any, error) {
 // convertUser: tool results first (they answer the preceding calls), then content.
 func convertUser(blocks []anthropicBlock) []any {
 	var items []any
-	var parts []contentPart
+	var parts []ContentPart
 	for _, b := range blocks {
 		switch b.Type {
 		case "tool_result":
-			items = append(items, functionOutputItem{
+			items = append(items, FunctionOutputItem{
 				Type: "function_call_output", CallID: b.ToolUseID, Output: toolResultText(b),
 			})
 		case "text":
 			if b.Text != "" {
-				parts = append(parts, contentPart{Type: "input_text", Text: b.Text})
+				parts = append(parts, ContentPart{Type: "input_text", Text: b.Text})
 			}
 		case "image":
 			if u := imageURL(b); u != "" {
-				parts = append(parts, contentPart{Type: "input_image", ImageURL: u})
+				parts = append(parts, ContentPart{Type: "input_image", ImageURL: u})
 			}
 		case "document":
-			parts = append(parts, contentPart{Type: "input_text", Text: "[document omitted: not supported by ccgp]"})
+			parts = append(parts, ContentPart{Type: "input_text", Text: "[document omitted: not supported by ccgp]"})
 		}
 	}
 	if len(parts) > 0 {
-		items = append(items, messageItem{Type: "message", Role: "user", Content: parts})
+		items = append(items, MessageItem{Type: "message", Role: "user", Content: parts})
 	}
 	return items
 }
 
 func convertAssistant(blocks []anthropicBlock) []any {
 	var items []any
-	var text []contentPart
+	var text []ContentPart
 	flush := func() {
 		if len(text) > 0 {
-			items = append(items, messageItem{Type: "message", Role: "assistant", Content: text})
+			items = append(items, MessageItem{Type: "message", Role: "assistant", Content: text})
 			text = nil
 		}
 	}
@@ -379,7 +380,7 @@ func convertAssistant(blocks []anthropicBlock) []any {
 		switch b.Type {
 		case "text":
 			if b.Text != "" {
-				text = append(text, contentPart{Type: "output_text", Text: b.Text})
+				text = append(text, ContentPart{Type: "output_text", Text: b.Text})
 			}
 		case "tool_use":
 			flush()
@@ -387,18 +388,18 @@ func convertAssistant(blocks []anthropicBlock) []any {
 			if args == "" || args == "null" {
 				args = "{}"
 			}
-			items = append(items, functionCallItem{
+			items = append(items, FunctionCallItem{
 				Type: "function_call", CallID: b.ID, Name: b.Name, Arguments: args,
 			})
 		case "thinking":
 			// Only our own signatures carry backend reasoning state.
 			if enc, ok := strings.CutPrefix(b.Signature, SignaturePrefix); ok && enc != "" {
 				flush()
-				summary := []summaryPart{}
+				summary := []SummaryPart{}
 				if b.Thinking != "" {
-					summary = append(summary, summaryPart{Type: "summary_text", Text: b.Thinking})
+					summary = append(summary, SummaryPart{Type: "summary_text", Text: b.Thinking})
 				}
-				items = append(items, reasoningItem{Type: "reasoning", Summary: summary, EncryptedContent: enc})
+				items = append(items, ReasoningItem{Type: "reasoning", Summary: summary, EncryptedContent: enc})
 			}
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/catalog"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
@@ -246,7 +246,7 @@ func TestProfileListJSONNoSecrets(t *testing.T) {
 }
 
 func TestModelsJSON(t *testing.T) {
-	sel := codex.Selection{
+	sel := catalog.Selection{
 		Fable: "f", FableWindow: 1000,
 		Opus: "o", OpusWindow: 2000,
 		Sonnet: "s", SonnetWindow: 3000,

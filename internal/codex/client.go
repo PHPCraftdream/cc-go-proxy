@@ -19,7 +19,7 @@ import (
 // DefaultBaseURL is the ChatGPT Codex backend (Responses API at /responses).
 const DefaultBaseURL = "https://chatgpt.com/backend-api/codex"
 
-const originator = "codex_cli_rs"
+const Originator = "codex_cli_rs"
 
 // ResponseHeaderTimeout bounds the wait for the backend's reply headers. A
 // request the backend stalls on fails after this instead of minutes later, and
@@ -53,11 +53,11 @@ func ClientVersion(ctx context.Context) string {
 }
 
 // userAgent is what the official client sends (originator/version), marked as ccgp.
-func userAgent(ctx context.Context) string {
+func UserAgent(ctx context.Context) string {
 	if v := ClientVersion(ctx); v != "" {
-		return originator + "/" + v + " (ccgp)"
+		return Originator + "/" + v + " (ccgp)"
 	}
-	return originator + " (ccgp)"
+	return Originator + " (ccgp)"
 }
 
 // Routing carries Codex conversation routing state across calls and retries.
@@ -84,7 +84,7 @@ func WithRouting(ctx context.Context, routing *Routing) context.Context {
 
 type routingKey struct{}
 
-func routingFrom(ctx context.Context) *Routing {
+func RoutingFrom(ctx context.Context) *Routing {
 	routing, _ := ctx.Value(routingKey{}).(*Routing)
 	return routing
 }
@@ -103,7 +103,7 @@ func (r *Routing) Returned() bool {
 	return r.returned
 }
 
-func (r *Routing) outgoing() (threadID, state string) {
+func (r *Routing) Outgoing() (threadID, state string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.state != "" {
@@ -112,8 +112,8 @@ func (r *Routing) outgoing() (threadID, state string) {
 	return r.threadID, r.state
 }
 
-func (r *Routing) capture(h http.Header) {
-	state, ok := headerValueFold(h, "x-codex-turn-state")
+func (r *Routing) Capture(h http.Header) {
+	state, ok := HeaderValueFold(h, "x-codex-turn-state")
 	if !ok {
 		return
 	}
@@ -127,7 +127,7 @@ func (r *Routing) capture(h http.Header) {
 	}
 }
 
-func headerValueFold(h http.Header, name string) (string, bool) {
+func HeaderValueFold(h http.Header, name string) (string, bool) {
 	for key, values := range h {
 		if strings.EqualFold(key, name) && len(values) > 0 {
 			return values[0], true
@@ -155,7 +155,7 @@ func PrepareRequest(req *Request) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{body: body, headers: sessionHeaders(req)}, nil
+	return &Prepared{body: body, headers: SessionHeaders(req)}, nil
 }
 
 // Call POSTs req to baseURL/responses with OAuth headers. On 401 it forces a
@@ -208,14 +208,14 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 	if tok.AccountID != "" {
 		r.Header.Set("ChatGPT-Account-ID", tok.AccountID)
 	}
-	r.Header.Set("originator", originator)
-	r.Header.Set("User-Agent", userAgent(ctx))
+	r.Header.Set("originator", Originator)
+	r.Header.Set("User-Agent", UserAgent(ctx))
 	for k, v := range hdr {
 		r.Header[k] = v
 	}
-	routing := routingFrom(ctx)
+	routing := RoutingFrom(ctx)
 	if routing != nil {
-		threadID, state := routing.outgoing()
+		threadID, state := routing.Outgoing()
 		r.Header.Set("thread-id", threadID)
 		r.Header.Set("x-client-request-id", threadID)
 		if state != "" {
@@ -229,7 +229,7 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 		resp.Request.GetBody = nil
 	}
 	if routing != nil && resp != nil {
-		routing.capture(resp.Header)
+		routing.Capture(resp.Header)
 	}
 	return resp, err
 }
@@ -238,7 +238,7 @@ func post(ctx context.Context, url string, body []byte, encoding string, hdr htt
 // its conversation: the session id (here the prompt cache key, which is stable
 // per Claude Code session) and a routing hint naming the model. The backend may
 // route and cache by them; without them every request looked like a new client.
-func sessionHeaders(req *Request) http.Header {
+func SessionHeaders(req *Request) http.Header {
 	h := http.Header{}
 	if req.PromptCacheKey != "" {
 		h.Set("session-id", req.PromptCacheKey)
@@ -381,4 +381,36 @@ func htmlMessage(s string) (string, bool) {
 		return "html error page: " + text, true
 	}
 	return "html error page", true
+}
+
+var (
+	// What the backend says when a model needs a newer client than the one
+	// presented ("The 'X' model requires a newer version of Codex. Please upgrade
+	// to the latest app or CLI and try again."). A plan upsell ("upgrade to Pro")
+	// is not one of them.
+	newerClientRe  = regexp.MustCompile(`(?i)(requires? a (newer|more recent) (version|release)|newer version of (the )?codex|upgrade to the latest (codex|app|cli|version)|(update|upgrade) (your )?codex|client version (is )?(too old|outdated|not supported|unsupported)|(unsupported|outdated) client version|minimum (client )?version)`)
+	versionFieldRe = regexp.MustCompile(`"(?:minimal|minimum|min|required)_(?:client_)?version"\s*:\s*(?:"(\d+\.\d+\.\d+)"|\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\])`)
+	versionTextRe  = regexp.MustCompile(`\b(\d+\.\d+\.\d+)\b`)
+)
+
+// NeedsNewerClient reports whether an upstream error says the presented client
+// version is too old, and the version it asks for when the error names one.
+func NeedsNewerClient(status int, body []byte) (required string, ok bool) {
+	if status < 400 || status >= 500 || status == http.StatusUnauthorized || status == http.StatusTooManyRequests || IsUsageLimit(body) {
+		return "", false
+	}
+	msg := ErrorMessage(body)
+	if !newerClientRe.MatchString(msg) && !versionFieldRe.Match(body) {
+		return "", false
+	}
+	if m := versionFieldRe.FindSubmatch(body); m != nil {
+		if len(m[1]) > 0 {
+			return string(m[1]), true
+		}
+		return string(m[2]) + "." + string(m[3]) + "." + string(m[4]), true
+	}
+	if m := versionTextRe.FindStringSubmatch(msg); m != nil {
+		return m[1], true
+	}
+	return "", true
 }

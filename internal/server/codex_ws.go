@@ -12,16 +12,19 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
+	codexws "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws"
+	wschain "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws/chain"
+	wsconn "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws/conn"
 )
 
 var (
 	codexWSManagerMu sync.Mutex
-	codexWSManager   *codex.WSManager
+	codexWSManager   *codexws.WSManager
 	codexWSFallbacks atomic.Int64
 )
 
-func currentCodexWSManager() *codex.WSManager {
+func currentCodexWSManager() *codexws.WSManager {
 	codexWSManagerMu.Lock()
 	defer codexWSManagerMu.Unlock()
 	if codexWSManager == nil {
@@ -31,15 +34,15 @@ func currentCodexWSManager() *codex.WSManager {
 }
 
 // newCodexWSManager is a manager whose learned limits and side messages are logged.
-func newCodexWSManager() *codex.WSManager {
-	m := codex.NewWSManager()
+func newCodexWSManager() *codexws.WSManager {
+	m := codexws.NewWSManager()
 	m.OnLimit = logWSLimit
 	m.OnSide = logWSSide
 	m.OnLost = logWSLost
 	return m
 }
 
-func codexWSStatsManager() *codex.WSManager {
+func codexWSStatsManager() *codexws.WSManager {
 	codexWSManagerMu.Lock()
 	defer codexWSManagerMu.Unlock()
 	return codexWSManager
@@ -89,7 +92,7 @@ func wsAgentTag(agent string) string {
 // logWSLost tells that a connection was ended by the backend or the network:
 // when, with which close status, and whether it counts toward lowering the
 // planned age (a connection younger than 5 minutes says nothing of a limit).
-func logWSLost(l codex.WSLost) {
+func logWSLost(l codexws.WSLost) {
 	closeText := "no close frame"
 	if l.Status >= 0 {
 		closeText = fmt.Sprintf("close status %d", l.Status)
@@ -124,7 +127,7 @@ func (u *upstreamTrace) convPrefix() string {
 // wsDivergenceText says where a request's history left the chain it would have
 // continued: the item, what it was and is now (kind and size, never content),
 // where the chain's reply is in the new history, and the prompt comparison.
-func wsDivergenceText(d codex.WSDivergence, prompt string) string {
+func wsDivergenceText(d wschain.WSDivergence, prompt string) string {
 	text := fmt.Sprintf("history diverged at item %d of %d (this request has %d): was %s, ", d.At, d.Had, d.Has, shapeText(d.Was))
 	if d.Now.Kind == "" {
 		text += "now the request ends there"
@@ -157,7 +160,7 @@ func wsDivergenceText(d codex.WSDivergence, prompt string) string {
 	return text
 }
 
-func shapeText(s codex.ItemShape) string {
+func shapeText(s wschain.ItemShape) string {
 	if s.Kind == "" {
 		return "nothing"
 	}
@@ -170,7 +173,7 @@ func shapeText(s codex.ItemShape) string {
 
 // logWSLimit tells that the planned age of connections was lowered because the
 // backend ended them early, again and again.
-func logWSLimit(l codex.WSLimit) {
+func logWSLimit(l codexws.WSLimit) {
 	closeText := "no close frame"
 	if l.Status >= 0 {
 		closeText = fmt.Sprintf("close status %d", l.Status)
@@ -181,14 +184,14 @@ func logWSLimit(l codex.WSLimit) {
 
 // logWSSide tells that a message was learned as a background request's, so
 // requests ending in it now go over HTTP.
-func logWSSide(s codex.WSSide) {
+func logWSSide(s codexws.WSSide) {
 	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex]: a user message of %s was answered on a conversation's websocket and its reply was left out of the next request (a background request of the client); requests ending in it go over HTTP from now on, so they do not replace the websocket chain\n",
 		time.Now().Format("15:04:05"), sizeString(s.Size))
 }
 
 // logWSSideWrong tells that a message learned as a background request's was an
 // ordinary turn's: the conversation's next request kept it, with its reply.
-func logWSSideWrong(conv string, w codex.WSSideWrong) {
+func logWSSideWrong(conv string, w codexws.WSSideWrong) {
 	_, _ = fmt.Fprintf(logOut, "[%s] upstream websocket [codex] conv %s: a user message of %s taken for a background request's stayed in the next request, with its reply (an ordinary turn); it is no longer taken for one (%s had gone over HTTP for it)\n",
 		time.Now().Format("15:04:05"), conv, sizeString(w.Size), count(w.Matches, "request", "requests"))
 }
@@ -218,7 +221,7 @@ func (u *upstreamTrace) httpNoteLocked(bodyBytes int) string {
 
 // wsReasonText is the reason for the request line; a replacement at a lowered
 // age says which age.
-func wsReasonText(info codex.WSInfo) string {
+func wsReasonText(info codexws.WSInfo) string {
 	reason := safeWSReason(info.Reason)
 	if reason == "lowered age limit" && info.Limit > 0 {
 		return "replaced at the lowered age of " + roundDur(info.Limit)
@@ -230,16 +233,16 @@ func safeWSFallbackReason(err error) string {
 	if err == nil {
 		return "connection failed"
 	}
-	var handshake *codex.WSHandshakeError
+	var handshake *wsconn.WSHandshakeError
 	if errors.As(err, &handshake) && handshake.Status >= 100 && handshake.Status <= 599 {
 		return fmt.Sprintf("handshake HTTP %d", handshake.Status)
 	}
 	switch {
-	case errors.Is(err, codex.ErrWSBusy):
+	case errors.Is(err, codexws.ErrWSBusy):
 		return "connection busy"
-	case errors.Is(err, codex.ErrWSToken):
+	case errors.Is(err, codexws.ErrWSToken):
 		return "no usable login"
-	case errors.Is(err, codex.ErrWSUnavailable):
+	case errors.Is(err, codexws.ErrWSUnavailable):
 		return "unavailable"
 	case errors.Is(err, context.Canceled):
 		return "request canceled"
@@ -260,7 +263,7 @@ func (u *upstreamTrace) startWSAttempt() {
 	u.mu.Unlock()
 }
 
-func (u *upstreamTrace) noteWSFailure(info codex.WSInfo, err error) {
+func (u *upstreamTrace) noteWSFailure(info codexws.WSInfo, err error) {
 	u.mu.Lock()
 	u.transport = "transport websocket (full: " + safeWSFallbackReason(err) + ")"
 	u.wsConn = "conn new (dial " + roundDur(info.DialTime) + u.convText() + ")"
@@ -270,7 +273,7 @@ func (u *upstreamTrace) noteWSFailure(info codex.WSInfo, err error) {
 	u.mu.Unlock()
 }
 
-func (u *upstreamTrace) noteWebsocket(info codex.WSInfo, bodyBytes int) {
+func (u *upstreamTrace) noteWebsocket(info codexws.WSInfo, bodyBytes int) {
 	frameSize := sizeString(info.SentBytes)
 	var transport string
 	if info.Mode == "delta" {
@@ -371,7 +374,7 @@ func (r *codexRetry) callAgain(ctx context.Context, trace *upstreamTrace, bodyBy
 	return response, err
 }
 
-func drainCompletedWebsocketReply(retry *codexRetry, tr *codex.Translator, resp *http.Response) {
+func drainCompletedWebsocketReply(retry *codexRetry, tr *sse.Translator, resp *http.Response) {
 	if retry != nil && retry.websocket && tr.Failed == "" && resp != nil && resp.Body != nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
 	}
@@ -393,7 +396,7 @@ func writeCodexWebsocketStats(w io.Writer, now time.Time) {
 // wsStatsText is the body of the periodic websocket line; fallbacks counts the
 // requests that went over HTTP, stats.Fallbacks the full ones a delta could not
 // continue.
-func wsStatsText(stats codex.WSStats, fallbacks int) string {
+func wsStatsText(stats codexws.WSStats, fallbacks int) string {
 	full := count(stats.Full, "full", "full")
 	if stats.Fallbacks > 0 {
 		full += fmt.Sprintf(" (%d where a delta could not continue)", stats.Fallbacks)
