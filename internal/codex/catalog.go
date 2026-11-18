@@ -16,12 +16,6 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
 )
 
-// catalogClientVersion selects the model catalog revision (Codex CLI version).
-// The backend lists a new model generation only to a client at least as new as
-// the one that introduced it (gpt-6.2-* needs 0.169.0): raise it with each
-// Codex CLI release that brings models.
-const catalogClientVersion = "0.169.0"
-
 // Model is one entry of the account's Codex model catalog.
 type Model struct {
 	Slug          string
@@ -38,8 +32,13 @@ type Model struct {
 }
 
 // FetchCatalog reads the models available to the signed-in account.
-// baseURL is the Codex backend root (DefaultBaseURL when empty).
+// baseURL is the Codex backend root (DefaultBaseURL when empty). The backend
+// lists a model generation only to a client at least as new as the one that
+// brought it: ctx must carry the client version (WithClientVersion).
 func FetchCatalog(ctx context.Context, baseURL string, tok *oauth.Tokens) ([]Model, error) {
+	if ClientVersion(ctx) == "" {
+		return nil, errors.New("codex model catalog: no client version")
+	}
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
@@ -66,7 +65,7 @@ func fetchCatalog(ctx context.Context, rawURL string, tok *oauth.Tokens) ([]Mode
 		return nil, 0, err
 	}
 	q := u.Query()
-	q.Set("client_version", catalogClientVersion)
+	q.Set("client_version", ClientVersion(ctx))
 	u.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -79,7 +78,8 @@ func fetchCatalog(ctx context.Context, rawURL string, tok *oauth.Tokens) ([]Mode
 	}
 	req.Header.Set("OpenAI-Beta", "responses=experimental")
 	req.Header.Set("originator", originator)
-	req.Header.Set("version", catalogClientVersion)
+	req.Header.Set("version", ClientVersion(ctx))
+	req.Header.Set("User-Agent", userAgent(ctx))
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := HTTPClient.Do(req)

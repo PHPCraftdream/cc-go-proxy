@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/clientver"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -52,6 +54,12 @@ flags:
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	for _, pf := range profiles {
+		if cfg.Providers[pf.Provider].Type == config.ProviderTypeCodex {
+			clientVersion(ctx, cfg, apply, os.Stderr)
+			break
+		}
+	}
 	// One catalog per codex provider; anthropic_compat providers use built-in presets.
 	byProvider := map[string]*providerCatalog{}
 	for _, pf := range profiles {
@@ -99,7 +107,7 @@ flags:
 		var rules []config.ModelRule
 		if pc := byProvider[pf.Provider]; pc != nil {
 			printSelection(pf.Name, pc.sel)
-			rules = managedFrom(pc.sel).Rules
+			rules = clientver.ManagedFrom(pc.sel).Rules
 		} else {
 			p, _ := preset.ForBaseURL(cfg.Providers[pf.Provider].BaseURL)
 			printRules(pf.Name, p)
@@ -230,6 +238,7 @@ func loadCatalog(ctx context.Context, cfg *config.Config, provider string) (*pro
 	if err != nil {
 		return nil, fmt.Errorf("%w (run: ccgp --login %s)", err, provider)
 	}
+	ctx = codex.WithClientVersion(ctx, cfg.CodexClientVersion())
 	list, err := codex.FetchCatalog(ctx, cfg.Providers[provider].BaseURL, tok)
 	if err != nil {
 		return nil, err
@@ -268,16 +277,40 @@ func printSelection(profile string, sel codex.Selection) {
 	}
 }
 
-// managedFrom converts a catalog selection into the config block.
-func managedFrom(sel codex.Selection) config.ManagedModels {
-	return config.ManagedModels{Rules: []config.ModelRule{
-		{Match: "*fable*", Model: sel.Fable, ContextWindow: sel.FableWindow},
-		{Match: "*opus*", Model: sel.Opus, ContextWindow: sel.OpusWindow},
-		{Match: "*sonnet*", Model: sel.Sonnet, ContextWindow: sel.SonnetWindow},
-		{Match: "*haiku*", Model: sel.Haiku, ContextWindow: sel.HaikuWindow},
-		// Anything else (custom names) goes to the Sonnet model.
-		{Match: "*", Model: sel.Sonnet, ContextWindow: sel.SonnetWindow},
-	}}
+// clientVersion brings the Codex client version up to the newest Codex CLI
+// release before a catalog read: the backend lists a model generation only to
+// a client at least as new as the one that brought it. write raises
+// codex.client_version in config.ktav (seeding it first when absent); without
+// write the newer version is only used for this read. Best effort: a failed
+// lookup leaves the configured version.
+func clientVersion(ctx context.Context, cfg *config.Config, write bool, out io.Writer) {
+	if write {
+		if seeded, err := config.SeedCodexClientVersion(cfg); err != nil {
+			_, _ = fmt.Fprintf(out, "ccgp: could not write codex.client_version: %v\n", err)
+		} else if seeded {
+			_, _ = fmt.Fprintf(out, "codex.client_version %s written to %s\n", cfg.CodexClientVersion(), cfg.ConfigFile)
+		}
+	}
+	current := cfg.CodexClientVersion()
+	target, err := clientver.Default.Target(proxydial.WithChoice(ctx, cfg.ProxyChoice("")), current, "")
+	if err != nil {
+		_, _ = fmt.Fprintf(out, "ccgp: could not check for a newer Codex CLI (%v); using codex.client_version %s\n", err, current)
+		return
+	}
+	if target == "" {
+		return
+	}
+	if !write {
+		_, _ = fmt.Fprintf(out, "Codex CLI %s is out (codex.client_version is %s): the catalog below is read as %s; `ccgp --models apply` raises it\n", target, current, target)
+		cfg.CodexClientVersionSet = target
+		return
+	}
+	if _, _, err := config.RaiseCodexClientVersion(cfg.ConfigFile, target); err != nil {
+		_, _ = fmt.Fprintf(out, "ccgp: could not raise codex.client_version to %s: %v\n", target, err)
+		return
+	}
+	cfg.CodexClientVersionSet = target
+	_, _ = fmt.Fprintf(out, "codex.client_version raised %s -> %s (newest Codex CLI release)\n", current, target)
 }
 
 // autoApplyModels refreshes the managed mapping of every codex profile on a
@@ -285,6 +318,7 @@ func managedFrom(sel codex.Selection) config.ManagedModels {
 func autoApplyModels(cfg *config.Config, provider string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	clientVersion(ctx, cfg, true, os.Stderr)
 	pc, err := loadCatalog(ctx, cfg, provider)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ccgp: could not read the model catalog (%v); run `ccgp --models apply` later\n", err)
@@ -299,7 +333,7 @@ func autoApplyModels(cfg *config.Config, provider string) {
 		if pf.Provider != provider || !config.HasManaged(string(data), name) {
 			continue
 		}
-		if err := config.ApplyManaged(cfg.ConfigFile, name, managedFrom(pc.sel)); err != nil {
+		if err := config.ApplyManaged(cfg.ConfigFile, name, clientver.ManagedFrom(pc.sel)); err != nil {
 			fmt.Fprintf(os.Stderr, "ccgp: update mapping of profile %q: %v\n", name, err)
 			continue
 		}

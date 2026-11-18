@@ -601,6 +601,15 @@ func handleCodexMessages(c *fiber.Ctx, cfg *config.Config, s *oauth.Session) err
 				fmt.Sprintf("codex: unauthorized, run `ccgp --login %s`: %s", cfg.ProviderName, codex.ErrorMessage(b)))
 		}
 		msg := "codex: " + codex.ErrorMessage(b)
+		if required, ok := codex.NeedsNewerClient(status, b); ok {
+			note, raised := raiseClientVersion(cfg, s, required)
+			msg += " | " + note
+			if raised {
+				// Claude Code retries a 503; the retry goes out with the new version.
+				c.Locals(localsErr, msg)
+				return anthropicError(c, fiber.StatusServiceUnavailable, "api_error", msg)
+			}
+		}
 		if ra := resp.Header.Get("Retry-After"); ra != "" {
 			c.Set("Retry-After", ra) // Claude Code backs off by it
 		}

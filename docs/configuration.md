@@ -53,6 +53,8 @@ connections.active: 7
 connections.total: 10
 ## connections.proxy: socks5://127.0.0.1:1080
 
+codex.client_version:: 0.169.0
+
 providers: [
     {
         name: codex
@@ -183,6 +185,32 @@ provider, not to a request, use the proxy that all the profiles of the provider 
 probe of `--doctor`. `--update` uses the global proxy. A provider made by `ccgp --profile add NAME --like P` has the
 proxy of `P`'s provider. The password lives in `config.ktav` (every ccgp write of it is owner-only); `ccgp --connections`
 and the server log show it as `***`.
+
+### `codex.client_version`
+
+The Codex CLI version ccgp presents to the Codex backend: in the model catalog request (`client_version`, the
+`version` header) and in the `User-Agent` of every model request, as the official client does
+(`codex_cli_rs/0.169.0 (ccgp)`). The backend lists a model generation only to a client at least as new as the one
+that brought it: with too old a version the newest models are simply missing from the catalog, and `--models apply`
+maps Claude's tiers to the previous ones.
+
+The value is taken only from the config. ccgp writes it there itself:
+
+- **first use:** a config with a `codex` provider but no `codex.client_version` gets ccgp's built-in default when the
+  server starts or `ccgp --models apply` (or a `ccgp --login codex`) runs;
+- **a newer Codex CLI:** `ccgp --models apply` and the mapping refresh after `ccgp --login codex` look up the newest
+  Codex CLI release (`api.github.com/repos/openai/codex/releases/latest`, the same lookup the official client makes) and
+  raise the value to it before reading the catalog. Plain `ccgp --models` (read-only) reads the catalog as the newer
+  version and says so, without writing;
+- **the backend asks for a newer client:** when a model request is refused with such an error ("requires a newer
+  version of Codex …"), the server raises the value to the version the error names, else to the newest Codex CLI
+  release, refreshes the managed model mappings of the provider's profiles and answers `503` with what it did; Claude
+  Code retries, and the retry goes out with the new version. With nothing newer to try (or a lookup made in the last
+  10 minutes) the backend's error reaches the client unchanged.
+
+The value is only ever raised, written as `codex.client_version:: X.Y.Z` (`::` keeps it a string) with the usual
+`config.ktav.bak-<timestamp>` backup; you may set it by hand too. A running server picks a change up on its next
+request. In env-only mode the built-in default is used.
 
 ### `providers[]`
 
@@ -377,7 +405,8 @@ compacts earlier still (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), and variables you se
 
 of that profile (added if missing; the profile's old `default_model`, `context_window` and `models`
 are then replaced). Your comments and everything else stay. For `codex`, the mapping is also refreshed
-after every fresh `ccgp --login codex`. Details per provider: [providers.md](providers.md).
+after every fresh `ccgp --login codex`, and by the server when the backend asks for a newer client
+([`codex.client_version`](#codexclient_version)). Details per provider: [providers.md](providers.md).
 
 ## Env-only mode
 

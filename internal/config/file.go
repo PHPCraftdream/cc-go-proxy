@@ -122,6 +122,9 @@ type fileConfig struct {
 		Total  int64  `json:"total"`
 		Proxy  string `json:"proxy"`
 	} `json:"connections"`
+	Codex struct {
+		ClientVersion string `json:"client_version"`
+	} `json:"codex"`
 	Providers []Provider `json:"providers"`
 	Profiles  []Profile  `json:"profiles"`
 }
@@ -176,6 +179,9 @@ func (fc *fileConfig) validate() error {
 	}
 	if err := validateConnections(fc.Connections.Active, fc.Connections.Total, fc.Connections.Proxy); err != nil {
 		return err
+	}
+	if v := fc.Codex.ClientVersion; v != "" && !ValidClientVersion(v) {
+		return fmt.Errorf("codex.client_version must be MAJOR.MINOR.PATCH, got %q", v)
 	}
 	providers := map[string]string{}
 	for i, pr := range fc.Providers {
@@ -277,6 +283,7 @@ func applyFile(cfg *Config, fc *fileConfig) {
 	}
 	cfg.ConnectionsActive, cfg.ConnectionsTotal = fc.Connections.Active, fc.Connections.Total
 	cfg.ConnectionsProxy = fc.Connections.Proxy
+	cfg.CodexClientVersionSet = fc.Codex.ClientVersion
 	cfg.Providers = map[string]*Provider{}
 	for i := range fc.Providers {
 		p := fc.Providers[i]

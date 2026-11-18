@@ -115,6 +115,9 @@ type Config struct {
 	ConnectionsActive, ConnectionsTotal int64
 	// ConnectionsProxy is connections.proxy (socks5/socks5h/http/https URL); "": none.
 	ConnectionsProxy string
+	// CodexClientVersionSet is codex.client_version from config.ktav; "": not set
+	// (CodexClientVersion falls back to the built-in default).
+	CodexClientVersionSet string
 
 	// Env-only mode: single URL token (/call/{token}/...) for profile EnvProfile.
 	// File mode: tokens live in the creds store.

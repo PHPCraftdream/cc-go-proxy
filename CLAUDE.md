@@ -24,6 +24,7 @@ Guidance for Claude Code when working in this repository.
 | `internal/securefile` | atomic owner-only writes (Windows DACL / Unix 0600) |
 | `internal/oauth` | Codex device-code login, refresh rotation, `Session` |
 | `internal/codex` | Messages → Responses request, Responses SSE → Messages events, backend client (large bodies zstd-compressed with a plain fallback, `compress.go`; websocket transport with delta requests (default `CODEX_TRANSPORT=auto`, HTTP fallback), `wsconn.go`, `wsdelta.go`, `wsmanager.go`) |
+| `internal/clientver` | `codex.client_version` upkeep: newest Codex CLI release (GitHub), `Upgrader.Raise` (only raises, lookups at most every 10 min), `RefreshMappings` (managed blocks from the catalog); the server calls it on a backend refusal that asks for a newer client (`codex.NeedsNewerClient`, `server/clientver.go`), the CLI before `--models` and the login refresh |
 | `internal/connpool` | upstream transport: active window of lanes (fewest in flight; `connections.active`, default 7), pools renewed every 10 min at staggered times, old pools drained and capped with the active ones by `connections.total` (default 10; renewal waits, running requests are never cut), next pool warmed up in the background and the lane switches the moment it is open; the warm connection goes to the next request (ties prefer its lane) or is dropped after 20 s (`warm.go`), HTTP/2 health pings (quiet 15 s -> ping, no answer 30 s -> closed), a connect failure is retried on lanes with a working connection for up to 30 s (backoff), a connection broken before the reply at most twice; `Observer.Discard` gives a lane a fresh pool at once (the server calls it when the edge answers a request with an HTML block page) |
 | `internal/proxydial` | SOCKS5 and HTTP(S) CONNECT dialers; `Choice` (proxy / none / env) on the request context, cascade `connections.proxy` -> provider `proxy:` -> profile `proxy:` (the nearest level that sets one replaces the ones above whole; `none` = direct) in `Config.ProxyChoice`; default proxy for context-less calls set by `config.Load` |
 | `internal/sessions` | `ccgp --send` (aliases `--import`/`--export`): copy session transcripts (`projects/*/*.jsonl` + sidecar dir) and their artifacts (tasks, file versions, plan: `artifacts.go`) between Claude Code config dirs; `--fork` gives a copy ids of its own (`forkids.go`); the failed end of a transcript (turns with only API errors) is left out (`failedtail.go`); `StripThinking` |
@@ -37,7 +38,10 @@ Guidance for Claude Code when working in this repository.
 - `config.ktav` is written only on the user's command: `ccgp --profile add` / `rm`, `ccgp --connections`, `ccgp --peak` and `ccgp --interactive` (surgical edit through
   `config.EditFile`: validated with the real loader, `config.ktav.bak-<timestamp>` backup), `ccgp --models apply`
   and the refresh after `ccgp --login` (only the marked `ccgp:managed-models` block) and `ccgp --config reset` (default
-  template, old file backed up). Secrets go through `securefile.WriteFile`.
+  template, old file backed up). One exception without a command: `codex.client_version` (`internal/clientver`,
+  `config/codex_version.go`) is seeded with the built-in default on first use and raised (never lowered) by
+  `--models apply`, the login refresh and the server when the backend asks for a newer client; the server then also
+  refreshes the managed mappings of that provider's profiles. Secrets go through `securefile.WriteFile`.
 - Rotated OAuth refresh tokens are persisted before use (`Session.refreshLocked`).
 - The API key of a `claude_api` profile goes only into the environment of that profile's `claude` process, after the
   parent's `ANTHROPIC_*` / OAuth / cloud-auth variables were dropped (`ownEnv`); never into the proxy, a log or a listing.

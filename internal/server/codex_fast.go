@@ -37,7 +37,7 @@ func fastTier(ctx context.Context, cfg *config.Config, baseURL, model string, s 
 		return "", 401, err
 	}
 	// Hash the complete identity and route, including proxy credentials, without retaining them.
-	parts, _ := json.Marshal([]string{cfg.ProviderName, baseURL, cfg.Profile, model, tok.AccountID, tok.AccessToken,
+	parts, _ := json.Marshal([]string{cfg.ProviderName, baseURL, cfg.Profile, model, cfg.CodexClientVersion(), tok.AccountID, tok.AccessToken,
 		cfg.ProxyChoice(cfg.Profile).Key(), os.Getenv("HTTP_PROXY"), os.Getenv("HTTPS_PROXY"), os.Getenv("NO_PROXY"),
 		os.Getenv("http_proxy"), os.Getenv("https_proxy"), os.Getenv("no_proxy")})
 	key := sha256.Sum256(parts)
