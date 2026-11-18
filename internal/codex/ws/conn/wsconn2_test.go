@@ -63,8 +63,10 @@ func TestWSKeepalivePongDataAndTimeout(t *testing.T) {
 						t.Error("initial ping not received")
 						return
 					}
-					for i := 0; i < 6; i++ {
-						time.Sleep(100 * time.Millisecond)
+					// DATA must arrive well inside the pong timeout (120 ms): a slow
+					// timer on a loaded machine must not end the connection first.
+					for i := 0; i < 15; i++ {
+						time.Sleep(40 * time.Millisecond)
 						if err := ws.Write(ctx, websocket.MessageText, []byte(`{"type":"codex.rate_limits"}`)); err != nil {
 							t.Errorf("write activity DATA: %v", err)
 							return
