@@ -1,14 +1,11 @@
 package codexh
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -16,7 +13,6 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	codexws "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws"
 	wschain "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws/chain"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
@@ -27,153 +23,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/gofiber/fiber/v2"
 )
-
-// Once content reached the client, a broken websocket ends the stream with an
-// error: no second inference, neither over the websocket nor over HTTP.
-func TestCodexWebsocketBrokenAfterContentIsNotAskedAgain(t *testing.T) {
-	oldSlowTotal := obs.SlowTotal
-	obs.SlowTotal = 0
-	t.Cleanup(func() { obs.SlowTotal = oldSlowTotal })
-	var upgrades, posts, frames atomic.Int32
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-			posts.Add(1)
-			_, _ = io.Copy(io.Discard, r.Body)
-			okStream(w)
-			return
-		}
-		upgrades.Add(1)
-		conn := acceptCodexWSTest(t, w, r)
-		if conn == nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "done")
-		_ = readCodexWSTestFrame(t, conn)
-		frames.Add(1)
-		writeCodexWSTestEvents(t, conn,
-			`{"type":"response.created","response":{"id":"cut-response"}}`,
-			`{"type":"response.output_item.added","item":{"id":"msg-1","type":"message","role":"assistant"}}`,
-			`{"type":"response.output_text.delta","item_id":"msg-1","delta":"partial answer"}`)
-		_ = conn.CloseNow()
-	})
-	oldBreaks := BrokenBackoff
-	BrokenBackoff = []time.Duration{time.Millisecond, time.Millisecond}
-	t.Cleanup(func() { BrokenBackoff = oldBreaks })
-	h := newCodexWSTestHarness(t, backend, "websocket")
-	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"ws-cut-session"},"system":"cut system","messages":[{"role":"user","content":"answer at length"}]}`
-	_, response := h.post(t, body)
-	if !strings.Contains(response, "partial answer") || !strings.Contains(response, "event: error") {
-		t.Fatalf("client did not get the partial content and then an error: %q", response)
-	}
-	if upgrades.Load() != 1 || frames.Load() != 1 || posts.Load() != 0 {
-		t.Fatalf("handshakes=%d frames=%d HTTP POSTs=%d after content; want 1, 1, 0 (no second inference)", upgrades.Load(), frames.Load(), posts.Load())
-	}
-}
-
-func TestCodexWebsocketDisconnectCancelsUpstreamAndLogsCancellation(t *testing.T) {
-	upstreamClosed := make(chan struct{}, 1)
-	startFlood := make(chan struct{})
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn := acceptCodexWSTest(t, w, r)
-		if conn == nil {
-			return
-		}
-		conn.SetReadLimit(16 << 20)
-		defer conn.Close(websocket.StatusNormalClosure, "done")
-		_ = readCodexWSTestFrame(t, conn)
-		writeCodexWSTestEvents(t, conn,
-			`{"type":"response.created","response":{"id":"cancel-response"}}`,
-			`{"type":"response.output_item.added","item":{"id":"cancel-text","type":"message"}}`,
-			`{"type":"response.output_text.delta","item_id":"cancel-text","delta":"first piece"}`)
-		<-startFlood
-		largeDelta := strings.Repeat("x", 8<<20)
-		for range 8 {
-			if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.output_text.delta","item_id":"cancel-text","delta":"`+largeDelta+`"}`)); err != nil {
-				upstreamClosed <- struct{}{}
-				return
-			}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_, _, err := conn.Read(ctx)
-		if err != nil {
-			upstreamClosed <- struct{}{}
-		}
-	})
-	h := newCodexWSTestHarness(t, backend, "websocket")
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		_ = h.app.Listener(listener)
-	}()
-	h.waitForStream = func() {
-		if err := h.app.Shutdown(); err != nil {
-			return
-		}
-		_ = listener.Close()
-	}
-	t.Cleanup(func() { h.waitForStream() })
-
-	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"disconnect-session"},"messages":[{"role":"user","content":"disconnect me"}]}`
-	req, err := http.NewRequest(http.MethodPost, "http://"+listener.Addr().String()+"/call/synthetic-token/v1/messages", strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reader := bufio.NewReader(resp.Body)
-	var received strings.Builder
-	deadline := time.After(5 * time.Second)
-	for !strings.Contains(received.String(), "event: message_start") {
-		select {
-		case <-deadline:
-			_ = resp.Body.Close()
-			t.Fatalf("did not receive initial SSE event: %q", received.String())
-		default:
-		}
-		line, readErr := reader.ReadString('\n')
-		if readErr != nil {
-			_ = resp.Body.Close()
-			t.Fatalf("read initial SSE event: %v (%q)", readErr, received.String())
-		}
-		received.WriteString(line)
-	}
-	_ = resp.Body.Close()
-	close(startFlood)
-	select {
-	case <-upstreamClosed:
-	case <-time.After(10 * time.Second):
-		t.Fatal("client disconnect did not cancel the upstream websocket exchange")
-	}
-	deadlineAt := time.Now().Add(5 * time.Second)
-	for !strings.Contains(h.stream.String(), "stream canceled by client") && time.Now().Before(deadlineAt) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !strings.Contains(h.stream.String(), "stream canceled by client") {
-		t.Errorf("canceled stream log missing: %q", h.stream.String())
-	}
-	deadlineAt = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadlineAt) {
-		obs.PromptWatch.Mu.Lock()
-		active := len(obs.PromptWatch.Active)
-		obs.PromptWatch.Mu.Unlock()
-		if active == 0 {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	obs.PromptWatch.Mu.Lock()
-	active := len(obs.PromptWatch.Active)
-	obs.PromptWatch.Mu.Unlock()
-	if active != 0 {
-		t.Errorf("stream cancellation did not finish cache-watch cleanup: %d active", active)
-	}
-}
 
 func TestCodexWebsocketRoutingStateSurvivesReuseAndReconnect(t *testing.T) {
 	type handshake struct{ thread, state string }
@@ -418,165 +267,6 @@ func TestCodexWebsocketThreadBucketsIncludeCacheKeySystemAndTools(t *testing.T) 
 			t.Errorf("bucket %d handshake replayed state %q", i, got[i].state)
 		}
 	}
-}
-
-func TestCodexRetryRequestFallsBackToHTTPAfterWebsocketRetryFails(t *testing.T) {
-	var prepared atomic.Int32
-	var websocketCalls atomic.Int32
-	request := &codex.Request{Model: "gpt-test", Input: []any{"original"}}
-	retry := &wsh.CodexRetry{
-		Request: request, Websocket: true,
-		Call: func(*codex.Prepared) (*http.Response, error) {
-			prepared.Add(1)
-			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("HTTP fallback"))}, nil
-		},
-		CallWS: func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
-			websocketCalls.Add(1)
-			return nil, codexws.WSInfo{}, io.ErrUnexpectedEOF
-		},
-	}
-	trace := obs.NewUpstreamTrace()
-	trace.Wire = &codex.Wire{}
-	response, err := retry.RequestCall(context.Background(), trace, 100)
-	if err != nil || response == nil {
-		t.Fatalf("requestCall response=%v err=%v, want HTTP fallback", response, err)
-	}
-	_ = response.Body.Close()
-	second, err := retry.CallAgain(context.Background(), trace, 100)
-	if err != nil || second == nil {
-		t.Fatalf("HTTP-mode retry response=%v err=%v", second, err)
-	}
-	_ = second.Body.Close()
-	if websocketCalls.Load() != 1 || prepared.Load() != 2 || retry.Websocket {
-		t.Errorf("websocket calls=%d prepared HTTP calls=%d websocket mode=%v; want 1, 2, false", websocketCalls.Load(), prepared.Load(), retry.Websocket)
-	}
-	if got := trace.Transport; !strings.Contains(got, "fallback to HTTP") {
-		t.Errorf("transport note = %q, want websocket fallback", got)
-	}
-	if summary := trace.Summary(&sse.Translator{}, time.Now(), 100); strings.Count(summary, "fallback to HTTP") != 1 {
-		t.Errorf("fallback transport was duplicated in summary: %q", summary)
-	}
-	if tls, sent, wrote := trace.LinkSample(); tls != 0 || sent != 0 || wrote != 0 {
-		t.Errorf("HTTP fallback after websocket has wire sample tls=%s sent=%d write=%s", tls, sent, wrote)
-	}
-}
-
-func TestCodexWebsocketRetryHandshakeFailureFallsBackToHTTP(t *testing.T) {
-	var upgrades, posts atomic.Int32
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-			posts.Add(1)
-			_, _ = io.Copy(io.Discard, r.Body)
-			okStream(w)
-			return
-		}
-		attempt := upgrades.Add(1)
-		if attempt == 2 {
-			w.Header().Set("X-Codex-Turn-State", codexWSTestTurn)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = io.WriteString(w, "retry websocket refused")
-			return
-		}
-		conn := acceptCodexWSTest(t, w, r)
-		if conn == nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "done")
-		_ = readCodexWSTestFrame(t, conn)
-		writeCodexWSTestEvents(t, conn, `{"type":"response.created","response":{"id":"pre-retry-break"}}`)
-		_ = conn.CloseNow()
-	})
-	oldBreaks := BrokenBackoff
-	oldSlowTotal := obs.SlowTotal
-	BrokenBackoff = []time.Duration{time.Millisecond}
-	obs.SlowTotal = 0
-	t.Cleanup(func() { BrokenBackoff, obs.SlowTotal = oldBreaks, oldSlowTotal })
-	h := newCodexWSTestHarness(t, backend, "websocket")
-	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"retry-handshake-fallback"},"messages":[{"role":"user","content":"retry after break"}]}`
-	status, response := h.post(t, body)
-	if status != fiber.StatusOK || !strings.Contains(response, "message_stop") {
-		t.Fatalf("fallback status=%d body=%q", status, response)
-	}
-	if upgrades.Load() != 2 || posts.Load() != 1 {
-		t.Errorf("websocket handshakes=%d HTTP posts=%d; want two then one", upgrades.Load(), posts.Load())
-	}
-	logs := h.access.String() + h.stream.String()
-	if !strings.Contains(logs, "fallback to HTTP (handshake HTTP 500)") {
-		t.Errorf("failed retry fallback missing from logs: %q", logs)
-	}
-	if strings.Contains(logs, codexWSTestTurn) {
-		t.Errorf("failed retry exposed returned turn state: %q", logs)
-	}
-}
-
-func TestCodexWebsocketCancellationDoesNotFallbackToHTTP(t *testing.T) {
-	var prepared, websocketCalls atomic.Int32
-	request := &codex.Request{Model: "gpt-test", Input: []any{"original"}}
-	retry := &wsh.CodexRetry{
-		Request: request, Websocket: true,
-		Call: func(*codex.Prepared) (*http.Response, error) {
-			prepared.Add(1)
-			return nil, nil
-		},
-		CallWS: func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
-			websocketCalls.Add(1)
-			return nil, codexws.WSInfo{}, context.Canceled
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	trace := obs.NewUpstreamTrace()
-	trace.Wire = &codex.Wire{}
-	response, err := retry.RequestCall(ctx, trace, 100)
-	if !errors.Is(err, context.Canceled) || response != nil {
-		t.Fatalf("requestCall response=%v err=%v, want cancellation", response, err)
-	}
-	if prepared.Load() != 0 || websocketCalls.Load() != 1 || !retry.Websocket {
-		t.Errorf("HTTP calls=%d websocket calls=%d websocket mode=%v", prepared.Load(), websocketCalls.Load(), retry.Websocket)
-	}
-	if got := trace.Transport; !strings.Contains(got, "request canceled") {
-		t.Errorf("cancellation transport note = %q", got)
-	}
-	if summary := trace.Summary(&sse.Translator{}, time.Now(), 10); strings.Count(summary, "request canceled") != 1 {
-		t.Errorf("cancellation transport duplicated in summary: %q", summary)
-	}
-}
-
-func TestCodexRetryPreparesOnceOnFirstHTTPAttempt(t *testing.T) {
-	request := &codex.Request{Model: "gpt-test", Input: []any{"lazy request"}}
-	var calls int
-	var first *codex.Prepared
-	retry := &wsh.CodexRetry{Request: request}
-	retry.Call = func(prepared *codex.Prepared) (*http.Response, error) {
-		calls++
-		if first == nil {
-			first = prepared
-		} else if first != prepared {
-			t.Errorf("HTTP attempt %d got a different prepared request %p, want %p", calls, prepared, first)
-		}
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok"))}, nil
-	}
-	if retry.Prepared != nil {
-		t.Fatal("prepared request created before the first attempt")
-	}
-	for range 2 {
-		resp, err := retry.CallPrepared()
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-	}
-	if first == nil || retry.Prepared != first || calls != 2 {
-		t.Fatalf("prepared=%p retained=%p calls=%d; want lazy single snapshot used twice", first, retry.Prepared, calls)
-	}
-	response, err := retry.CallAgain(context.Background(), obs.NewUpstreamTrace(), 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := response.Body.(*obs.StampedBody); !ok {
-		t.Fatalf("HTTP retry body type = %T, want timing-stamped body", response.Body)
-	}
-	_ = response.Body.Close()
 }
 
 func TestCodexWebsocketRetryResponseIsStampedForTiming(t *testing.T) {
@@ -828,8 +518,4 @@ func TestWSAgentTagIsShortAndOptional(t *testing.T) {
 	if wsh.WsAgentTag("") != "" || wsh.WsAgentTag("abc") != "" {
 		t.Error("a missing or short agent key must give no tag")
 	}
-}
-
-func codexWSSideBody(userID string, messages string) string {
-	return `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"` + userID + `"},"messages":[` + messages + `]}`
 }

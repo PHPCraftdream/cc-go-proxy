@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -220,4 +221,21 @@ func ZeroDash(n int64) string {
 		return ""
 	}
 	return strconv.FormatInt(n, 10)
+}
+
+// angelServeArgs builds the argv of the detached background server.
+func AngelServeArgs(serveArgs []string) []string {
+	return append([]string{"--serve", "-s"}, serveArgs...)
+}
+
+func MissingDefaultConfig() bool {
+	if os.Getenv(config.ConfigFileEnv) != "" {
+		return false
+	}
+	p, err := config.DefaultConfigPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(p)
+	return errors.Is(err, fs.ErrNotExist)
 }

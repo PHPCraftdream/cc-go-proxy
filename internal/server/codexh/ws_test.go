@@ -1,11 +1,14 @@
 package codexh
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -18,6 +21,7 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/sse"
 	codexws "github.com/PHPCraftdream/cc-go-proxy/internal/codex/ws"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
@@ -29,281 +33,22 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-const (
-	turnStateA = "Opaque-MiXeD-State/AaZz=="
-	turnStateB = "New-State-MiXeD/BBcc=="
-	turnStateC = "Retry-Returned-State/CcDd=="
-)
-
-func turnStateUserBody(userID, system, tools string) string {
-	return fmt.Sprintf(`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":%q},"system":%s,"tools":%s,"messages":[{"role":"user","content":"hello"}]}`,
-		userID, system, tools)
+// syncBuf is a log sink the stream-writer goroutine and the test share.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
 }
 
-func turnStateContinuationBody(userID string) string {
-	return turnStateContinuationWith(userID, `""`, "null")
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
 }
 
-func turnStateContinuationWith(userID, system, tools string) string {
-	return fmt.Sprintf(`{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":%q},"system":%s,"tools":%s,"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tool-1","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"done"}]}]}`, userID, system, tools)
-}
-
-func turnStateOK(w http.ResponseWriter, token string) {
-	if token != "" {
-		w.Header().Set("X-Codex-Turn-State", token)
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	_, _ = io.WriteString(w, `data: {"type":"response.created","response":{"id":"r"}}`+"\n\n"+
-		`data: {"type":"response.completed","response":{"id":"r","usage":{"input_tokens":12000,"output_tokens":1,"input_tokens_details":{"cached_tokens":8000}}}}`+"\n\n")
-}
-
-type capturedTurnRequest struct {
-	thread string
-	id     string
-	state  string
-}
-
-func TestCodexTurnStateRoutingAndRetry(t *testing.T) {
-	oldStates, oldWatch, oldStats := obs.TurnStates, obs.PromptWatch, obs.PromptStats
-	obs.TurnStates, obs.PromptWatch, obs.PromptStats = &obs.TurnStateStore{}, &obs.CacheWatch{}, &obs.CacheStats{}
-	t.Cleanup(func() { obs.TurnStates, obs.PromptWatch, obs.PromptStats = oldStates, oldWatch, oldStats })
-	oldBody, oldSlowTotal := codexTestBody, obs.SlowTotal
-	codexTestBody = ""
-	obs.SlowTotal = 0
-	t.Cleanup(func() { codexTestBody, obs.SlowTotal = oldBody, oldSlowTotal })
-
-	var mu sync.Mutex
-	var seen []capturedTurnRequest
-	capture := func(r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		seen = append(seen, capturedTurnRequest{
-			thread: r.Header.Get("thread-id"),
-			id:     r.Header.Get("x-client-request-id"),
-			state:  r.Header.Get("x-codex-turn-state"),
-		})
-	}
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		capture(r)
-		turnStateOK(w, turnStateA)
-	})
-
-	user := turnStateUserBody("stable-session", `""`, "null")
-	status, _, _, stream := callTurnState(t, user, backend)
-	if status != fiber.StatusOK || !strings.Contains(stream, "new turn") || !strings.Contains(stream, "turn state returned") || strings.Contains(stream, turnStateA) {
-		t.Fatalf("initial user status %d, stream log %q", status, stream)
-	}
-	first := capturedAt(t, &mu, &seen, 0)
-	if first.thread == "" || first.id != first.thread || first.state != "" {
-		t.Fatalf("initial routing headers = %+v; want stable thread id as request id and no state", first)
-	}
-
-	fastRetries(t, 1)
-	var retryCalls atomic.Int32
-	retryBackend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		capture(r)
-		if retryCalls.Add(1) == 1 {
-			w.Header().Set("X-Codex-Turn-State", turnStateB)
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, `data: {"type":"response.created","response":{"id":"retry"}}`+"\n\n"+
-				`data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"overloaded"}}`+"\n\n")
-			return
-		}
-		turnStateOK(w, turnStateC)
-	})
-	status, _, _, retryLog := callTurnState(t, turnStateContinuationBody("stable-session"), retryBackend)
-	if status != fiber.StatusOK || !strings.Contains(retryLog, "upstream retry 1/1") || !strings.Contains(retryLog, "turn state sent") || !strings.Contains(retryLog, "turn state returned") || strings.Contains(retryLog, turnStateA) || strings.Contains(retryLog, turnStateB) || strings.Contains(retryLog, turnStateC) {
-		t.Fatalf("continuation with retry status %d, stream log %q", status, retryLog)
-	}
-	second, third := capturedAt(t, &mu, &seen, 1), capturedAt(t, &mu, &seen, 2)
-	for i, got := range []capturedTurnRequest{second, third} {
-		if got.thread != first.thread || got.id != first.thread {
-			t.Errorf("retry request %d routing ids = %+v, want stable thread %q", i+1, got, first.thread)
-		}
-	}
-	if second.state != turnStateA || third.state != turnStateB {
-		t.Fatalf("continuation/retry states = %q, %q; want first and freshly returned state", second.state, third.state)
-	}
-
-	changed := []struct {
-		label string
-		body  string
-	}{
-		{"key", turnStateContinuationBody("other-session")},
-		{"system", turnStateContinuationWith("stable-session", `"different"`, "null")},
-		{"tools", turnStateContinuationWith("stable-session", `""`, `[{"name":"Read","input_schema":{"type":"object"}}]`)},
-	}
-	for i, tc := range changed {
-		status, _, _, _ = callTurnState(t, tc.body, backend)
-		got := capturedAt(t, &mu, &seen, 3+i)
-		if status != fiber.StatusOK || got.state != "" || got.thread == first.thread || got.id != got.thread {
-			t.Errorf("changed %s status=%d headers=%+v; want isolated thread and no state", tc.label, status, got)
-		}
-	}
-	status, _, _, _ = callTurnState(t, turnStateContinuationBody("stable-session"), backend)
-	if status != fiber.StatusOK || capturedAt(t, &mu, &seen, 6).state != turnStateC {
-		t.Errorf("isolated continuation did not preserve original bucket state")
-	}
-
-	missingHeaderBackend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		capture(r)
-		turnStateOK(w, "")
-	})
-	status, _, _, stream = callTurnState(t, user, missingHeaderBackend)
-	if status != fiber.StatusOK || !strings.Contains(stream, "new turn") || !strings.Contains(stream, "no turn state returned") || strings.Contains(stream, turnStateA) || strings.Contains(stream, turnStateB) || strings.Contains(stream, turnStateC) {
-		t.Errorf("new user status %d, stream log %q", status, stream)
-	}
-	fourth := capturedAt(t, &mu, &seen, 7)
-	if fourth.thread != first.thread || fourth.state != "" {
-		t.Errorf("new-turn headers = %+v, want same thread and no stale state", fourth)
-	}
-
-	_, by := obs.PromptStats.Take()
-	if !strings.Contains(by, "turn state sent: ") || !strings.Contains(by, "turn state not sent: ") {
-		t.Errorf("integration cache stats = %q, want sent and not-sent groups", by)
-	}
-}
-
-func TestCodexTurnStateIsRedactedFrom429Logs(t *testing.T) {
-	oldStates := obs.TurnStates
-	obs.TurnStates = &obs.TurnStateStore{}
-	t.Cleanup(func() { obs.TurnStates = oldStates })
-	oldBody, oldSlowTotal := codexTestBody, obs.SlowTotal
-	codexTestBody = ""
-	obs.SlowTotal = 0
-	t.Cleanup(func() { codexTestBody, obs.SlowTotal = oldBody, oldSlowTotal })
-
-	const secret = "Very-Secret-Opaque-Turn-State/DO-NOT-LOG"
-	var calls atomic.Int32
-	var shortRetryState string
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		if calls.Add(1) == 1 {
-			w.Header().Set("Retry-After", "0")
-			w.Header().Set("X-Codex-Turn-State", secret)
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = io.WriteString(w, `{"error":{"message":"wait"}}`)
-			return
-		}
-		shortRetryState = r.Header.Get("x-codex-turn-state")
-		turnStateOK(w, "")
-	})
-	status, _, _, stream := callTurnState(t, turnStateUserBody("redaction-session", `""`, "null"), backend)
-	if status != fiber.StatusOK || !strings.Contains(stream, "upstream rate limit: retrying") || !strings.Contains(stream, "new turn") || !strings.Contains(stream, "turn state sent") || shortRetryState != secret {
-		t.Fatalf("short 429 status %d, retry state %q, stream %q", status, shortRetryState, stream)
-	}
-	if strings.Contains(stream, secret) {
-		t.Fatalf("short-429 log exposed turn state: %q", stream)
-	}
-
-	// A later continuation must still use the value returned on the short 429.
-	var continuationState string
-	var finalAccess, finalStream string
-	continuation := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		continuationState = r.Header.Get("x-codex-turn-state")
-		w.Header().Set("Retry-After", "120")
-		w.Header().Set("X-Codex-Turn-State", secret)
-		w.Header().Set("X-Ratelimit-Remaining-Requests", "0")
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = io.WriteString(w, `{"error":{"message":"rate limit"}}`)
-	})
-	status, _, finalAccess, finalStream = callTurnState(t, turnStateContinuationBody("redaction-session"), continuation)
-	if status != fiber.StatusTooManyRequests || continuationState != secret {
-		t.Fatalf("final 429 status %d, continuation sent %q; want state from prior attempt", status, continuationState)
-	}
-	if strings.Contains(finalAccess+finalStream, secret) || !strings.Contains(finalAccess, "x-ratelimit-remaining-requests=0") {
-		t.Errorf("final-429 logs access=%q stream=%q; state must be redacted and normal limits retained", finalAccess, finalStream)
-	}
-}
-
-func callTurnState(t *testing.T, body string, backend http.Handler) (int, string, string, string) {
-	t.Helper()
-	codexTestBody = body
-	status, response, access, stream := codexCall(t, backend, time.Minute)
-	return status, response, access, stream
-}
-
-func capturedAt(t *testing.T, mu *sync.Mutex, seen *[]capturedTurnRequest, index int) capturedTurnRequest {
-	t.Helper()
-	mu.Lock()
-	defer mu.Unlock()
-	if index >= len(*seen) {
-		t.Fatalf("captured %d upstream attempts, want attempt %d", len(*seen), index+1)
-	}
-	return (*seen)[index]
-}
-
-// usageLimitEvent is how the backend ends a reply when the plan's limit is used up.
-const usageLimitEvent = `{"type":"error","error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":324230},"status_code":429}`
-
-func sseBackend(events ...string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		for _, ev := range events {
-			_, _ = w.Write([]byte("data: " + ev + "\n\n"))
-		}
-	})
-}
-
-// A used-up limit in a non-stream reply is a 429 Claude Code does not send again.
-func TestNonStreamUsageLimitIs429WithoutRetry(t *testing.T) {
-	nonStreamBody(t)
-	status, body, access, _ := codexCall(t, sseBackend(usageLimitEvent), time.Minute)
-	if status != fiber.StatusTooManyRequests || !strings.Contains(body, `"rate_limit_error"`) ||
-		!strings.Contains(body, "The usage limit has been reached") {
-		t.Fatalf("status %d, body %q", status, body)
-	}
-	if got := lastCodexReply.Get("x-should-retry"); got != "false" {
-		t.Errorf("x-should-retry = %q, want false", got)
-	}
-	if !strings.Contains(access, " 429 - ") {
-		t.Errorf("access log = %q", access)
-	}
-}
-
-// Any other failure of a non-stream reply stays a 502 the client may retry.
-func TestNonStreamOtherErrorStays502(t *testing.T) {
-	nonStreamBody(t)
-	status, body, _, _ := codexCall(t, sseBackend(`{"type":"error","error":{"type":"invalid_request","code":"cyber_policy","message":"flagged"}}`), time.Minute)
-	if status != fiber.StatusBadGateway || !strings.Contains(body, "cyber_policy: flagged") {
-		t.Fatalf("status %d, body %q", status, body)
-	}
-	if got := lastCodexReply.Get("x-should-retry"); got != "" {
-		t.Errorf("x-should-retry = %q, want none", got)
-	}
-}
-
-// The limit over HTTP is already a 429; it also tells Claude Code not to retry.
-func TestHTTPUsageLimitTellsNotToRetry(t *testing.T) {
-	status, _, _, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}`))
-	}), time.Minute)
-	if status != fiber.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", status)
-	}
-	if got := lastCodexReply.Get("x-should-retry"); got != "false" {
-		t.Errorf("x-should-retry = %q, want false", got)
-	}
-}
-
-// A short rate limit stays retryable.
-func TestHTTPRateLimitStaysRetryable(t *testing.T) {
-	status, _, _, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"type":"rate_limit_exceeded","message":"Rate limit exceeded"}}`))
-	}), time.Minute)
-	if status != fiber.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", status)
-	}
-	if got := lastCodexReply.Get("x-should-retry"); got != "" {
-		t.Errorf("x-should-retry = %q, want none", got)
-	}
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 const (
@@ -575,41 +320,6 @@ func TestCodexWebsocketOffUsesHTTPWithoutUpgrade(t *testing.T) {
 	}
 }
 
-func TestCodexHTTPWithoutUserIDOmitsSessionCacheKey(t *testing.T) {
-	var upgrades, posts atomic.Int32
-	var mu sync.Mutex
-	var headers http.Header
-	var request map[string]json.RawMessage
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-			upgrades.Add(1)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		posts.Add(1)
-		mu.Lock()
-		headers = r.Header.Clone()
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &request)
-		mu.Unlock()
-		okStream(w)
-	})
-	h := newCodexWSTestHarness(t, backend, "websocket")
-	status, body := h.post(t, `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"no cache key"}]}`)
-	if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
-		t.Fatalf("status %d, body %q", status, body)
-	}
-	mu.Lock()
-	gotHeaders, gotRequest := headers.Clone(), request
-	mu.Unlock()
-	if gotHeaders.Get("session-id") != "" || upgrades.Load() != 0 || posts.Load() != 1 {
-		t.Errorf("HTTP session-id=%q websocket upgrades=%d HTTP posts=%d; want omitted, 0 and 1", gotHeaders.Get("session-id"), upgrades.Load(), posts.Load())
-	}
-	if _, ok := gotRequest["prompt_cache_key"]; ok {
-		t.Errorf("HTTP request contains an invented prompt_cache_key: %s", gotRequest["prompt_cache_key"])
-	}
-}
-
 func TestCodexWebsocketHandshakeRefusalFallsBackToHTTPWithoutLeakingSecrets(t *testing.T) {
 	for _, statusCode := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError} {
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
@@ -815,4 +525,454 @@ func TestCodexWebsocketBrokenBeforeContentRetriesFullFrameWithoutHTTP(t *testing
 	if link := obs.LinkHealth.Take(); !strings.Contains(link, "1 broken call (1 sent again by ccgp, 0 reached the client): 1 "+obs.CauseWSEnded) {
 		t.Errorf("link line after a retried websocket break = %q", link)
 	}
+}
+
+// Once content reached the client, a broken websocket ends the stream with an
+// error: no second inference, neither over the websocket nor over HTTP.
+func TestCodexWebsocketBrokenAfterContentIsNotAskedAgain(t *testing.T) {
+	oldSlowTotal := obs.SlowTotal
+	obs.SlowTotal = 0
+	t.Cleanup(func() { obs.SlowTotal = oldSlowTotal })
+	var upgrades, posts, frames atomic.Int32
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			posts.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			okStream(w)
+			return
+		}
+		upgrades.Add(1)
+		conn := acceptCodexWSTest(t, w, r)
+		if conn == nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		_ = readCodexWSTestFrame(t, conn)
+		frames.Add(1)
+		writeCodexWSTestEvents(t, conn,
+			`{"type":"response.created","response":{"id":"cut-response"}}`,
+			`{"type":"response.output_item.added","item":{"id":"msg-1","type":"message","role":"assistant"}}`,
+			`{"type":"response.output_text.delta","item_id":"msg-1","delta":"partial answer"}`)
+		_ = conn.CloseNow()
+	})
+	oldBreaks := BrokenBackoff
+	BrokenBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { BrokenBackoff = oldBreaks })
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"ws-cut-session"},"system":"cut system","messages":[{"role":"user","content":"answer at length"}]}`
+	_, response := h.post(t, body)
+	if !strings.Contains(response, "partial answer") || !strings.Contains(response, "event: error") {
+		t.Fatalf("client did not get the partial content and then an error: %q", response)
+	}
+	if upgrades.Load() != 1 || frames.Load() != 1 || posts.Load() != 0 {
+		t.Fatalf("handshakes=%d frames=%d HTTP POSTs=%d after content; want 1, 1, 0 (no second inference)", upgrades.Load(), frames.Load(), posts.Load())
+	}
+}
+
+func TestCodexWebsocketDisconnectCancelsUpstreamAndLogsCancellation(t *testing.T) {
+	upstreamClosed := make(chan struct{}, 1)
+	startFlood := make(chan struct{})
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn := acceptCodexWSTest(t, w, r)
+		if conn == nil {
+			return
+		}
+		conn.SetReadLimit(16 << 20)
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		_ = readCodexWSTestFrame(t, conn)
+		writeCodexWSTestEvents(t, conn,
+			`{"type":"response.created","response":{"id":"cancel-response"}}`,
+			`{"type":"response.output_item.added","item":{"id":"cancel-text","type":"message"}}`,
+			`{"type":"response.output_text.delta","item_id":"cancel-text","delta":"first piece"}`)
+		<-startFlood
+		largeDelta := strings.Repeat("x", 8<<20)
+		for range 8 {
+			if err := conn.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.output_text.delta","item_id":"cancel-text","delta":"`+largeDelta+`"}`)); err != nil {
+				upstreamClosed <- struct{}{}
+				return
+			}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, _, err := conn.Read(ctx)
+		if err != nil {
+			upstreamClosed <- struct{}{}
+		}
+	})
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		_ = h.app.Listener(listener)
+	}()
+	h.waitForStream = func() {
+		if err := h.app.Shutdown(); err != nil {
+			return
+		}
+		_ = listener.Close()
+	}
+	t.Cleanup(func() { h.waitForStream() })
+
+	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"disconnect-session"},"messages":[{"role":"user","content":"disconnect me"}]}`
+	req, err := http.NewRequest(http.MethodPost, "http://"+listener.Addr().String()+"/call/synthetic-token/v1/messages", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(resp.Body)
+	var received strings.Builder
+	deadline := time.After(5 * time.Second)
+	for !strings.Contains(received.String(), "event: message_start") {
+		select {
+		case <-deadline:
+			_ = resp.Body.Close()
+			t.Fatalf("did not receive initial SSE event: %q", received.String())
+		default:
+		}
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			_ = resp.Body.Close()
+			t.Fatalf("read initial SSE event: %v (%q)", readErr, received.String())
+		}
+		received.WriteString(line)
+	}
+	_ = resp.Body.Close()
+	close(startFlood)
+	select {
+	case <-upstreamClosed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("client disconnect did not cancel the upstream websocket exchange")
+	}
+	deadlineAt := time.Now().Add(5 * time.Second)
+	for !strings.Contains(h.stream.String(), "stream canceled by client") && time.Now().Before(deadlineAt) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(h.stream.String(), "stream canceled by client") {
+		t.Errorf("canceled stream log missing: %q", h.stream.String())
+	}
+	deadlineAt = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadlineAt) {
+		obs.PromptWatch.Mu.Lock()
+		active := len(obs.PromptWatch.Active)
+		obs.PromptWatch.Mu.Unlock()
+		if active == 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	obs.PromptWatch.Mu.Lock()
+	active := len(obs.PromptWatch.Active)
+	obs.PromptWatch.Mu.Unlock()
+	if active != 0 {
+		t.Errorf("stream cancellation did not finish cache-watch cleanup: %d active", active)
+	}
+}
+
+func TestCodexRetryRequestFallsBackToHTTPAfterWebsocketRetryFails(t *testing.T) {
+	var prepared atomic.Int32
+	var websocketCalls atomic.Int32
+	request := &codex.Request{Model: "gpt-test", Input: []any{"original"}}
+	retry := &wsh.CodexRetry{
+		Request: request, Websocket: true,
+		Call: func(*codex.Prepared) (*http.Response, error) {
+			prepared.Add(1)
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("HTTP fallback"))}, nil
+		},
+		CallWS: func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
+			websocketCalls.Add(1)
+			return nil, codexws.WSInfo{}, io.ErrUnexpectedEOF
+		},
+	}
+	trace := obs.NewUpstreamTrace()
+	trace.Wire = &codex.Wire{}
+	response, err := retry.RequestCall(context.Background(), trace, 100)
+	if err != nil || response == nil {
+		t.Fatalf("requestCall response=%v err=%v, want HTTP fallback", response, err)
+	}
+	_ = response.Body.Close()
+	second, err := retry.CallAgain(context.Background(), trace, 100)
+	if err != nil || second == nil {
+		t.Fatalf("HTTP-mode retry response=%v err=%v", second, err)
+	}
+	_ = second.Body.Close()
+	if websocketCalls.Load() != 1 || prepared.Load() != 2 || retry.Websocket {
+		t.Errorf("websocket calls=%d prepared HTTP calls=%d websocket mode=%v; want 1, 2, false", websocketCalls.Load(), prepared.Load(), retry.Websocket)
+	}
+	if got := trace.Transport; !strings.Contains(got, "fallback to HTTP") {
+		t.Errorf("transport note = %q, want websocket fallback", got)
+	}
+	if summary := trace.Summary(&sse.Translator{}, time.Now(), 100); strings.Count(summary, "fallback to HTTP") != 1 {
+		t.Errorf("fallback transport was duplicated in summary: %q", summary)
+	}
+	if tls, sent, wrote := trace.LinkSample(); tls != 0 || sent != 0 || wrote != 0 {
+		t.Errorf("HTTP fallback after websocket has wire sample tls=%s sent=%d write=%s", tls, sent, wrote)
+	}
+}
+
+func TestCodexWebsocketRetryHandshakeFailureFallsBackToHTTP(t *testing.T) {
+	var upgrades, posts atomic.Int32
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			posts.Add(1)
+			_, _ = io.Copy(io.Discard, r.Body)
+			okStream(w)
+			return
+		}
+		attempt := upgrades.Add(1)
+		if attempt == 2 {
+			w.Header().Set("X-Codex-Turn-State", codexWSTestTurn)
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, "retry websocket refused")
+			return
+		}
+		conn := acceptCodexWSTest(t, w, r)
+		if conn == nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		_ = readCodexWSTestFrame(t, conn)
+		writeCodexWSTestEvents(t, conn, `{"type":"response.created","response":{"id":"pre-retry-break"}}`)
+		_ = conn.CloseNow()
+	})
+	oldBreaks := BrokenBackoff
+	oldSlowTotal := obs.SlowTotal
+	BrokenBackoff = []time.Duration{time.Millisecond}
+	obs.SlowTotal = 0
+	t.Cleanup(func() { BrokenBackoff, obs.SlowTotal = oldBreaks, oldSlowTotal })
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	body := `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"retry-handshake-fallback"},"messages":[{"role":"user","content":"retry after break"}]}`
+	status, response := h.post(t, body)
+	if status != fiber.StatusOK || !strings.Contains(response, "message_stop") {
+		t.Fatalf("fallback status=%d body=%q", status, response)
+	}
+	if upgrades.Load() != 2 || posts.Load() != 1 {
+		t.Errorf("websocket handshakes=%d HTTP posts=%d; want two then one", upgrades.Load(), posts.Load())
+	}
+	logs := h.access.String() + h.stream.String()
+	if !strings.Contains(logs, "fallback to HTTP (handshake HTTP 500)") {
+		t.Errorf("failed retry fallback missing from logs: %q", logs)
+	}
+	if strings.Contains(logs, codexWSTestTurn) {
+		t.Errorf("failed retry exposed returned turn state: %q", logs)
+	}
+}
+
+func TestCodexWebsocketCancellationDoesNotFallbackToHTTP(t *testing.T) {
+	var prepared, websocketCalls atomic.Int32
+	request := &codex.Request{Model: "gpt-test", Input: []any{"original"}}
+	retry := &wsh.CodexRetry{
+		Request: request, Websocket: true,
+		Call: func(*codex.Prepared) (*http.Response, error) {
+			prepared.Add(1)
+			return nil, nil
+		},
+		CallWS: func(*codex.Request) (*http.Response, codexws.WSInfo, error) {
+			websocketCalls.Add(1)
+			return nil, codexws.WSInfo{}, context.Canceled
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	trace := obs.NewUpstreamTrace()
+	trace.Wire = &codex.Wire{}
+	response, err := retry.RequestCall(ctx, trace, 100)
+	if !errors.Is(err, context.Canceled) || response != nil {
+		t.Fatalf("requestCall response=%v err=%v, want cancellation", response, err)
+	}
+	if prepared.Load() != 0 || websocketCalls.Load() != 1 || !retry.Websocket {
+		t.Errorf("HTTP calls=%d websocket calls=%d websocket mode=%v", prepared.Load(), websocketCalls.Load(), retry.Websocket)
+	}
+	if got := trace.Transport; !strings.Contains(got, "request canceled") {
+		t.Errorf("cancellation transport note = %q", got)
+	}
+	if summary := trace.Summary(&sse.Translator{}, time.Now(), 10); strings.Count(summary, "request canceled") != 1 {
+		t.Errorf("cancellation transport duplicated in summary: %q", summary)
+	}
+}
+
+func codexWSSideBody(userID string, messages string) string {
+	return `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"metadata":{"user_id":"` + userID + `"},"messages":[` + messages + `]}`
+}
+
+func codexWSSideUser(text string) string { return `{"role":"user","content":"` + text + `"}` }
+
+func codexWSSideAssistant(text string) string { return `{"role":"assistant","content":"` + text + `"}` }
+
+// A background request of the client (a short fixed message after the same
+// history) answered on the websocket replaces its chain; once ccgp has seen
+// that, requests ending in the message go over HTTP and the conversation's
+// chain survives them.
+func TestCodexWebsocketBackgroundRequestsGoOverHTTPOnceLearned(t *testing.T) {
+	var frames, posts atomic.Int32
+	answers := []string{"a1", "s1", "a2", "a3"}
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			posts.Add(1)
+			okStream(w)
+			return
+		}
+		conn := acceptCodexWSTest(t, w, r)
+		if conn == nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		for _, answer := range answers {
+			readCodexWSTestFrame(t, conn)
+			id := "side-response-" + answer
+			frames.Add(1)
+			writeCodexWSTestEvents(t, conn,
+				`{"type":"response.created","response":{"id":"`+id+`"}}`,
+				`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"`+answer+`"}]}}`,
+				`{"type":"response.completed","response":{"id":"`+id+`"}}`)
+		}
+	})
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	post := func(messages string) {
+		t.Helper()
+		if status, body := h.post(t, codexWSSideBody("side-session", messages)); status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+			t.Fatalf("status %d, body %q", status, body)
+		}
+	}
+	main, a1, side := codexWSSideUser("main question"), codexWSSideAssistant("a1"), codexWSSideUser("background template")
+
+	post(main)
+	post(strings.Join([]string{main, a1, side}, ","))
+	post(strings.Join([]string{main, a1, codexWSSideUser("real next")}, ","))
+	if frames.Load() != 3 || posts.Load() != 0 {
+		t.Fatalf("before learning: %d websocket frames and %d HTTP posts, want 3 and 0", frames.Load(), posts.Load())
+	}
+	if !strings.Contains(h.stream.String(), "requests ending in it go over HTTP from now on") {
+		t.Errorf("the learned message was not announced: %q", h.stream.String())
+	}
+
+	post(strings.Join([]string{main, a1, codexWSSideUser("real next"), codexWSSideAssistant("a2"), side}, ","))
+	if frames.Load() != 3 || posts.Load() != 1 {
+		t.Fatalf("background request: %d websocket frames and %d HTTP posts, want 3 and 1", frames.Load(), posts.Load())
+	}
+	if !strings.Contains(h.access.String(), "transport http (side request)") {
+		t.Errorf("access log lacks the side request note: %q", h.access.String())
+	}
+	// The line names the conversation and agent and the size, so the cost is told per agent.
+	if !regexp.MustCompile(`transport http \(side request\)[^\n]*\| conv [0-9a-f]{6}\.[0-9a-f]{4} \| request \d`).MatchString(h.access.String()) {
+		t.Errorf("side request line lacks conv and size: %q", h.access.String())
+	}
+	var stats strings.Builder
+	wsh.WriteCodexWebsocketStats(&stats, time.Now())
+	if !strings.Contains(stats.String(), "1 background request sent over HTTP") {
+		t.Errorf("periodic line = %q", stats.String())
+	}
+
+	// The next request keeps the message, with a reply: it was an ordinary turn,
+	// so it is forgotten and the request goes on the websocket.
+	post(strings.Join([]string{main, a1, codexWSSideUser("real next"), codexWSSideAssistant("a2"), side, codexWSSideAssistant("r"), codexWSSideUser("go on")}, ","))
+	if frames.Load() != 4 || posts.Load() != 1 {
+		t.Fatalf("after the ordinary turn: %d websocket frames and %d HTTP posts, want 4 and 1", frames.Load(), posts.Load())
+	}
+	if !regexp.MustCompile(`upstream websocket \[codex\] conv [0-9a-f]{6}\.[0-9a-f]{4}: a user message of \d+ B taken for a background request's stayed in the next request, with its reply \(an ordinary turn\); it is no longer taken for one \(1 request had gone over HTTP for it\)`).MatchString(h.stream.String()) {
+		t.Errorf("the forgotten message was not announced: %q", h.stream.String())
+	}
+	stats.Reset()
+	wsh.WriteCodexWebsocketStats(&stats, time.Now())
+	if !strings.Contains(stats.String(), "1 message taken for a background request's found to be an ordinary turn's") {
+		t.Errorf("periodic line = %q", stats.String())
+	}
+}
+
+// The subagents of a conversation share its cache key, system prompt and tools;
+// each keeps its own websocket, so one does not replace the other's chain.
+func TestCodexWebsocketAgentsOfOneConversationHaveTheirOwnConnection(t *testing.T) {
+	var mu sync.Mutex
+	var conns atomic.Int32
+	var previous []string
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn := acceptCodexWSTest(t, w, r)
+		if conn == nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		id := conns.Add(1)
+		for exchange := 0; exchange < 2; exchange++ {
+			frame := readCodexWSTestFrame(t, conn)
+			var payload struct {
+				Previous string `json:"previous_response_id"`
+			}
+			_ = json.Unmarshal(frame, &payload)
+			mu.Lock()
+			previous = append(previous, payload.Previous)
+			mu.Unlock()
+			responseID := fmt.Sprintf("agent-%d-%d", id, exchange)
+			writeCodexWSTestEvents(t, conn,
+				`{"type":"response.created","response":{"id":"`+responseID+`"}}`,
+				`{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"r"}]}}`,
+				`{"type":"response.completed","response":{"id":"`+responseID+`"}}`)
+		}
+	})
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	post := func(messages ...string) {
+		t.Helper()
+		if status, body := h.post(t, codexWSSideBody("agents-session", strings.Join(messages, ","))); status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+			t.Fatalf("status %d, body %q", status, body)
+		}
+	}
+	taskA, taskB, reply := codexWSSideUser("task of agent A"), codexWSSideUser("task of agent B"), codexWSSideAssistant("r")
+	post(taskA)
+	post(taskB)
+	post(taskA, reply, codexWSSideUser("more for A"))
+	post(taskB, reply, codexWSSideUser("more for B"))
+
+	mu.Lock()
+	got := append([]string(nil), previous...)
+	mu.Unlock()
+	if want := []string{"", "", "agent-1-0", "agent-2-0"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("previous_response_id of the frames = %q, want %q (full, full, then a delta on each agent's own connection)", got, want)
+	}
+	if conns.Load() != 2 {
+		t.Errorf("handshakes = %d, want one per agent", conns.Load())
+	}
+	tags := regexp.MustCompile(`conv ([0-9a-f]{6})\.([0-9a-f]{4})`).FindAllStringSubmatch(h.access.String(), -1)
+	if len(tags) != 4 || tags[0][1] != tags[1][1] || tags[0][2] == tags[1][2] || tags[0][2] != tags[2][2] || tags[1][2] != tags[3][2] {
+		t.Errorf("conversation tags in the access log = %q, want one thread and two agent tags", tags)
+	}
+}
+
+func okStream(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	for _, e := range []string{
+		`{"type":"response.created","response":{"id":"r"}}`,
+		`{"type":"response.completed","response":{"id":"r","usage":{"input_tokens":1,"output_tokens":1}}}`,
+	} {
+		_, _ = w.Write([]byte("data: " + e + "\n\n"))
+	}
+}
+
+func parseStreamEvents(body string) []streamEvent {
+	var events []streamEvent
+	for _, eventText := range strings.Split(body, "\n\n") {
+		var event streamEvent
+		var data string
+		for _, line := range strings.Split(eventText, "\n") {
+			if strings.HasPrefix(line, "event: ") {
+				event.name = strings.TrimPrefix(line, "event: ")
+			} else if strings.HasPrefix(line, "data: ") {
+				data = strings.TrimPrefix(line, "data: ")
+			}
+		}
+		if event.name != "" && data != "" {
+			if err := json.Unmarshal([]byte(data), &event.data); err == nil {
+				events = append(events, event)
+			}
+		}
+	}
+	return events
+}
+
+type streamEvent struct {
+	name string
+	data map[string]interface{}
 }

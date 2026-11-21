@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -16,6 +17,81 @@ import (
 
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 )
+
+func TestStreamOpenAIResponseStopsAfterContentWriterFailure(t *testing.T) {
+	const firstText = "FIRST_CONTENT_DELTA_SENTINEL"
+	writeErr := errors.New("client write failed")
+
+	for _, tc := range []struct {
+		name       string
+		bufferSize int
+		firstText  string
+	}{
+		{
+			name:       "small buffered flush",
+			bufferSize: 4096,
+			firstText:  firstText,
+		},
+		{
+			name:       "large content direct write",
+			bufferSize: 1,
+			firstText:  firstText + strings.Repeat("x", 8192),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &disconnectChunkReader{chunks: [][]byte{
+				[]byte(fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", tc.firstText)),
+				[]byte("data: {\"choices\":[{\"delta\":{\"content\":\"second delta\"}}]}\n\n"),
+				[]byte("data: [DONE]\n\n"),
+			}}
+			body := &disconnectTrackingBody{Reader: reader}
+			resp := &http.Response{Body: body}
+			ctx, cancel := context.WithCancel(context.Background())
+			writer := &sentinelArmedWriter{sentinel: firstText, failErr: writeErr}
+
+			err := streamOpenAIResponse(bufio.NewWriterSize(writer, tc.bufferSize), resp, "test-model", &config.Config{}, time.Now(), cancel)
+			if !errors.Is(err, writeErr) {
+				t.Fatalf("streamOpenAIResponse() error = %v, want %v", err, writeErr)
+			}
+			if !body.closed {
+				t.Error("response body was not closed after writer failure")
+			}
+			if !errors.Is(ctx.Err(), context.Canceled) {
+				t.Errorf("context error = %v, want context.Canceled", ctx.Err())
+			}
+			if reader.reads != 2 {
+				t.Errorf("upstream Read calls = %d, want exactly 2 (no read after writer failure)", reader.reads)
+			}
+			if got := writer.output.String(); !strings.Contains(got, firstText) {
+				t.Errorf("successfully delivered output does not contain first content sentinel %q", firstText)
+			}
+			if writer.failedWrites != 1 {
+				t.Errorf("failed writer calls = %d, want 1", writer.failedWrites)
+			}
+			if tc.name == "large content direct write" && len(tc.firstText) <= tc.bufferSize {
+				t.Fatalf("large content length = %d, want it to exceed bufio buffer size %d", len(tc.firstText), tc.bufferSize)
+			}
+		})
+	}
+}
+
+type disconnectChunkReader struct {
+	chunks [][]byte
+	reads  int
+}
+
+func (r *disconnectChunkReader) Read(p []byte) (int, error) {
+	r.reads++
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	chunk := r.chunks[0]
+	if len(p) < len(chunk) {
+		return 0, fmt.Errorf("test reader buffer (%d) is smaller than SSE chunk (%d)", len(p), len(chunk))
+	}
+	r.chunks = r.chunks[1:]
+	return copy(p, chunk), nil
+}
 
 type disconnectTrackingBody struct {
 	io.Reader

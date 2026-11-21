@@ -2,10 +2,9 @@ package chat
 
 import (
 	"bufio"
-	"context"
+	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,299 +20,6 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server/shared"
 	"github.com/gofiber/fiber/v2"
 )
-
-// TestMaxTokensParameterErrorDetection tests the error detection logic for parameter errors
-func TestMaxTokensParameterErrorDetection(t *testing.T) {
-	tests := []struct {
-		name         string
-		errorMsg     string
-		shouldDetect bool
-		description  string
-	}{
-		{
-			name:         "max_completion_tokens unsupported",
-			errorMsg:     "Error: unsupported parameter 'max_completion_tokens'",
-			shouldDetect: true,
-			description:  "Should detect unsupported max_completion_tokens",
-		},
-		{
-			name:         "max_tokens invalid",
-			errorMsg:     "invalid parameter: max_tokens not supported for this model",
-			shouldDetect: true,
-			description:  "Should detect invalid max_tokens",
-		},
-		{
-			name:         "parameter error lowercase",
-			errorMsg:     "parameter 'max_completion_tokens' is not supported",
-			shouldDetect: true,
-			description:  "Should handle lowercase parameter errors",
-		},
-		{
-			name:         "OpenWebUI style error",
-			errorMsg:     "500: 'max_completion_tokens' is not a valid OpenAI parameter",
-			shouldDetect: true,
-			description:  "Should detect OpenWebUI style errors",
-		},
-		{
-			name:         "unrelated error",
-			errorMsg:     "Authentication failed",
-			shouldDetect: false,
-			description:  "Should not detect unrelated errors",
-		},
-		{
-			name:         "timeout error",
-			errorMsg:     "request timeout",
-			shouldDetect: false,
-			description:  "Should not detect timeout errors",
-		},
-		{
-			name:         "empty error message",
-			errorMsg:     "",
-			shouldDetect: false,
-			description:  "Should handle empty error messages",
-		},
-		{
-			name:         "wrong parameter name",
-			errorMsg:     "unsupported parameter 'max_input_tokens'",
-			shouldDetect: false,
-			description:  "Should not detect errors for wrong parameters",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isMaxTokensParameterError(tt.errorMsg)
-			if result != tt.shouldDetect {
-				t.Errorf("%s: got %v, want %v", tt.description, result, tt.shouldDetect)
-			}
-		})
-	}
-}
-
-func TestModelCapabilityCacheStructure(t *testing.T) {
-	scope := t.Name() + "/" + t.TempDir()
-	key := config.CacheKey{
-		BaseURL: "https://api.openai.com/v1/" + scope,
-		Model:   "gpt-5",
-	}
-	reconstructed := config.CacheKey{
-		BaseURL: "https://api.openai.com/v1/" + scope,
-		Model:   "gpt-5",
-	}
-	otherProvider := config.CacheKey{
-		BaseURL: "https://openrouter.ai/api/v1/" + scope,
-		Model:   "gpt-5",
-	}
-
-	want := &config.ModelCapabilities{UsesMaxCompletionTokens: true}
-	config.SetModelCapabilities(key, want)
-	got := config.GetModelCapabilities(reconstructed)
-	if got == nil {
-		t.Fatal("same provider and model should retrieve the stored cache entry")
-	}
-	if !got.UsesMaxCompletionTokens {
-		t.Fatal("retrieved cache entry has the wrong capability")
-	}
-	if got := config.GetModelCapabilities(otherProvider); got != nil {
-		t.Fatalf("different provider unexpectedly retrieved cache entry: %+v", got)
-	}
-}
-
-func TestCacheHitAndMiss(t *testing.T) {
-	scope := t.Name() + "/" + t.TempDir()
-	key := config.CacheKey{
-		BaseURL: "https://api.openai.com/v1/" + scope,
-		Model:   "gpt-5",
-	}
-
-	if caps := config.GetModelCapabilities(key); caps != nil {
-		t.Fatalf("new cache key unexpectedly hit: %+v", caps)
-	}
-
-	want := &config.ModelCapabilities{UsesMaxCompletionTokens: true}
-	config.SetModelCapabilities(key, want)
-
-	got := config.GetModelCapabilities(key)
-	if got == nil {
-		t.Fatal("cache should hit after setting capabilities")
-	}
-	if !got.UsesMaxCompletionTokens {
-		t.Fatalf("cached capability = %v, want true", got.UsesMaxCompletionTokens)
-	}
-}
-
-func TestPerModelPerProviderScoping(t *testing.T) {
-	scope := t.Name() + "/" + t.TempDir()
-	providerA := "https://api.openai.com/v1/" + scope
-	providerB := "https://openrouter.ai/api/v1/" + scope
-	entries := []struct {
-		key   config.CacheKey
-		value bool
-	}{
-		{config.CacheKey{BaseURL: providerA, Model: "shared-model"}, true},
-		{config.CacheKey{BaseURL: providerB, Model: "shared-model"}, false},
-		{config.CacheKey{BaseURL: providerA, Model: "different-model"}, false},
-	}
-
-	for _, entry := range entries {
-		config.SetModelCapabilities(entry.key, &config.ModelCapabilities{
-			UsesMaxCompletionTokens: entry.value,
-		})
-	}
-	for _, entry := range entries {
-		got := config.GetModelCapabilities(entry.key)
-		if got == nil {
-			t.Errorf("cache miss for provider %q, model %q", entry.key.BaseURL, entry.key.Model)
-			continue
-		}
-		if got.UsesMaxCompletionTokens != entry.value {
-			t.Errorf("provider %q, model %q capability = %v, want %v",
-				entry.key.BaseURL, entry.key.Model, got.UsesMaxCompletionTokens, entry.value)
-		}
-	}
-}
-
-func TestCacheConcurrency(t *testing.T) {
-	const workers, iterations = 10, 100
-	scope := t.Name() + "/" + t.TempDir()
-	keys := make([]config.CacheKey, workers)
-	wants := make([]bool, workers)
-	for i := range keys {
-		keys[i] = config.CacheKey{
-			BaseURL: "https://api.openai.com/v1/" + scope,
-			Model:   fmt.Sprintf("model-%d", i),
-		}
-		wants[i] = i%2 == 0
-	}
-
-	start := make(chan struct{})
-	var wg sync.WaitGroup
-	errors := make(chan string, workers*iterations)
-	for i := 0; i < workers; i++ {
-		wg.Add(2)
-		go func(id int) {
-			defer wg.Done()
-			<-start
-			for j := 0; j < iterations; j++ {
-				// Each call publishes a fresh immutable value.
-				config.SetModelCapabilities(keys[id], &config.ModelCapabilities{
-					UsesMaxCompletionTokens: wants[id],
-				})
-			}
-		}(i)
-		go func(id int) {
-			defer wg.Done()
-			<-start
-			for j := 0; j < iterations; j++ {
-				got := config.GetModelCapabilities(keys[id])
-				if got == nil {
-					continue // The corresponding writer may not have published yet.
-				}
-				if got.UsesMaxCompletionTokens != wants[id] {
-					errors <- fmt.Sprintf("model %q capability = %v, want %v",
-						keys[id].Model, got.UsesMaxCompletionTokens, wants[id])
-				}
-			}
-		}(i)
-	}
-	close(start)
-	wg.Wait()
-	close(errors)
-	for err := range errors {
-		t.Error(err)
-	}
-
-	for i, key := range keys {
-		got := config.GetModelCapabilities(key)
-		if got == nil {
-			t.Errorf("no final cache value for model %q", key.Model)
-			continue
-		}
-		if got.UsesMaxCompletionTokens != wants[i] {
-			t.Errorf("final model %q capability = %v, want %v", key.Model, got.UsesMaxCompletionTokens, wants[i])
-		}
-	}
-}
-
-func TestCacheTimestampTracking(t *testing.T) {
-	scope := t.Name() + "/" + t.TempDir()
-	key := config.CacheKey{
-		BaseURL: "https://api.openai.com/v1/" + scope,
-		Model:   "gpt-5",
-	}
-	ancient := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
-
-	config.SetModelCapabilities(key, &config.ModelCapabilities{
-		UsesMaxCompletionTokens: true,
-		LastChecked:             ancient,
-	})
-	previous := config.GetModelCapabilities(key)
-	if previous == nil {
-		t.Fatal("cache entry missing after initial set")
-	}
-	previousChecked := previous.LastChecked
-
-	before := time.Now()
-	config.SetModelCapabilities(key, &config.ModelCapabilities{
-		UsesMaxCompletionTokens: false,
-		LastChecked:             ancient,
-	})
-	after := time.Now()
-	got := config.GetModelCapabilities(key)
-	if got == nil {
-		t.Fatal("cache entry missing after replacement")
-	}
-	if got.UsesMaxCompletionTokens {
-		t.Fatal("replacement did not store the new capability value")
-	}
-	if got.LastChecked.Before(before) || got.LastChecked.After(after) {
-		t.Errorf("replacement LastChecked = %v, want between %v and %v", got.LastChecked, before, after)
-	}
-	if got.LastChecked.Before(previousChecked) {
-		t.Errorf("replacement LastChecked = %v, want not earlier than prior value %v", got.LastChecked, previousChecked)
-	}
-}
-
-// TestErrorDetectionBroadMatching tests broad keyword matching for various error formats
-func TestErrorDetectionBroadMatching(t *testing.T) {
-	// These should ALL match: require both parameter indicator AND parameter name
-	shouldMatch := []string{
-		"parameter 'max_completion_tokens'",
-		"Parameter 'max_completion_tokens'",
-		"parameter max_tokens",
-		"invalid parameter max_completion_tokens",
-		"unsupported parameter max_tokens",
-		"Parameter 'MAX_COMPLETION_TOKENS' is invalid",
-		"UNSUPPORTED parameter max_tokens",
-		"OpenAI error: parameter max_completion_tokens unsupported",
-		"OpenWebUI: parameter 'max_completion_tokens' not supported",
-		"LiteLLM error: invalid parameter max_tokens",
-		"Invalid max_tokens parameter",
-		"Unsupported max_completion_tokens",
-	}
-
-	for _, pattern := range shouldMatch {
-		if !isMaxTokensParameterError(pattern) {
-			t.Errorf("Should detect parameter error: %s", pattern)
-		}
-	}
-
-	// These should NOT match: missing either indicator or parameter name
-	shouldNotMatch := []string{
-		"parameter 'max_input_tokens'", // wrong parameter
-		"parameter mismatch",           // no token param
-		"max_tokens is great",          // no error indicator
-		"invalid request",              // no token param
-		"unsupported feature",          // no token param
-		"",                             // empty
-	}
-
-	for _, pattern := range shouldNotMatch {
-		if isMaxTokensParameterError(pattern) {
-			t.Errorf("Should NOT detect parameter error: %s", pattern)
-		}
-	}
-}
 
 func compatConfig(upstreamURL string, efforts map[string]string) *config.Config {
 	return &config.Config{
@@ -707,77 +413,297 @@ func TestCountTokensEstimatesFromTheRequest(t *testing.T) {
 	}
 }
 
-func TestStreamOpenAIResponseStopsAfterContentWriterFailure(t *testing.T) {
-	const firstText = "FIRST_CONTENT_DELTA_SENTINEL"
-	writeErr := errors.New("client write failed")
+// syncBuf is a log sink the stream-writer goroutine and the test share.
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
 
-	for _, tc := range []struct {
-		name       string
-		bufferSize int
-		firstText  string
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestOpenAIUpstreamErrorsPreserveStatusAndSafeHeaders(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		for _, tc := range []struct {
+			status int
+			typ    string
+		}{
+			{http.StatusTooManyRequests, "rate_limit_error"},
+			{http.StatusServiceUnavailable, "api_error"},
+			{http.StatusBadRequest, "invalid_request_error"},
+		} {
+			t.Run(strings.Join([]string{http.StatusText(tc.status), map[bool]string{true: "stream", false: "nonstream"}[streaming]}, "/"), func(t *testing.T) {
+				const upstreamMessage = "upstream rejected the request"
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", "60")
+					w.Header().Set("X-RateLimit-Remaining-Requests", "0")
+					w.Header().Set("X-Private-Upstream", "do-not-forward")
+					w.Header().Set("Authorization", "Bearer upstream-secret")
+					w.Header().Set("Content-Type", "text/plain")
+					w.WriteHeader(tc.status)
+					_, _ = io.WriteString(w, `{"error":{"message":"`+upstreamMessage+`","type":"upstream_error"}}`)
+				}))
+				defer upstream.Close()
+
+				oldTransport := rt.OpenAITransport
+				rt.OpenAITransport = connpool.NewRouter(0, 1, 1, nil)
+				t.Cleanup(func() { rt.OpenAITransport = oldTransport })
+				cfg := &config.Config{OpenAIBaseURL: upstream.URL, OpenAIAPIKey: "openai-secret", AnthropicAPIKey: "anthropic-secret"}
+				app := fiber.New()
+				app.Post("/v1/messages", func(c *fiber.Ctx) error { return HandleMessages(c, cfg) })
+				requestBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}],"stream":` + map[bool]string{true: "true", false: "false"}[streaming] + `}`
+				req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(requestBody))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("x-api-key", "anthropic-secret")
+				resp, err := app.Test(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer resp.Body.Close()
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if resp.StatusCode != tc.status {
+					t.Fatalf("status = %d, want %d; body=%s", resp.StatusCode, tc.status, body)
+				}
+				var payload struct {
+					Type  string `json:"type"`
+					Error struct {
+						Type    string `json:"type"`
+						Message string `json:"message"`
+					} `json:"error"`
+				}
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Fatalf("response is not JSON: %v: %s", err, body)
+				}
+				if payload.Type != "error" || payload.Error.Type != tc.typ || payload.Error.Message != upstreamMessage {
+					t.Errorf("error payload = %#v, want type=%q message=%q", payload, tc.typ, upstreamMessage)
+				}
+				if resp.Header.Get("Retry-After") != "60" || resp.Header.Get("X-RateLimit-Remaining-Requests") != "0" {
+					t.Errorf("rate headers = Retry-After %q, remaining %q", resp.Header.Get("Retry-After"), resp.Header.Get("X-RateLimit-Remaining-Requests"))
+				}
+				for _, key := range []string{"X-Private-Upstream", "Authorization", "Set-Cookie"} {
+					if got := resp.Header.Get(key); got != "" {
+						t.Errorf("sensitive/arbitrary header %s leaked: %q", key, got)
+					}
+				}
+				if got := resp.Header.Get("Content-Type"); got != "application/json" {
+					t.Errorf("response content type = %q, want application/json", got)
+				}
+			})
+		}
+	}
+}
+
+func TestOpenAIUpstreamErrorRedactsConfiguredSecretsAndCallToken(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"bad openai-secret anthropic-secret /call/secret-token/messages","type":"invalid_request_error"}}`)
+	}))
+	defer upstream.Close()
+	oldTransport := rt.OpenAITransport
+	rt.OpenAITransport = connpool.NewRouter(0, 1, 1, nil)
+	t.Cleanup(func() { rt.OpenAITransport = oldTransport })
+	cfg := &config.Config{OpenAIBaseURL: upstream.URL, OpenAIAPIKey: "openai-secret", AnthropicAPIKey: "anthropic-secret"}
+	app := fiber.New()
+	app.Post("/v1/messages", func(c *fiber.Ctx) error { return HandleMessages(c, cfg) })
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "anthropic-secret")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"openai-secret", "anthropic-secret", "secret-token"} {
+		if strings.Contains(string(body), secret) {
+			t.Errorf("response leaked %q: %s", secret, body)
+		}
+	}
+	if !strings.Contains(string(body), "/call/***/messages") {
+		t.Errorf("call token was not masked: %s", body)
+	}
+}
+
+func TestUpstreamErrorParts(t *testing.T) {
+	tests := []struct {
+		name, body, label, msg string
 	}{
-		{
-			name:       "small buffered flush",
-			bufferSize: 4096,
-			firstText:  firstText,
-		},
-		{
-			name:       "large content direct write",
-			bufferSize: 1,
-			firstText:  firstText + strings.Repeat("x", 8192),
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			reader := &disconnectChunkReader{chunks: [][]byte{
-				[]byte(fmt.Sprintf("data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", tc.firstText)),
-				[]byte("data: {\"choices\":[{\"delta\":{\"content\":\"second delta\"}}]}\n\n"),
-				[]byte("data: [DONE]\n\n"),
-			}}
-			body := &disconnectTrackingBody{Reader: reader}
-			resp := &http.Response{Body: body}
-			ctx, cancel := context.WithCancel(context.Background())
-			writer := &sentinelArmedWriter{sentinel: firstText, failErr: writeErr}
-
-			err := streamOpenAIResponse(bufio.NewWriterSize(writer, tc.bufferSize), resp, "test-model", &config.Config{}, time.Now(), cancel)
-			if !errors.Is(err, writeErr) {
-				t.Fatalf("streamOpenAIResponse() error = %v, want %v", err, writeErr)
-			}
-			if !body.closed {
-				t.Error("response body was not closed after writer failure")
-			}
-			if !errors.Is(ctx.Err(), context.Canceled) {
-				t.Errorf("context error = %v, want context.Canceled", ctx.Err())
-			}
-			if reader.reads != 2 {
-				t.Errorf("upstream Read calls = %d, want exactly 2 (no read after writer failure)", reader.reads)
-			}
-			if got := writer.output.String(); !strings.Contains(got, firstText) {
-				t.Errorf("successfully delivered output does not contain first content sentinel %q", firstText)
-			}
-			if writer.failedWrites != 1 {
-				t.Errorf("failed writer calls = %d, want 1", writer.failedWrites)
-			}
-			if tc.name == "large content direct write" && len(tc.firstText) <= tc.bufferSize {
-				t.Fatalf("large content length = %d, want it to exceed bufio buffer size %d", len(tc.firstText), tc.bufferSize)
+		{"anthropic envelope", `{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`, "rate_limit_error", "slow down"},
+		{"z.ai: string code in error", `{"error":{"code":"1302","message":"Rate limit reached for requests"}}`, "1302", "Rate limit reached for requests"},
+		{"type and code together", `{"error":{"type":"overloaded_error","code":529,"message":"busy"}}`, "overloaded_error 529", "busy"},
+		{"numeric code, msg at the top", `{"code":1113,"msg":"insufficient balance","success":false}`, "1113", "insufficient balance"},
+		{"message at the top", `{"message":"nope"}`, "", "nope"},
+		{"error as a string", `{"error":"forbidden here"}`, "", "forbidden here"},
+		{"detail", `{"detail":"model not found"}`, "", "model not found"},
+		{"envelope only", `{"type":"error"}`, "", `{"type":"error"}`},
+		{"html page", `<html><head><title>Attention Required! | Cloudflare</title></head><body>blocked</body></html>`, "", "html error page: Attention Required! | Cloudflare"},
+		{"plain text", "upstream connect error", "", "upstream connect error"},
+		{"empty", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			label, msg := upstreamErrorParts([]byte(tt.body))
+			if label != tt.label || msg != tt.msg {
+				t.Errorf("label = %q, message = %q; want %q, %q", label, msg, tt.label, tt.msg)
 			}
 		})
 	}
 }
 
-type disconnectChunkReader struct {
-	chunks [][]byte
-	reads  int
+func TestUpstreamErrorText(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", "30")
+	h.Set("X-Ratelimit-Remaining-Requests", "0")
+	h.Set("X-Request-Id", "req-1")
+	body := []byte(`{"error":{"code":"1302","message":"Rate limit reached"}}`)
+
+	got := upstreamErrorText(429, h, body)
+	for _, want := range []string{"1302: Rate limit reached", "retry-after=30", "x-ratelimit-remaining-requests=0", "x-request-id=req-1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("429 text lacks %q: %q", want, got)
+		}
+	}
+	// The limit headers say something about a limit only; a bad request gets the reason and the id.
+	got = upstreamErrorText(400, h, []byte(`{"error":{"type":"invalid_request_error","message":"bad field"}}`))
+	if !strings.Contains(got, "invalid_request_error: bad field") || !strings.Contains(got, "x-request-id=req-1") {
+		t.Errorf("400 text = %q", got)
+	}
+	if strings.Contains(got, "retry-after") || strings.Contains(got, "ratelimit") {
+		t.Errorf("a 400 carries limit headers: %q", got)
+	}
+	if got = upstreamErrorText(503, h, []byte(`{"error":{"message":"overloaded"}}`)); !strings.Contains(got, "retry-after=30") {
+		t.Errorf("503 text lacks Retry-After: %q", got)
+	}
+	// Nothing to say is nothing.
+	if got = upstreamErrorText(500, http.Header{}, nil); got != "" {
+		t.Errorf("empty reply gave %q", got)
+	}
 }
 
-func (r *disconnectChunkReader) Read(p []byte) (int, error) {
-	r.reads++
-	if len(r.chunks) == 0 {
-		return 0, io.EOF
+// P0: whatever the endpoint echoes of the credential, the log does not keep it.
+func TestUpstreamErrorTextHidesKeys(t *testing.T) {
+	for _, msg := range []string{
+		"Incorrect API key provided: sk-proj-abcdef1234567890XYZ",
+		"invalid Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+		"bad key 0123456789abcdef0123456789abcdef.AbCdEfGh12345678 for this account",
+		`request failed: {"api_key": "supersecretvalue99"}`,
+		"token=abcdef123456 rejected",
+	} {
+		body := []byte(`{"error":{"message":` + jsonString(msg) + `}}`)
+		got := upstreamErrorText(401, http.Header{}, body)
+		for _, secret := range []string{"sk-proj-abcdef1234567890XYZ", "eyJhbGciOiJIUzI1NiJ9", "0123456789abcdef0123456789abcdef", "AbCdEfGh12345678", "supersecretvalue99", "abcdef123456"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("%q leaked %q: %q", msg, secret, got)
+			}
+		}
+		if !strings.Contains(got, "***") {
+			t.Errorf("nothing was hidden in %q: %q", msg, got)
+		}
 	}
-	chunk := r.chunks[0]
-	if len(p) < len(chunk) {
-		return 0, fmt.Errorf("test reader buffer (%d) is smaller than SSE chunk (%d)", len(p), len(chunk))
+	// Ordinary words are left as they are.
+	plain := "model glm-5.3-flash is not available, token limit reached, try again"
+	if got := redactSecrets(plain); got != plain {
+		t.Errorf("redactSecrets changed %q to %q", plain, got)
 	}
-	r.chunks = r.chunks[1:]
-	return copy(p, chunk), nil
+}
+
+func jsonString(s string) string {
+	b := strings.Builder{}
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"', '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// P0: the log line is one line of a bounded size, however the endpoint answers.
+func TestUpstreamErrorTextIsOneBoundedLine(t *testing.T) {
+	long := strings.Repeat("a long and rambling reason\n\t", 200)
+	got := upstreamErrorText(500, http.Header{}, []byte(`{"error":{"message":`+jsonString(long)+`}}`))
+	if strings.ContainsAny(got, "\r\n\t") {
+		t.Errorf("not one line: %q", got)
+	}
+	if len(got) > maxUpstreamMsg+len("…")+16 {
+		t.Errorf("%d bytes: %q", len(got), got)
+	}
+
+	html := "<html><head><title>Blocked</title></head><body>" + strings.Repeat("<p>markup</p>\n", 500) + "</body></html>"
+	got = upstreamErrorText(403, http.Header{}, []byte(html))
+	if strings.Contains(got, "<p>") || strings.Contains(got, "\n") || !strings.Contains(got, "Blocked") {
+		t.Errorf("an HTML page is shown as markup: %q", got)
+	}
+}
+
+// P0: the reason reaches the request's line for a refusal, and the client still gets the reply as it came.
+func TestZaiRefusalLineGivesTheReason(t *testing.T) {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "42")
+		w.Header().Set("X-Request-Id", "req-zai-1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"error":{"code":"1302","message":"Rate limit reached for requests, key sk-live-abcdef123456"}}`)
+	}))
+	defer refusing.Close()
+
+	lines := zaiLines(t, refusing.URL, 1)
+	line := lines[0]
+	for _, want := range []string{" 429 - ", "claude-sonnet-5-5 -> glm-5.3-flash: 1302: Rate limit reached for requests", "retry-after=42", "x-request-id=req-zai-1", " | conn new (dns "} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the line lacks %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "sk-live-abcdef123456") {
+		t.Errorf("a key is in the log:\n%s", line)
+	}
+
+	// The client's reply is untouched.
+	resp, err := compatApp(compatConfig(refusing.URL, nil)).Test(httptest.NewRequest("POST", "/v1/messages", strings.NewReader(sampleRequest)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 429 || resp.Header.Get("Retry-After") != "42" || !strings.Contains(string(body), "sk-live-abcdef123456") {
+		t.Errorf("the client's reply changed: %d %q %s", resp.StatusCode, resp.Header.Get("Retry-After"), body)
+	}
+}
+
+// A successful request has no reason on its line, and a refused count_tokens (answered with an
+// estimate, status 200) neither.
+func TestZaiLinesWithoutARefusalHaveNoReason(t *testing.T) {
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"type":"message"}`)
+	}))
+	defer ok.Close()
+	if line := zaiLines(t, ok.URL, 1)[0]; strings.Contains(line, "glm-5.3-flash:") {
+		t.Errorf("a reason on a good line: %q", line)
+	}
 }

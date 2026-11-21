@@ -3,12 +3,12 @@ package tui
 import (
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/cli"
+	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/common"
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/core"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
@@ -16,23 +16,149 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func (h *tui) lacks(unwanted ...string) {
-	h.t.Helper()
-	view := spaces.ReplaceAllString(h.view(), " ")
-	for _, w := range unwanted {
-		if strings.Contains(view, spaces.ReplaceAllString(w, " ")) {
-			h.t.Errorf("the screen has %q:\n%s", w, h.view())
-		}
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func profileByName(t *testing.T, cfg *config.Config, name string) *config.Profile {
+	t.Helper()
+	pf, ok := cfg.Profiles[name]
+	if !ok {
+		t.Fatalf("profile %q missing after the edit (have %v)", name, common.Names(cfg.Profiles))
+	}
+	return pf
+}
+
+// The proxy of a provider is edited on its screen, and a profile says which
+// level its own proxy comes from.
+func TestTUIProviderProxy(t *testing.T) {
+	h := newTUI(t, uiConfig)
+	h.press("2", "3", "3") // Providers, zai, proxy
+	if got := string(h.input().text); got != "" {
+		t.Errorf("the field starts with %q", got)
+	}
+	h.typ("http://corp:3128")
+	h.press("enter")
+	h.has("proxy http://corp:3128 (its own)", "3 proxy http://corp:3128", "config.ktav updated")
+	if pr := h.config().Providers["zai"]; pr.Proxy != "http://corp:3128" {
+		t.Errorf("provider proxy = %q", pr.Proxy)
+	}
+
+	// The profile of the provider goes through it, until it has a proxy of its own.
+	h.press("esc", "esc", "1", "3") // main menu, Profiles, zai
+	h.has("proxy http://corp:3128 (of provider zai)")
+	h.press("4")
+	h.typ("socks5://own:1080")
+	h.press("enter")
+	h.has("proxy socks5://own:1080 (its own)")
+	h.press("4")
+	h.replace("none")
+	h.press("enter")
+	h.has("proxy none (its own)")
+	h.press("4", "ctrl+u", "enter") // empty: the provider's proxy again
+	h.has("proxy http://corp:3128 (of provider zai)")
+
+	// none for the provider: direct; empty: the global proxy again.
+	h.press("esc", "esc", "2", "3", "3")
+	h.replace("none")
+	h.press("enter")
+	h.has("proxy none (its own)")
+	h.press("3", "ctrl+u", "enter")
+	h.has("proxy global (")
+	if pr := h.config().Providers["zai"]; pr.Proxy != "" {
+		t.Errorf("provider proxy after emptying = %q", pr.Proxy)
+	}
+
+	// A wrong proxy changes nothing.
+	before := h.text()
+	h.press("3")
+	h.typ("ftp://nope")
+	h.press("enter")
+	h.has("error:")
+	h.press("esc")
+	if h.text() != before {
+		t.Error("a wrong proxy changed the config")
 	}
 }
 
-func (h *tui) input() *input {
-	h.t.Helper()
-	in, ok := h.a.top().(*input)
-	if !ok {
-		h.t.Fatalf("the top screen is not an input:\n%s", h.view())
+// codex has no base_url to show but a proxy and peak hours all the same; a
+// Claude provider has no proxy at all.
+func TestTUIProviderProxyOfOtherKinds(t *testing.T) {
+	h := newTUI(t, uiConfig)
+	h.press("2", "1", "2") // Providers, codex, proxy
+	h.typ("socks5://127.0.0.1:1080")
+	h.press("enter")
+	h.has("Provider codex", "proxy socks5://127.0.0.1:1080 (its own)")
+	if pr := h.config().Providers["codex"]; pr.Proxy != "socks5://127.0.0.1:1080" {
+		t.Errorf("codex proxy = %q", pr.Proxy)
 	}
-	return in
+
+	h = newTUI(t, uiConfig)
+	h.press("2", "2")
+	h.has("Provider work", "type claude")
+	h.lacks("proxy")
+}
+
+// Profiles, sorted: codex, work, zai. Providers, sorted: codex, work, zai.
+const uiConfig = `listen.port: 60093
+
+providers: [
+    {
+        name: codex
+        type: codex
+    }
+    {
+        name: zai
+        type: anthropic_compat
+        base_url: https://api.z.ai/api/anthropic
+    }
+    {
+        name: work
+        type: claude
+    }
+]
+
+profiles: [
+    {
+        name: codex
+        provider: codex
+    }
+    {
+        name: zai
+        provider: zai
+        models: [
+            {
+                match: *
+                model: glm-5.3-flash
+                context_window: 1000000
+            }
+        ]
+    }
+    {
+        name: work
+        provider: work
+    }
+]
+`
+
+func newTUI(t *testing.T, cfgText string) *tui {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("CCGP_HOME", filepath.Join(root, "home"))
+	path := filepath.Join(root, "config.ktav")
+	if err := os.WriteFile(path, []byte(cfgText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.ConfigFileEnv, path)
+	h := &tui{t: t, cfgPath: path, claudeBase: filepath.Join(root, "claude"), store: creds.Store{Dir: filepath.Join(root, "creds")}}
+	a, err := newApp(h.store, h.claudeBase, func() time.Time { return peakNow })
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.run = h.fakeRun
+	h.a = a
+	return h
 }
 
 func TestTUIMainMenu(t *testing.T) {
@@ -715,125 +841,4 @@ func TestInteractiveCommandIsRegistered(t *testing.T) {
 	if inv, _ := cli.ParseInvocation(nil); inv.Cmd != nil {
 		t.Errorf("no arguments started a command: %+v", inv)
 	}
-}
-
-// cliOnly are the commands the interface does not have, and why.
-var cliOnly = map[string]string{
-	"--serve":       "runs the server in the foreground, which is the opposite of a menu; the interface starts and stops the background one",
-	"--completion":  "prints a script for the shell; there is no shell in a full-screen interface",
-	"--help":        "the interface shows its keys on every screen and each item says what it does",
-	"--interactive": "the interface itself",
-	"-i":            "the interface itself",
-}
-
-// feature ties the entries of the command line to the id paths of the
-// interface that do the same.
-type feature struct {
-	cli []string
-	tui []string
-}
-
-// peakAt are the two places where the peak hours of a provider are edited.
-var peakAt = []string{"peak/provider", "providers/provider/peak"}
-
-func under(prefixes []string, tail string) []string {
-	var out []string
-	for _, p := range prefixes {
-		out = append(out, p+"/"+tail)
-	}
-	return out
-}
-
-func backendKinds(prefix string) []string {
-	var out []string
-	for _, k := range []string{"codex", "codex_api", "anthropic_compat", "claude", "claude_api"} {
-		out = append(out, prefix+"/kind_"+k)
-	}
-	return out
-}
-
-func features() []feature {
-	f := []feature{
-		{[]string{"--profile list"}, []string{"profiles", "profiles/profile"}},
-		{[]string{"--profile add --like"}, []string{"profiles/add/add_like/name"}},
-		{[]string{"--profile add --provider"}, []string{"profiles/add/add_provider/name"}},
-		{[]string{"--profile add --type"}, append(backendKinds("profiles/add/add_type"), backendKinds("providers/add")...)},
-		{[]string{"--profile rm"}, []string{"profiles/profile/rm/rm_keep", "profiles/profile/rm/rm_purge"}},
-		{[]string{"--profile set default_model", "--profile unset default_model"}, []string{"profiles/profile/default_model"}},
-		{[]string{"--profile set context_window", "--profile unset context_window"}, []string{"profiles/profile/context_window"}},
-		{[]string{"--profile set compact_percent", "--profile unset compact_percent"}, []string{"profiles/profile/compact_percent"}},
-		{[]string{"--profile set provider"}, []string{"profiles/profile/move/provider"}},
-
-		{[]string{"--provider"}, []string{"providers", "providers/provider"}},
-		{[]string{"--provider set base_url", "--provider unset base_url"}, []string{"providers/provider/base_url", "profiles/profile/base_url"}},
-		{[]string{"--provider set api_key_env", "--provider unset api_key_env"}, []string{"providers/provider/api_key_env"}},
-
-		{[]string{"--connections"}, []string{"config"}},
-		{[]string{"--connections active"}, []string{"config/active"}},
-		{[]string{"--connections total"}, []string{"config/total"}},
-		{[]string{"--connections proxy"}, []string{"config/proxy"}},
-		{[]string{"--connections proxy provider"}, []string{"providers/provider/proxy"}},
-		{[]string{"--connections proxy profile"}, []string{"profiles/profile/proxy"}},
-
-		{[]string{"--speed"}, []string{"config/speed", "config/speed/profile", "config/speed/profile/family", "config/speed/profile/family/fast", "config/speed/profile/family/standard", "config/speed/profile/family/unset"}},
-		{[]string{"--peak"}, append([]string{"peak"}, peakAt...)},
-		{[]string{"--peak set"}, under(peakAt, "set")},
-		{[]string{"--peak add"}, under(peakAt, "add")},
-		{[]string{"--peak rm"}, under(peakAt, "rm/window")},
-		{[]string{"--peak tz"}, under(peakAt, "tz")},
-		{[]string{"--peak clear"}, under(peakAt, "clear")},
-		{[]string{"--peak pause"}, under(peakAt, "pause")},
-		{[]string{"--peak resume"}, under(peakAt, "resume")},
-
-		{[]string{"--models"}, []string{"models/show", "models/profile", "models/profile/show"}},
-		{[]string{"--models apply"}, []string{"models/apply", "models/profile/apply"}},
-		{[]string{"--which"}, []string{"models/profile/which"}},
-		{[]string{"--config reset"}, []string{"config/reset"}},
-
-		{[]string{"--login"}, []string{"providers/provider/login", "profiles/profile/login"}},
-		{[]string{"--login --device"}, []string{"providers/provider/login_device"}},
-		{[]string{"--logout"}, []string{"providers/provider/logout"}},
-
-		{[]string{"--send"}, []string{"sessions/send/name/name/copy"}},
-		{[]string{"--send --fork"}, []string{"sessions/send/name/name/fork", "sessions/send/name/name/forkforce"}},
-		{[]string{"--send --force"}, []string{"sessions/send/name/name/force"}},
-		{[]string{"--import"}, []string{"sessions/import/name/copy"}},
-		{[]string{"--import --fork"}, []string{"sessions/import/name/fork", "sessions/import/name/forkforce"}},
-		{[]string{"--import --force"}, []string{"sessions/import/name/force"}},
-		{[]string{"--export"}, []string{"sessions/export/name/copy"}},
-		{[]string{"--export --fork"}, []string{"sessions/export/name/fork", "sessions/export/name/forkforce"}},
-		{[]string{"--export --force"}, []string{"sessions/export/name/force"}},
-
-		{[]string{"--status"}, []string{"server/status"}},
-		{[]string{"--start"}, []string{"server/start"}},
-		{[]string{"--stop"}, []string{"server/stop"}},
-		{[]string{"--restart"}, []string{"server/restart"}},
-		{[]string{"--logs"}, []string{"server/logs"}},
-		{[]string{"--doctor"}, []string{"server/doctor"}},
-		{[]string{"--version"}, []string{"server/version"}},
-		{[]string{"--update --check"}, []string{"server/check_update"}},
-		{[]string{"--update"}, []string{"server/update"}},
-	}
-	return f
-}
-
-// cliEntries are the commands and their verbs, as "--peak tz".
-// needsVerb are the commands that do nothing without one.
-var needsVerb = map[string]bool{"--profile": true, "--config": true}
-
-func cliEntries() []string {
-	var out []string
-	for _, c := range cli.Commands() {
-		if c.Hidden {
-			continue
-		}
-		if !needsVerb[c.Name] {
-			out = append(out, c.Name)
-		}
-		for _, v := range c.Verbs {
-			out = append(out, c.Name+" "+v)
-		}
-	}
-	sort.Strings(out)
-	return out
 }

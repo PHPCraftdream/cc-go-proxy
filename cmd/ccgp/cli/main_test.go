@@ -3,26 +3,484 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/common"
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/core"
-	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/ops"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/angel"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/codex/catalog"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/preset"
 	"golang.org/x/crypto/x509roots/fallback/bundle"
 )
+
+func TestAngelServeArgs(t *testing.T) {
+	got := common.AngelServeArgs([]string{"-d"})
+	want := []string{"--serve", "-s", "-d"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("angelServeArgs = %q, want %q", got, want)
+	}
+}
+
+// Commands that only read state must not create the default config.
+func TestEnsureConfigPolicy(t *testing.T) {
+	noConfig := map[string]bool{
+		"--stop": true, "--status": true, "--config": true, "--logs": true, "--version": true, "--help": true,
+		"--completion": true, "--complete": true, "--doctor": true, "--update": true, "--speed": true,
+	}
+	for _, c := range Commands() {
+		if c.EnsureConfig == noConfig[c.Name] {
+			t.Errorf("%s: ensureConfig = %v", c.Name, c.EnsureConfig)
+		}
+	}
+}
+
+func loadTestConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// isolate points every default location at empty temp dirs, so a test sees
+// whether anything was written to the default layout, and clears CCGP_HOME and
+// CCGP_CONFIG (restored afterwards, whatever run() sets).
+func isolate(t *testing.T) (defaults string) {
+	t.Helper()
+	defaults = t.TempDir()
+	for _, k := range []string{"APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "HOME"} {
+		t.Setenv(k, defaults)
+	}
+	t.Setenv(home.EnvVar, "")
+	t.Setenv("CCGP_CONFIG", "")
+	t.Setenv("PROXY_TOKEN", "")
+	return defaults
+}
+
+// --home puts the config in that directory and nothing in the default one; the
+// variable is set so the background server started later finds the same home.
+func TestHomeFlagMovesTheConfig(t *testing.T) {
+	defaults := isolate(t)
+	dir := filepath.Join(t.TempDir(), "other")
+	if err := run([]string{"--home", dir, "--config", "reset"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "config.ktav"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "listen.port: 60093") || !strings.Contains(string(b), "listen.port: ") {
+		t.Errorf("a new home must get a port of its own:\n%.300s", b)
+	}
+	if home.Root() != dir {
+		t.Errorf("CCGP_HOME = %q, want %q", home.Root(), dir)
+	}
+	entries, _ := os.ReadDir(defaults)
+	if len(entries) != 0 {
+		t.Errorf("the default location was touched: %v", entries)
+	}
+}
+
+func TestHomeFlagWithEquals(t *testing.T) {
+	isolate(t)
+	dir := filepath.Join(t.TempDir(), "eq")
+	if err := run([]string{"--home=" + dir, "--config", "reset"}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(dir, "config.ktav")) {
+		t.Error("no config in the --home= directory")
+	}
+}
+
+// --local makes ./.ccgp, and a .gitignore in it keeps the secrets out of git.
+func TestLocalFlagMakesTheDirectoryHere(t *testing.T) {
+	isolate(t)
+	wd := t.TempDir()
+	t.Chdir(wd)
+	if err := run([]string{"--local", "--config", "reset"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"config.ktav", ".gitignore"} {
+		if !exists(filepath.Join(wd, ".ccgp", f)) {
+			t.Errorf(".ccgp/%s is missing", f)
+		}
+	}
+}
+
+// A project that has a .ccgp directory runs on it with no flag.
+func TestProjectDirectoryIsUsedWithoutAFlag(t *testing.T) {
+	defaults := isolate(t)
+	wd := t.TempDir()
+	t.Chdir(wd)
+	if err := os.Mkdir(filepath.Join(wd, ".ccgp"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"--config", "reset"}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(wd, ".ccgp", "config.ktav")) {
+		t.Error("the config was not written into ./.ccgp")
+	}
+	if entries, _ := os.ReadDir(defaults); len(entries) != 0 {
+		t.Errorf("the default location was touched: %v", entries)
+	}
+}
+
+// Without the directory and without a flag nothing changes: the default layout.
+func TestNoHomeKeepsTheDefaultLayout(t *testing.T) {
+	defaults := isolate(t)
+	t.Chdir(t.TempDir())
+	if err := run([]string{"--config", "reset"}); err != nil {
+		t.Fatal(err)
+	}
+	if home.Root() != "" {
+		t.Errorf("CCGP_HOME = %q", home.Root())
+	}
+	cfg, _ := home.Dir()
+	if !strings.HasPrefix(cfg, defaults) || !exists(filepath.Join(cfg, "config.ktav")) {
+		t.Errorf("config dir %q (default location %q)", cfg, defaults)
+	}
+}
+
+// Help, the version and completion never make the directory.
+func TestInfoCommandsDoNotCreateTheHome(t *testing.T) {
+	isolate(t)
+	wd := t.TempDir()
+	t.Chdir(wd)
+	for _, args := range [][]string{
+		{"--local", "--version"},
+		{"--local", "--help"},
+		{"--local"},
+		{"--local", "--status", "--help"},
+		{"--local", "--login", "-h"},
+		{"--local", "--complete", "ccgp", ""},
+	} {
+		if err := run(args); err != nil {
+			t.Errorf("%q: %v", args, err)
+		}
+		if exists(filepath.Join(wd, ".ccgp")) {
+			t.Fatalf("%q made ./.ccgp", args)
+		}
+	}
+}
+
+func TestHomeFlagErrors(t *testing.T) {
+	isolate(t)
+	for _, args := range [][]string{
+		{"--home"},
+		{"--home", "--status"},
+		{"--local", "--home", "x", "--version"},
+		{"--local", "--local", "--version"},
+	} {
+		if err := run(args); err == nil {
+			t.Errorf("run(%q) must fail", args)
+		}
+	}
+}
+
+func TestStatusShowsTheHome(t *testing.T) {
+	var b strings.Builder
+	if err := renderStatusText(&b, statusData{Home: "/p/.ccgp", LogFile: "/p/.ccgp/logs/ccgp.log"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(b.String(), "home:    /p/.ccgp\n") {
+		t.Errorf("status:\n%s", b.String())
+	}
+	b.Reset()
+	_ = renderStatusText(&b, statusData{})
+	if strings.Contains(b.String(), "home:") {
+		t.Errorf("the default layout prints no home line:\n%s", b.String())
+	}
+}
+
+// Config, secrets, Claude Code dirs and the log all follow the home.
+func TestEveryPathFollowsTheHome(t *testing.T) {
+	isolate(t)
+	check := func(name, got string, want ...string) {
+		t.Helper()
+		if w := filepath.Join(want...); got != w {
+			t.Errorf("%s = %q, want %q", name, got, w)
+		}
+	}
+	base := func() (cfg, cr, claude, log string) {
+		var err error
+		if cfg, err = config.DefaultConfigPath(); err != nil {
+			t.Fatal(err)
+		}
+		if cr, err = creds.DefaultDir(); err != nil {
+			t.Fatal(err)
+		}
+		if claude, err = common.ClaudeHomeBase(); err != nil {
+			t.Fatal(err)
+		}
+		if log, err = angel.LogPath(); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	cfg, cr, cl, lg := base()
+	confDir, _ := os.UserConfigDir()
+	cacheDir, _ := os.UserCacheDir()
+	app := filepath.Join(confDir, "cc-go-proxy")
+	check("default config", cfg, app, "config.ktav")
+	check("default creds", cr, app, "creds")
+	check("default claude", cl, app, "claude")
+	check("default log", lg, cacheDir, "cc-go-proxy", "logs", "ccgp.log")
+
+	dir := t.TempDir()
+	t.Setenv(home.EnvVar, dir)
+	cfg, cr, cl, lg = base()
+	check("config", cfg, dir, "config.ktav")
+	check("creds", cr, dir, "creds")
+	check("claude", cl, dir, "claude")
+	check("log", lg, dir, "logs", "ccgp.log")
+}
+
+func TestWriteJSON(t *testing.T) {
+	var buf bytes.Buffer
+	if err := common.WriteJSON(&buf, map[string]int{"b": 2, "a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"a\": 1,\n  \"b\": 2\n}\n"
+	if buf.String() != want {
+		t.Errorf("writeJSON = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestRenderStatusText(t *testing.T) {
+	up := statusServer{Running: true, Version: "ccgp v9", PID: 42, URL: "http://127.0.0.1:1"}
+	tests := []struct {
+		name string
+		data statusData
+		want string
+	}{
+		{
+			name: "down, file mode",
+			data: statusData{
+				Server:    statusServer{URL: "http://127.0.0.1:1"},
+				LogFile:   "x.log",
+				Config:    statusConfig{Mode: "file", Path: "x.ktav"},
+				CredsDir:  "creds",
+				Providers: []statusProvider{{Name: "p1", Type: "codex", Login: "not logged in"}},
+				Profiles:  []statusProfile{{Name: "alpha", Provider: "p1"}},
+			},
+			want: "server:  not running at http://127.0.0.1:1\n" +
+				"log:     x.log\n" +
+				"config:  x.ktav\n" +
+				"creds:   creds\n" +
+				"  provider p1           codex   not logged in\n" +
+				"  profile  alpha        -> p1\n",
+		},
+		{
+			name: "up, env mode",
+			data: statusData{
+				Server:  up,
+				LogFile: "x.log",
+				Config:  statusConfig{Mode: "env"},
+			},
+			want: "server:  ccgp v9 running (pid 42) at http://127.0.0.1:1\n" +
+				"log:     x.log\n" +
+				"config:  env-only mode (no config.ktav)\n",
+		},
+		{
+			name: "error mode",
+			data: statusData{
+				Server:  up,
+				LogFile: "x.log",
+				Config:  statusConfig{Mode: "error", Error: "parse: line 3"},
+			},
+			want: "server:  ccgp v9 running (pid 42) at http://127.0.0.1:1\n" +
+				"log:     x.log\n" +
+				"config:  error: parse: line 3\n",
+		},
+		{
+			name: "missing mode",
+			data: statusData{
+				Server:  up,
+				LogFile: "x.log",
+				Config:  statusConfig{Mode: "missing", Path: "x.ktav"},
+			},
+			want: "server:  ccgp v9 running (pid 42) at http://127.0.0.1:1\n" +
+				"log:     x.log\n" +
+				"config:  x.ktav (not created yet; created on first run)\n",
+		},
+		{
+			name: "file mode without creds dir",
+			data: statusData{
+				Server:  up,
+				LogFile: "x.log",
+				Config:  statusConfig{Mode: "file", Path: "x.ktav"},
+			},
+			want: "server:  ccgp v9 running (pid 42) at http://127.0.0.1:1\n" +
+				"log:     x.log\n" +
+				"config:  x.ktav\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := renderStatusText(&buf, tt.data); err != nil {
+				t.Fatal(err)
+			}
+			if buf.String() != tt.want {
+				t.Errorf("renderStatusText =\n%q\nwant\n%q", buf.String(), tt.want)
+			}
+		})
+	}
+}
+
+// The fake secret must never reach the JSON payload; status only carries
+// non-secret fields (paths, names, login descriptions).
+const testSecretToken = "tok-SUPERSECRET-123"
+
+func TestStatusJSON(t *testing.T) {
+	t.Setenv("CCGP_TEST_SECRET", "sk-FAKEKEY-not-real-000")
+	cfg := &config.Config{
+		ConfigFile: filepath.Join(t.TempDir(), "x.ktav"),
+		Providers: map[string]*config.Provider{
+			"p1": {Name: "p1", Type: config.ProviderTypeAnthropicCompat, BaseURL: "http://127.0.0.1:9/" + testSecretToken, APIKeyEnv: "CCGP_TEST_SECRET"},
+		},
+		Profiles: map[string]*config.Profile{
+			"alpha": {Name: "alpha", Provider: "p1"},
+		},
+	}
+	providers := []statusProvider{{Name: "p1", Type: config.ProviderTypeAnthropicCompat, Login: "key from $CCGP_TEST_SECRET"}}
+	profiles := []statusProfile{{Name: "alpha", Provider: "p1"}}
+	st := buildStatus("http://127.0.0.1:1", "x.log", &angel.Health{Version: "ccgp v9", PID: 42}, nil, cfg, nil, filepath.Join(t.TempDir(), "creds"), nil, providers, profiles)
+
+	var buf bytes.Buffer
+	if err := common.WriteJSON(&buf, st); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, testSecretToken) {
+		t.Error("JSON output contains the planted base URL token")
+	}
+	if strings.Contains(out, "sk-FAKEKEY-not-real-000") {
+		t.Error("JSON output contains the API key env value")
+	}
+
+	var got statusData
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Server.Running || got.Server.PID != 42 || got.Server.URL != "http://127.0.0.1:1" {
+		t.Errorf("server = %+v", got.Server)
+	}
+	if got.Config.Mode != "file" || got.Config.Path != cfg.ConfigFile {
+		t.Errorf("config = %+v", got.Config)
+	}
+	if len(got.Providers) != 1 || got.Providers[0].Name != "p1" {
+		t.Errorf("providers = %+v", got.Providers)
+	}
+	if len(got.Profiles) != 1 || got.Profiles[0].Provider != "p1" {
+		t.Errorf("profiles = %+v", got.Profiles)
+	}
+}
+
+func TestBuildProfileRowsAndText(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]*config.Provider{
+			"p1": {Name: "p1", Type: config.ProviderTypeCodex, BaseURL: "http://127.0.0.1:9/" + testSecretToken},
+			"p2": {Name: "p2", Type: config.ProviderTypeAnthropicCompat, APIKeyEnv: "CCGP_TEST_SECRET"},
+		},
+		Profiles: map[string]*config.Profile{
+			"beta":  {Name: "beta", Provider: "p2"},
+			"alpha": {Name: "alpha", Provider: "p1", Models: []config.ModelRule{{Match: "sonnet*", Model: "gpt-x"}}},
+		},
+	}
+	store := creds.Store{Dir: filepath.Join(t.TempDir(), "creds")}
+	t.Setenv("CCGP_TEST_SECRET", "sk-FAKEKEY-not-real-000")
+	claudeBase := t.TempDir()
+	if err := os.Mkdir(filepath.Join(claudeBase, "alpha"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := core.BuildProfileRows(cfg, store, claudeBase)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if rows[0].Name != "alpha" || rows[1].Name != "beta" {
+		t.Errorf("row order = %s, %s", rows[0].Name, rows[1].Name)
+	}
+	if rows[0].MainModel != "gpt-x" || rows[1].MainModel != "-" {
+		t.Errorf("main models = %q, %q", rows[0].MainModel, rows[1].MainModel)
+	}
+	if !rows[0].ClaudeDir || rows[1].ClaudeDir {
+		t.Errorf("claudeDir = %v, %v", rows[0].ClaudeDir, rows[1].ClaudeDir)
+	}
+	if rows[0].Login != "not logged in (ccgp --login p1)" {
+		t.Errorf("codex login = %q", rows[0].Login)
+	}
+	if rows[1].Login != "key from $CCGP_TEST_SECRET" {
+		t.Errorf("compat login = %q", rows[1].Login)
+	}
+
+	var buf bytes.Buffer
+	if err := core.ProfileList(&buf, rows); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, testSecretToken) || strings.Contains(out, "sk-FAKEKEY-not-real-000") {
+		t.Error("text output contains a planted secret")
+	}
+	var want bytes.Buffer
+	fmt.Fprintf(&want, "%-16s %-16s %-17s %-38s %-16s %s\n", "PROFILE", "PROVIDER", "TYPE", "LOGIN", "MAIN MODEL", "CLAUDE DIR")
+	for _, r := range rows {
+		dir := "no"
+		if r.ClaudeDir {
+			dir = "yes"
+		}
+		fmt.Fprintf(&want, "%-16s %-16s %-17s %-38s %-16s %s\n", r.Name, r.Provider, r.Type, r.Login, r.MainModel, dir)
+	}
+	if out != want.String() {
+		t.Errorf("profileList output mismatch:\n%q\nwant\n%q", out, want.String())
+	}
+}
+
+func TestProfileListJSONNoSecrets(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]*config.Provider{
+			"p1": {Name: "p1", Type: config.ProviderTypeAnthropicCompat, BaseURL: "http://127.0.0.1:9/" + testSecretToken},
+		},
+		Profiles: map[string]*config.Profile{
+			"alpha": {Name: "alpha", Provider: "p1", DefaultModel: "m"},
+		},
+	}
+	rows := core.BuildProfileRows(cfg, creds.Store{Dir: t.TempDir()}, t.TempDir())
+	var buf bytes.Buffer
+	if err := common.WriteJSON(&buf, core.ProfileListData{Profiles: rows}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Contains(out, testSecretToken) {
+		t.Error("JSON output contains the planted base URL token")
+	}
+	var got core.ProfileListData
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Profiles) != 1 || got.Profiles[0].Name != "alpha" || got.Profiles[0].Provider != "p1" {
+		t.Errorf("profiles = %+v", got.Profiles)
+	}
+}
 
 func TestModelsJSON(t *testing.T) {
 	sel := catalog.Selection{
@@ -292,341 +750,10 @@ func TestProviderNeedsAConfigFile(t *testing.T) {
 	}
 }
 
-func TestClaudeEnv(t *testing.T) {
-	in := []string{
-		"PATH=/bin",
-		"ANTHROPIC_API_KEY=sk-ant",
-		"anthropic_base_url=http://old",
-		"ANTHROPIC_AUTH_TOKEN=x",
-		"ANTHROPIC_MODEL=keep",
-		"CLAUDE_CODE_OAUTH_TOKEN=official",
-		"CLAUDE_CODE_USE_BEDROCK=1",
-		"CLAUDE_CONFIG_DIR=/real/.claude",
-	}
-	got := core.ClaudeEnv(in, "http://127.0.0.1:60093/call/tok", "/iso")
-	want := []string{
-		"PATH=/bin",
-		"ANTHROPIC_MODEL=keep",
-		"ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/tok",
-		"ANTHROPIC_AUTH_TOKEN=ccgp",
-		"CLAUDE_CONFIG_DIR=/iso",
-		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
-		"CLAUDE_CODE_AUTO_MODE_SERVER=0",
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("claudeEnv =\n%q\nwant\n%q", got, want)
-	}
-
-	// Values the user already set are kept.
-	got = core.ClaudeEnv([]string{"claude_code_auto_mode_server=1", "ENABLE_CLAUDEAI_MCP_SERVERS=true"}, "http://x", "/iso")
-	want = []string{
-		"claude_code_auto_mode_server=1", "ENABLE_CLAUDEAI_MCP_SERVERS=true",
-		"ANTHROPIC_BASE_URL=http://x", "ANTHROPIC_AUTH_TOKEN=ccgp", "CLAUDE_CONFIG_DIR=/iso",
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("user overrides: claudeEnv =\n%q\nwant\n%q", got, want)
-	}
-}
-
 func TestRunUnknownProfileNeedsConfig(t *testing.T) {
 	t.Setenv("CCGP_CONFIG", t.TempDir()+"/absent.ktav")
 	if err := run([]string{"nope"}); err == nil {
 		t.Fatal("run(unknown) succeeded")
-	}
-}
-
-func TestCompactEnv(t *testing.T) {
-	pf := &config.Profile{ContextWindow: 800000, CompactPercent: 70}
-	got := core.CompactEnv([]string{"PATH=/bin"}, pf, "sonnet")
-	want := []string{"PATH=/bin", "CLAUDE_CODE_AUTO_COMPACT_WINDOW=800000", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70"}
-	if !slices.Equal(got, want) {
-		t.Errorf("compactEnv = %q, want %q", got, want)
-	}
-
-	// User-set values win; no window means no change.
-	got = core.CompactEnv([]string{"claude_code_auto_compact_window=123", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50"}, pf, "sonnet")
-	if len(got) != 2 {
-		t.Errorf("overrode user env: %q", got)
-	}
-	if got = core.CompactEnv([]string{"PATH=/bin"}, &config.Profile{}, "sonnet"); len(got) != 1 {
-		t.Errorf("no window: %q", got)
-	}
-	if got = core.CompactEnv([]string{"PATH=/bin"}, nil, "sonnet"); len(got) != 1 {
-		t.Errorf("nil profile: %q", got)
-	}
-	// Percent alone (window known) only sets the percent when asked.
-	got = core.CompactEnv(nil, &config.Profile{ContextWindow: 300000}, "sonnet")
-	if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000"}) {
-		t.Errorf("window only: %q", got)
-	}
-}
-
-// Claude Code takes 100k-1M and prints a warning for any other value, so
-// the window is clamped into that range.
-func TestCompactEnvClampsToWhatClaudeCodeAccepts(t *testing.T) {
-	for win, want := range map[int64]string{
-		8_000:     "100000",
-		60_000:    "100000",
-		100_000:   "100000",
-		872_000:   "872000",
-		1_000_000: "1000000",
-		2_000_000: "1000000",
-	} {
-		got := core.CompactEnv(nil, &config.Profile{ContextWindow: win}, "sonnet")
-		if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=" + want}) {
-			t.Errorf("window %d: %q, want %s", win, got, want)
-		}
-	}
-}
-
-// The window comes from the rule that serves the session's main model; a
-// smaller window on another rule (Haiku) does not shrink the main session.
-func TestCompactEnvUsesMainModelRule(t *testing.T) {
-	pf := &config.Profile{Models: []config.ModelRule{
-		{Match: "*opus*", Model: "sol", ContextWindow: 872000},
-		{Match: "*sonnet*", Model: "luna", ContextWindow: 872000},
-		{Match: "*haiku*", Model: "old-luna", ContextWindow: 272000},
-		{Match: "*", Model: "luna", ContextWindow: 872000},
-	}}
-	for model, want := range map[string]string{
-		"sonnet":            "CLAUDE_CODE_AUTO_COMPACT_WINDOW=872000",
-		"claude-opus-5-5":   "CLAUDE_CODE_AUTO_COMPACT_WINDOW=872000",
-		"haiku":             "CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000", // when Haiku is the main model
-		"custom-model-name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW=872000",
-	} {
-		if got := core.CompactEnv(nil, pf, model); !slices.Equal(got, []string{want}) {
-			t.Errorf("main model %q: %q, want %q", model, got, want)
-		}
-	}
-
-	// A matching rule without a window falls back to the smallest known one.
-	partial := &config.Profile{Models: []config.ModelRule{
-		{Match: "*sonnet*", Model: "a"},
-		{Match: "*haiku*", Model: "b", ContextWindow: 272000},
-	}}
-	if got := core.CompactEnv(nil, partial, "sonnet"); !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000"}) {
-		t.Errorf("fallback: %q", got)
-	}
-}
-
-func TestMainModel(t *testing.T) {
-	dir := t.TempDir()
-	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-
-	if got := core.MainModel(nil, env(nil), dir); got != "sonnet" {
-		t.Errorf("default = %q", got)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"model":"opus"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := core.MainModel(nil, env(nil), dir); got != "opus" {
-		t.Errorf("settings model = %q", got)
-	}
-	if got := core.MainModel(nil, env(map[string]string{"ANTHROPIC_MODEL": "haiku"}), dir); got != "haiku" {
-		t.Errorf("env model = %q", got)
-	}
-	if got := core.MainModel([]string{"-p", "hi", "--model", "fable"}, env(map[string]string{"ANTHROPIC_MODEL": "haiku"}), dir); got != "fable" {
-		t.Errorf("--model = %q", got)
-	}
-	if got := core.MainModel([]string{"--model=claude-sonnet-5-5"}, env(nil), dir); got != "claude-sonnet-5-5" {
-		t.Errorf("--model= = %q", got)
-	}
-	// A trailing --model without a value is ignored.
-	if got := core.MainModel([]string{"--model"}, env(nil), dir); got != "opus" {
-		t.Errorf("dangling --model = %q", got)
-	}
-}
-
-// fakeClaude puts a `claude` that records its arguments and environment into
-// the file named by CCGP_FAKE_OUT and exits with status 3 first on PATH. The
-// rest of PATH stays, the Windows script needs cmd.exe.
-func fakeClaude(t *testing.T) (out string) {
-	t.Helper()
-	dir := t.TempDir()
-	out = filepath.Join(t.TempDir(), "claude.out")
-	if runtime.GOOS == "windows" {
-		script := "@echo off\r\n(echo ARGS=%*& set) > \"%CCGP_FAKE_OUT%\"\r\nexit /b 3\r\n"
-		if err := os.WriteFile(filepath.Join(dir, "claude.cmd"), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		script := "#!/bin/sh\n{ echo \"ARGS=$*\"; env; } > \"$CCGP_FAKE_OUT\"\nexit 3\n"
-		if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("CCGP_FAKE_OUT", out)
-	return out
-}
-
-// ownSetup isolates every location, gives the user a Claude Code dir full of
-// account data and makes a Claude profile "work". It returns the profile dir.
-func ownSetup(t *testing.T) (userDir, profileDir string) {
-	t.Helper()
-	defaults := isolate(t)
-	t.Setenv("USERPROFILE", defaults)
-	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	userDir = filepath.Join(defaults, ".claude")
-	files := map[string]string{
-		filepath.Join(userDir, "CLAUDE.md"):                 "rules v1",
-		filepath.Join(userDir, ".credentials.json"):         `{"claudeAiOauth":{"accessToken":"official"}}`,
-		filepath.Join(userDir, "history.jsonl"):             "secret history",
-		filepath.Join(userDir, "projects", "p", "s1.jsonl"): "{}\n",
-		filepath.Join(userDir, "skills", "s1", "SKILL.md"):  "skill",
-		filepath.Join(defaults, ".claude.json"):             `{"userID":"user-id-1","oauthAccount":{"emailAddress":"me@example.com"},"mcpServers":{"a":{}}}`,
-	}
-	for p, body := range files {
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	addClaude(t, "work")
-	base, err := common.ClaudeHomeBase()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return userDir, filepath.Join(base, "work")
-}
-
-func TestLaunchOwnRunsClaudeDirectly(t *testing.T) {
-	userDir, profileDir := ownSetup(t)
-	out := fakeClaude(t)
-	t.Setenv("ANTHROPIC_API_KEY", "sk-official")
-	t.Setenv("ANTHROPIC_BASE_URL", "https://official.example")
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-official")
-
-	err := core.Launch("work", []string{"--foo", "bar"})
-	var ee common.ExitError
-	if !errors.As(err, &ee) || int(ee) != 3 {
-		t.Fatalf("launch err = %v, want the exit status 3 of claude", err)
-	}
-	b, rerr := os.ReadFile(out)
-	if rerr != nil {
-		t.Fatalf("claude was not started: %v", rerr)
-	}
-	got := string(b)
-	if !strings.Contains(got, "ARGS=--foo bar") {
-		t.Errorf("arguments not passed:\n%s", got)
-	}
-	if !strings.Contains(got, "CLAUDE_CONFIG_DIR="+profileDir) {
-		t.Errorf("CLAUDE_CONFIG_DIR is not the profile dir %s:\n%s", profileDir, got)
-	}
-	for _, bad := range []string{"sk-official", "/call/"} {
-		if strings.Contains(got, bad) {
-			t.Errorf("%q reached a Claude profile:\n%s", bad, got)
-		}
-	}
-	for _, bad := range []string{"ANTHROPIC_", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_AUTO_COMPACT", "CLAUDE_AUTOCOMPACT", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
-		if envHas(got, bad) {
-			t.Errorf("the variable %s reached a Claude profile:\n%s", bad, got)
-		}
-	}
-
-	// Settings crossed, nothing of the account did.
-	if body, _ := os.ReadFile(filepath.Join(profileDir, "CLAUDE.md")); string(body) != "rules v1" {
-		t.Errorf("CLAUDE.md = %q", body)
-	}
-	if body, _ := os.ReadFile(filepath.Join(profileDir, "skills", "s1", "SKILL.md")); string(body) != "skill" {
-		t.Errorf("skill = %q", body)
-	}
-	for _, name := range []string{".claude.json", ".credentials.json", "history.jsonl", "projects"} {
-		if _, err := os.Stat(filepath.Join(profileDir, name)); err == nil {
-			t.Errorf("%s was copied into a Claude profile", name)
-		}
-	}
-
-	// The login the user makes inside survives the next launch, and a nested
-	// launch (CLAUDE_CONFIG_DIR already the profile dir) still mirrors the
-	// user's own dir.
-	if err := os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte("own login"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(userDir, "CLAUDE.md"), []byte("rules v2"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
-	if err := core.Launch("work", nil); !errors.As(err, &ee) {
-		t.Fatalf("second launch err = %v", err)
-	}
-	if body, _ := os.ReadFile(filepath.Join(profileDir, ".credentials.json")); string(body) != "own login" {
-		t.Errorf("the profile's login was removed: %q", body)
-	}
-	if body, _ := os.ReadFile(filepath.Join(profileDir, "CLAUDE.md")); string(body) != "rules v2" {
-		t.Errorf("a nested launch did not mirror the user's dir: %q", body)
-	}
-}
-
-func TestLaunchOwnWithoutClaudeInPath(t *testing.T) {
-	_, profileDir := ownSetup(t)
-	t.Setenv("PATH", t.TempDir())
-	err := core.Launch("work", nil)
-	if err == nil || !strings.Contains(err.Error(), "claude not found in PATH") {
-		t.Fatalf("launch err = %v", err)
-	}
-	if _, err := os.Stat(profileDir); err == nil {
-		t.Error("the profile dir was created although claude is missing")
-	}
-}
-
-func TestLoginStateOfClaudeProfile(t *testing.T) {
-	_, profileDir := ownSetup(t)
-	cfg := loadTestConfig(t)
-	pr := cfg.Providers["work"]
-	store := creds.Store{Dir: t.TempDir()}
-	if got := common.LoginState(store, pr); got != "sign in inside Claude Code (/login)" {
-		t.Errorf("new profile: %q", got)
-	}
-	if ops.LoginIsWarn(common.LoginState(store, pr)) {
-		t.Error("a Claude profile that is not signed in yet is not a doctor warning")
-	}
-	if err := os.MkdirAll(profileDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := common.LoginState(store, pr); got != "signed in inside Claude Code" {
-		t.Errorf("signed in: %q", got)
-	}
-}
-
-func TestStatusShowsClaudeProfile(t *testing.T) {
-	ownSetup(t)
-	var runErr error
-	out := captureStdout(t, func() { runErr = Status([]string{"--json"}) })
-	_ = runErr // exit 3 when no server runs
-	for _, want := range []string{`"type": "claude"`, "sign in inside Claude Code (/login)", `"name": "work"`} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status lacks %q:\n%s", want, out)
-		}
-	}
-}
-
-func TestHelpAndCompletionKnowClaudeType(t *testing.T) {
-	var buf bytes.Buffer
-	printHelp(&buf)
-	if !strings.Contains(buf.String(), "--type claude") {
-		t.Errorf("help does not mention --type claude:\n%s", buf.String())
-	}
-	inv, err := ParseInvocation([]string{"--profile", "-h"})
-	if err != nil || inv.Cmd == nil {
-		t.Fatalf("parseInvocation: %v", err)
-	}
-	if text := commandHelpText(*inv.Cmd); !strings.Contains(text, "--type claude") {
-		t.Errorf("--profile help does not mention --type claude:\n%s", text)
-	}
-	got := CompleteWords([]string{"ccgp", "--profile", "add", "x", "--type", ""}, testNames)
-	for _, want := range []string{"codex", "codex_api", "anthropic_compat", "claude"} {
-		if !contains(got, want) {
-			t.Errorf("--type does not offer %q: %q", want, got)
-		}
-	}
-	if got := CompleteWords([]string{"ccgp", "--profile", "add", "x", "--type", "cl"}, testNames); !reflect.DeepEqual(got, []string{"claude", "claude_api"}) {
-		t.Errorf("--type cl = %q", got)
 	}
 }
 

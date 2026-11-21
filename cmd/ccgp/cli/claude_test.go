@@ -6,6 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -397,318 +400,435 @@ func TestHelpAndCompletionKnowClaudeAPIType(t *testing.T) {
 	}
 }
 
-func TestCommandHelpTextHasEntryOrFallback(t *testing.T) {
-	for _, c := range Commands() {
-		var buf bytes.Buffer
-		printCommandHelp(&buf, c)
-		out := buf.String()
-		if out == "" {
-			t.Errorf("%s: empty help text", c.Name)
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
 		}
-		if !strings.Contains(out, c.Name) {
-			t.Errorf("%s: help text does not mention the command:\n%s", c.Name, out)
-		}
-		if _, ok := CommandHelp[c.Name]; !ok && !strings.Contains(out, c.Desc) {
-			t.Errorf("%s: fallback help must contain the one-line desc, got:\n%s", c.Name, out)
+	}
+	return false
+}
+
+// addClaude creates profile name of type claude in a fresh test config.
+func addClaude(t *testing.T, name string) (string, *config.Config) {
+	t.Helper()
+	path, cfg := writeTestConfig(t, testConfig)
+	if err := core.ProfileAdd(&bytes.Buffer{}, core.ProfileAddOpts{Type: config.ProviderTypeClaude, Name: name}, path, cfg, creds.Store{}); err != nil {
+		t.Fatal(err)
+	}
+	return path, loadTestConfig(t)
+}
+
+// testConfig covers one provider per interesting shape: codex (managed
+// mapping), zai (preset, effort_map, api_key_env) and a rule-less profile.
+const testConfig = `listen.host: 127.0.0.1
+listen.port: 60093
+
+providers: [
+    {
+        name: codex
+        type: codex
+    }
+    {
+        name: zai
+        type: anthropic_compat
+        base_url: https://api.z.ai/api/anthropic
+        api_key_env: ZAI_KEY_TEST
+        effort_map: {
+            medium: high
+            max: max
+        }
+    }
+]
+
+profiles: [
+    {
+        name: codex
+        provider: codex
+        ## ccgp:managed-models begin codex
+        models: [
+            {
+                match: *sonnet*
+                model: gpt-6-luna
+                context_window: 872000
+            }
+            {
+                match: *
+                model: gpt-6-luna
+                context_window: 872000
+            }
+        ]
+        ## ccgp:managed-models end codex
+    }
+    {
+        name: zai
+        provider: zai
+        models: [
+            {
+                match: *
+                model: glm-5.3-flash
+                context_window: 1000000
+            }
+        ]
+    }
+    {
+        name: zai2
+        provider: zai
+    }
+]
+`
+
+func profileByName(t *testing.T, cfg *config.Config, name string) *config.Profile {
+	t.Helper()
+	pf, ok := cfg.Profiles[name]
+	if !ok {
+		t.Fatalf("profile %q missing after the edit (have %v)", name, common.Names(cfg.Profiles))
+	}
+	return pf
+}
+
+// writeTestConfig writes a fixture and returns (path, loaded config).
+func writeTestConfig(t *testing.T, text string) (string, *config.Config) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CCGP_CONFIG", path)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("fixture does not load: %v", err)
+	}
+	return path, cfg
+}
+
+func TestClaudeEnv(t *testing.T) {
+	in := []string{
+		"PATH=/bin",
+		"ANTHROPIC_API_KEY=sk-ant",
+		"anthropic_base_url=http://old",
+		"ANTHROPIC_AUTH_TOKEN=x",
+		"ANTHROPIC_MODEL=keep",
+		"CLAUDE_CODE_OAUTH_TOKEN=official",
+		"CLAUDE_CODE_USE_BEDROCK=1",
+		"CLAUDE_CONFIG_DIR=/real/.claude",
+	}
+	got := core.ClaudeEnv(in, "http://127.0.0.1:60093/call/tok", "/iso")
+	want := []string{
+		"PATH=/bin",
+		"ANTHROPIC_MODEL=keep",
+		"ANTHROPIC_BASE_URL=http://127.0.0.1:60093/call/tok",
+		"ANTHROPIC_AUTH_TOKEN=ccgp",
+		"CLAUDE_CONFIG_DIR=/iso",
+		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
+		"CLAUDE_CODE_AUTO_MODE_SERVER=0",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("claudeEnv =\n%q\nwant\n%q", got, want)
+	}
+
+	// Values the user already set are kept.
+	got = core.ClaudeEnv([]string{"claude_code_auto_mode_server=1", "ENABLE_CLAUDEAI_MCP_SERVERS=true"}, "http://x", "/iso")
+	want = []string{
+		"claude_code_auto_mode_server=1", "ENABLE_CLAUDEAI_MCP_SERVERS=true",
+		"ANTHROPIC_BASE_URL=http://x", "ANTHROPIC_AUTH_TOKEN=ccgp", "CLAUDE_CONFIG_DIR=/iso",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("user overrides: claudeEnv =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestCompactEnv(t *testing.T) {
+	pf := &config.Profile{ContextWindow: 800000, CompactPercent: 70}
+	got := core.CompactEnv([]string{"PATH=/bin"}, pf, "sonnet")
+	want := []string{"PATH=/bin", "CLAUDE_CODE_AUTO_COMPACT_WINDOW=800000", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70"}
+	if !slices.Equal(got, want) {
+		t.Errorf("compactEnv = %q, want %q", got, want)
+	}
+
+	// User-set values win; no window means no change.
+	got = core.CompactEnv([]string{"claude_code_auto_compact_window=123", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50"}, pf, "sonnet")
+	if len(got) != 2 {
+		t.Errorf("overrode user env: %q", got)
+	}
+	if got = core.CompactEnv([]string{"PATH=/bin"}, &config.Profile{}, "sonnet"); len(got) != 1 {
+		t.Errorf("no window: %q", got)
+	}
+	if got = core.CompactEnv([]string{"PATH=/bin"}, nil, "sonnet"); len(got) != 1 {
+		t.Errorf("nil profile: %q", got)
+	}
+	// Percent alone (window known) only sets the percent when asked.
+	got = core.CompactEnv(nil, &config.Profile{ContextWindow: 300000}, "sonnet")
+	if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=300000"}) {
+		t.Errorf("window only: %q", got)
+	}
+}
+
+// Claude Code takes 100k-1M and prints a warning for any other value, so
+// the window is clamped into that range.
+func TestCompactEnvClampsToWhatClaudeCodeAccepts(t *testing.T) {
+	for win, want := range map[int64]string{
+		8_000:     "100000",
+		60_000:    "100000",
+		100_000:   "100000",
+		872_000:   "872000",
+		1_000_000: "1000000",
+		2_000_000: "1000000",
+	} {
+		got := core.CompactEnv(nil, &config.Profile{ContextWindow: win}, "sonnet")
+		if !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=" + want}) {
+			t.Errorf("window %d: %q, want %s", win, got, want)
 		}
 	}
 }
 
-// Every visible command has its own long help with an example, so a new
-// command cannot ship with the one-line fallback only.
-func TestEveryVisibleCommandHasFullHelpWithExample(t *testing.T) {
-	for _, c := range Commands() {
-		if c.Hidden {
-			continue
+// The window comes from the rule that serves the session's main model; a
+// smaller window on another rule (Haiku) does not shrink the main session.
+func TestCompactEnvUsesMainModelRule(t *testing.T) {
+	pf := &config.Profile{Models: []config.ModelRule{
+		{Match: "*opus*", Model: "sol", ContextWindow: 872000},
+		{Match: "*sonnet*", Model: "luna", ContextWindow: 872000},
+		{Match: "*haiku*", Model: "old-luna", ContextWindow: 272000},
+		{Match: "*", Model: "luna", ContextWindow: 872000},
+	}}
+	for model, want := range map[string]string{
+		"sonnet":            "CLAUDE_CODE_AUTO_COMPACT_WINDOW=872000",
+		"claude-opus-5-5":   "CLAUDE_CODE_AUTO_COMPACT_WINDOW=872000",
+		"haiku":             "CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000", // when Haiku is the main model
+		"custom-model-name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW=872000",
+	} {
+		if got := core.CompactEnv(nil, pf, model); !slices.Equal(got, []string{want}) {
+			t.Errorf("main model %q: %q, want %q", model, got, want)
 		}
-		text, ok := CommandHelp[c.Name]
-		if !ok {
-			t.Errorf("%s: no entry in commandHelp", c.Name)
-			continue
-		}
-		if !strings.Contains(text, "Example") {
-			t.Errorf("%s: help has no example:\n%s", c.Name, text)
-		}
-		if !strings.HasPrefix(text, "ccgp "+c.Name) {
-			t.Errorf("%s: help does not start with the command line:\n%s", c.Name, text)
-		}
+	}
+
+	// A matching rule without a window falls back to the smallest known one.
+	partial := &config.Profile{Models: []config.ModelRule{
+		{Match: "*sonnet*", Model: "a"},
+		{Match: "*haiku*", Model: "b", ContextWindow: 272000},
+	}}
+	if got := core.CompactEnv(nil, partial, "sonnet"); !slices.Equal(got, []string{"CLAUDE_CODE_AUTO_COMPACT_WINDOW=272000"}) {
+		t.Errorf("fallback: %q", got)
 	}
 }
 
-// The long help names the flags the command's synopsis lists.
-func TestCommandHelpMentionsSynopsisFlags(t *testing.T) {
-	want := map[string][]string{
-		"--status":      {"--json"},
-		"--models":      {"--json", "apply", "-v"},
-		"--which":       {"--json"},
-		"--logs":        {"-f", "-n"},
-		"--profile":     {"--like", "--provider", "--type", "--purge", "--yes", "--json", "claude"},
-		"--connections": {"active", "total", "proxy", "--json"},
-		"--peak":        {"set", "add", "rm", "tz", "clear", "pause", "resume", "--json"},
-		"--doctor":      {"--offline", "--json"},
-		"--update":      {"--check"},
-		"--login":       {"--device", "claude"},
-		"--serve":       {"-d", "-s"},
-		"--send":        {"[--fork] [--force]", "--fork --force"},
-		"--import":      {"[--fork] [--force]", "--fork --force"},
-		"--export":      {"[--fork] [--force]", "--fork --force"},
+func TestMainModel(t *testing.T) {
+	dir := t.TempDir()
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+
+	if got := core.MainModel(nil, env(nil), dir); got != "sonnet" {
+		t.Errorf("default = %q", got)
 	}
-	for name, flags := range want {
-		text := CommandHelp[name]
-		for _, f := range flags {
-			if !strings.Contains(text, f) {
-				t.Errorf("%s: help does not mention %q", name, f)
-			}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"model":"opus"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := core.MainModel(nil, env(nil), dir); got != "opus" {
+		t.Errorf("settings model = %q", got)
+	}
+	if got := core.MainModel(nil, env(map[string]string{"ANTHROPIC_MODEL": "haiku"}), dir); got != "haiku" {
+		t.Errorf("env model = %q", got)
+	}
+	if got := core.MainModel([]string{"-p", "hi", "--model", "fable"}, env(map[string]string{"ANTHROPIC_MODEL": "haiku"}), dir); got != "fable" {
+		t.Errorf("--model = %q", got)
+	}
+	if got := core.MainModel([]string{"--model=claude-sonnet-5-5"}, env(nil), dir); got != "claude-sonnet-5-5" {
+		t.Errorf("--model= = %q", got)
+	}
+	// A trailing --model without a value is ignored.
+	if got := core.MainModel([]string{"--model"}, env(nil), dir); got != "opus" {
+		t.Errorf("dangling --model = %q", got)
+	}
+}
+
+// fakeClaude puts a `claude` that records its arguments and environment into
+// the file named by CCGP_FAKE_OUT and exits with status 3 first on PATH. The
+// rest of PATH stays, the Windows script needs cmd.exe.
+func fakeClaude(t *testing.T) (out string) {
+	t.Helper()
+	dir := t.TempDir()
+	out = filepath.Join(t.TempDir(), "claude.out")
+	if runtime.GOOS == "windows" {
+		script := "@echo off\r\n(echo ARGS=%*& set) > \"%CCGP_FAKE_OUT%\"\r\nexit /b 3\r\n"
+		if err := os.WriteFile(filepath.Join(dir, "claude.cmd"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		script := "#!/bin/sh\n{ echo \"ARGS=$*\"; env; } > \"$CCGP_FAKE_OUT\"\nexit 3\n"
+		if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CCGP_FAKE_OUT", out)
+	return out
 }
 
-func TestCommandHelpTextFallback(t *testing.T) {
-	c := Command{Name: "--nosuch", Args: "", Desc: "Restart the background server"}
-	var buf bytes.Buffer
-	printCommandHelp(&buf, c)
-	want := "ccgp --nosuch\n\nRestart the background server\n"
-	if buf.String() != want {
-		t.Errorf("fallback help = %q, want %q", buf.String(), want)
+// ownSetup isolates every location, gives the user a Claude Code dir full of
+// account data and makes a Claude profile "work". It returns the profile dir.
+func ownSetup(t *testing.T) (userDir, profileDir string) {
+	t.Helper()
+	defaults := isolate(t)
+	t.Setenv("USERPROFILE", defaults)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	userDir = filepath.Join(defaults, ".claude")
+	files := map[string]string{
+		filepath.Join(userDir, "CLAUDE.md"):                 "rules v1",
+		filepath.Join(userDir, ".credentials.json"):         `{"claudeAiOauth":{"accessToken":"official"}}`,
+		filepath.Join(userDir, "history.jsonl"):             "secret history",
+		filepath.Join(userDir, "projects", "p", "s1.jsonl"): "{}\n",
+		filepath.Join(userDir, "skills", "s1", "SKILL.md"):  "skill",
+		filepath.Join(defaults, ".claude.json"):             `{"userID":"user-id-1","oauthAccount":{"emailAddress":"me@example.com"},"mcpServers":{"a":{}}}`,
 	}
-}
-
-func TestWantsHelp(t *testing.T) {
-	tests := []struct {
-		name string
-		args []string
-		want bool
-	}{
-		{"command with --help", []string{"--login", "--help"}, true},
-		{"command with -h", []string{"--login", "-h"}, true},
-		{"command with later --help only", []string{"--login", "codex", "--help"}, false},
-		{"command without help", []string{"--status"}, false},
-		{"profile run with --help", []string{"codex", "--help"}, false},
-		{"profile run with -h", []string{"codex", "-h"}, false},
-		{"bare help", []string{"--help"}, false},
+	for p, body := range files {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			inv, err := ParseInvocation(tt.args)
-			if err != nil {
-				t.Fatalf("parseInvocation(%v): %v", tt.args, err)
-			}
-			if got := wantsHelp(inv); got != tt.want {
-				t.Errorf("wantsHelp(%v) = %v, want %v", tt.args, got, tt.want)
-			}
-		})
-	}
-}
-
-// TestHandleHelp covers the extracted decision run() relies on.
-func TestHandleHelp(t *testing.T) {
-	inv, err := ParseInvocation([]string{"--models", "-h"})
+	addClaude(t, "work")
+	base, err := common.ClaudeHomeBase()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var buf bytes.Buffer
-	if !handleHelp(inv, &buf) {
-		t.Error("handleHelp = false, want true for a command help request")
+	return userDir, filepath.Join(base, "work")
+}
+
+func TestLaunchOwnRunsClaudeDirectly(t *testing.T) {
+	userDir, profileDir := ownSetup(t)
+	out := fakeClaude(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-official")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://official.example")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-official")
+
+	err := core.Launch("work", []string{"--foo", "bar"})
+	var ee common.ExitError
+	if !errors.As(err, &ee) || int(ee) != 3 {
+		t.Fatalf("launch err = %v, want the exit status 3 of claude", err)
 	}
-	if !strings.Contains(buf.String(), "ccgp --models") {
-		t.Errorf("output = %q", buf.String())
+	b, rerr := os.ReadFile(out)
+	if rerr != nil {
+		t.Fatalf("claude was not started: %v", rerr)
 	}
-	inv, err = ParseInvocation([]string{"--models"})
-	if err != nil {
+	got := string(b)
+	if !strings.Contains(got, "ARGS=--foo bar") {
+		t.Errorf("arguments not passed:\n%s", got)
+	}
+	if !strings.Contains(got, "CLAUDE_CONFIG_DIR="+profileDir) {
+		t.Errorf("CLAUDE_CONFIG_DIR is not the profile dir %s:\n%s", profileDir, got)
+	}
+	for _, bad := range []string{"sk-official", "/call/"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%q reached a Claude profile:\n%s", bad, got)
+		}
+	}
+	for _, bad := range []string{"ANTHROPIC_", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_AUTO_COMPACT", "CLAUDE_AUTOCOMPACT", "ENABLE_CLAUDEAI_MCP_SERVERS"} {
+		if envHas(got, bad) {
+			t.Errorf("the variable %s reached a Claude profile:\n%s", bad, got)
+		}
+	}
+
+	// Settings crossed, nothing of the account did.
+	if body, _ := os.ReadFile(filepath.Join(profileDir, "CLAUDE.md")); string(body) != "rules v1" {
+		t.Errorf("CLAUDE.md = %q", body)
+	}
+	if body, _ := os.ReadFile(filepath.Join(profileDir, "skills", "s1", "SKILL.md")); string(body) != "skill" {
+		t.Errorf("skill = %q", body)
+	}
+	for _, name := range []string{".claude.json", ".credentials.json", "history.jsonl", "projects"} {
+		if _, err := os.Stat(filepath.Join(profileDir, name)); err == nil {
+			t.Errorf("%s was copied into a Claude profile", name)
+		}
+	}
+
+	// The login the user makes inside survives the next launch, and a nested
+	// launch (CLAUDE_CONFIG_DIR already the profile dir) still mirrors the
+	// user's own dir.
+	if err := os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte("own login"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if handleHelp(inv, &buf) {
-		t.Error("handleHelp = true for an invocation without a help argument")
-	}
-	inv, err = ParseInvocation([]string{"codex", "--help"})
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(userDir, "CLAUDE.md"), []byte("rules v2"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if handleHelp(inv, &buf) {
-		t.Error("handleHelp = true for a profile run")
+	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
+	if err := core.Launch("work", nil); !errors.As(err, &ee) {
+		t.Fatalf("second launch err = %v", err)
+	}
+	if body, _ := os.ReadFile(filepath.Join(profileDir, ".credentials.json")); string(body) != "own login" {
+		t.Errorf("the profile's login was removed: %q", body)
+	}
+	if body, _ := os.ReadFile(filepath.Join(profileDir, "CLAUDE.md")); string(body) != "rules v2" {
+		t.Errorf("a nested launch did not mirror the user's dir: %q", body)
 	}
 }
 
-// TestRunPrintsCommandHelp drives the real run() dispatch: `--login --help`
-// must print the command help and return without ensureConfig or the login
-// command. The config env points at a fresh path; if the interception were
-// removed, run() would create that file instead of printing help.
-func TestRunPrintsCommandHelp(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "config.ktav")
-	t.Setenv(config.ConfigFileEnv, cfgPath)
+func TestLaunchOwnWithoutClaudeInPath(t *testing.T) {
+	_, profileDir := ownSetup(t)
+	t.Setenv("PATH", t.TempDir())
+	err := core.Launch("work", nil)
+	if err == nil || !strings.Contains(err.Error(), "claude not found in PATH") {
+		t.Fatalf("launch err = %v", err)
+	}
+	if _, err := os.Stat(profileDir); err == nil {
+		t.Error("the profile dir was created although claude is missing")
+	}
+}
 
-	r, w, err := os.Pipe()
-	if err != nil {
+func TestLoginStateOfClaudeProfile(t *testing.T) {
+	_, profileDir := ownSetup(t)
+	cfg := loadTestConfig(t)
+	pr := cfg.Providers["work"]
+	store := creds.Store{Dir: t.TempDir()}
+	if got := common.LoginState(store, pr); got != "sign in inside Claude Code (/login)" {
+		t.Errorf("new profile: %q", got)
+	}
+	if ops.LoginIsWarn(common.LoginState(store, pr)) {
+		t.Error("a Claude profile that is not signed in yet is not a doctor warning")
+	}
+	if err := os.MkdirAll(profileDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	old := os.Stdout
-	os.Stdout = w
-	runErr := run([]string{"--login", "--help"})
-	w.Close()
-	os.Stdout = old
-	if runErr != nil {
-		t.Fatalf("run: %v", runErr)
-	}
-	out, err := io.ReadAll(r)
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(profileDir, ".credentials.json"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), "ccgp --login <provider> [--device]") {
-		t.Errorf("run printed no per-command help, got:\n%s", out)
-	}
-	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
-		t.Errorf("config file was created; the command ran instead of printing help (stat err %v)", err)
+	if got := common.LoginState(store, pr); got != "signed in inside Claude Code" {
+		t.Errorf("signed in: %q", got)
 	}
 }
 
-// --fork and --force work together; no text offers them as alternatives.
-func TestNoHelpOffersForkAndForceAsAlternatives(t *testing.T) {
-	for _, c := range Commands() {
-		if strings.Contains(c.Args, "[--fork|--force]") {
-			t.Errorf("%s: synopsis offers --fork and --force as alternatives: %q", c.Name, c.Args)
-		}
-	}
-	for name, text := range CommandHelp {
-		if strings.Contains(text, "[--fork|--force]") {
-			t.Errorf("%s: help offers --fork and --force as alternatives", name)
+func TestStatusShowsClaudeProfile(t *testing.T) {
+	ownSetup(t)
+	var runErr error
+	out := captureStdout(t, func() { runErr = Status([]string{"--json"}) })
+	_ = runErr // exit 3 when no server runs
+	for _, want := range []string{`"type": "claude"`, "sign in inside Claude Code (/login)", `"name": "work"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
 		}
 	}
 }
 
-func TestParseInvocation(t *testing.T) {
-	tests := []struct {
-		name        string
-		args        []string
-		wantCmd     string   // "" for help (no command) or a profile run
-		wantProfile string   // set for profile runs
-		wantArgs    []string // remaining args
-		wantErr     string   // "" means no error
-	}{
-		{"no args", nil, "", "", nil, ""},
-		{"--help", []string{"--help"}, "", "", nil, ""},
-		{"-h", []string{"-h"}, "", "", nil, ""},
-		{"--serve with flags", []string{"--serve", "-d"}, "--serve", "", []string{"-d"}, ""},
-		{"--start", []string{"--start"}, "--start", "", nil, ""},
-		{"--stop", []string{"--stop"}, "--stop", "", nil, ""},
-		{"--status", []string{"--status"}, "--status", "", nil, ""},
-		{"--login with device", []string{"--login", "codex", "--device"}, "--login", "", []string{"codex", "--device"}, ""},
-		{"--models apply", []string{"--models", "apply", "codex"}, "--models", "", []string{"apply", "codex"}, ""},
-		{"--config reset", []string{"--config", "reset"}, "--config", "", []string{"reset"}, ""},
-		{"--profile add", []string{"--profile", "add", "x", "--like", "codex"}, "--profile", "", []string{"add", "x", "--like", "codex"}, ""},
-		{"--profile list", []string{"--profile", "list"}, "--profile", "", []string{"list"}, ""},
-		{"--profile rm", []string{"--profile", "rm", "x", "--yes"}, "--profile", "", []string{"rm", "x", "--yes"}, ""},
-		{"--send", []string{"--send", "codex", "claude", "3"}, "--send", "", []string{"codex", "claude", "3"}, ""},
-		{"--import", []string{"--import", "zai"}, "--import", "", []string{"zai"}, ""},
-		{"--export", []string{"--export", "zai", "2"}, "--export", "", []string{"zai", "2"}, ""},
-		{"--version", []string{"--version"}, "--version", "", nil, ""},
-		{"bare word is a profile", []string{"codex"}, "", "codex", nil, ""},
-		{"profile args verbatim", []string{"codex", "-p", "x"}, "", "codex", []string{"-p", "x"}, ""},
-		{"profile with dash flags", []string{"codex", "--status"}, "", "codex", []string{"--status"}, ""},
-		{"former command is a profile", []string{"status"}, "", "status", nil, ""},
-		{"login is a profile", []string{"login"}, "", "login", nil, ""},
-		{"serve is a profile", []string{"serve", "-d"}, "", "serve", []string{"-d"}, ""},
-		{"unknown command", []string{"--stauts"}, "", "", nil, "unknown command"},
-		{"single dash is not a profile", []string{"-x"}, "", "", nil, "unknown command"},
-		{"empty first argument", []string{""}, "", "", nil, "empty first argument"},
-	}
-	for _, tt := range tests {
-		inv, err := ParseInvocation(tt.args)
-		if tt.wantErr != "" {
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("%s: err = %v, want containing %q", tt.name, err, tt.wantErr)
-			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("%s: %v", tt.name, err)
-			continue
-		}
-		wantName := tt.wantCmd
-		if inv.Cmd == nil {
-			if wantName != "" {
-				t.Errorf("%s: got help/profile, want command %s", tt.name, wantName)
-			}
-		} else if inv.Cmd.Name != wantName {
-			t.Errorf("%s: cmd = %s, want %s", tt.name, inv.Cmd.Name, wantName)
-		}
-		if inv.Profile != tt.wantProfile {
-			t.Errorf("%s: profile = %q, want %q", tt.name, inv.Profile, tt.wantProfile)
-		}
-		if strings.Join(inv.Args, "\x00") != strings.Join(tt.wantArgs, "\x00") {
-			t.Errorf("%s: args = %q, want %q", tt.name, inv.Args, tt.wantArgs)
-		}
-	}
-}
-
-func TestCommandTable(t *testing.T) {
-	seen := map[string]bool{}
-	for _, c := range Commands() {
-		if seen[c.Name] {
-			t.Errorf("duplicate command %s", c.Name)
-		}
-		seen[c.Name] = true
-		if c.Desc == "" && !c.Hidden {
-			t.Errorf("%s: empty description", c.Name)
-		}
-		if c.Run == nil {
-			t.Errorf("%s: nil run", c.Name)
-		}
-	}
-	for _, name := range []string{"--serve", "--start", "--stop", "--status", "--login", "--models", "--send", "--import", "--export", "--profile", "--config", "--version", "--help"} {
-		if _, ok := FindCommand(name); !ok {
-			t.Errorf("findCommand(%s) not found", name)
-		}
-		if _, ok := FindCommand(strings.TrimPrefix(name, "--")); ok {
-			t.Errorf("bare word %q must not be a command", name)
-		}
-	}
-}
-
-func TestPrintHelpListsAllCommands(t *testing.T) {
+func TestHelpAndCompletionKnowClaudeType(t *testing.T) {
 	var buf bytes.Buffer
 	printHelp(&buf)
-	out := buf.String()
-	for _, c := range Commands() {
-		if c.Hidden {
-			if strings.Contains(out, "ccgp "+c.Name) {
-				t.Errorf("help mentions hidden command %s", c.Name)
-			}
-			continue
-		}
-		if !strings.Contains(out, "ccgp "+c.Name) {
-			t.Errorf("help does not mention %s", c.Name)
-		}
+	if !strings.Contains(buf.String(), "--type claude") {
+		t.Errorf("help does not mention --type claude:\n%s", buf.String())
 	}
-	if !strings.Contains(out, "profile codex") {
-		t.Error("help does not document the bare-word-is-a-profile rule")
+	inv, err := ParseInvocation([]string{"--profile", "-h"})
+	if err != nil || inv.Cmd == nil {
+		t.Fatalf("parseInvocation: %v", err)
 	}
-	if !strings.Contains(out, "ccgpy <profile>") {
-		t.Error("help does not mention ccgpy")
+	if text := commandHelpText(*inv.Cmd); !strings.Contains(text, "--type claude") {
+		t.Errorf("--profile help does not mention --type claude:\n%s", text)
 	}
-}
-
-func TestAngelServeArgs(t *testing.T) {
-	got := common.AngelServeArgs([]string{"-d"})
-	want := []string{"--serve", "-s", "-d"}
-	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Errorf("angelServeArgs = %q, want %q", got, want)
-	}
-}
-
-// Commands that only read state must not create the default config.
-func TestEnsureConfigPolicy(t *testing.T) {
-	noConfig := map[string]bool{
-		"--stop": true, "--status": true, "--config": true, "--logs": true, "--version": true, "--help": true,
-		"--completion": true, "--complete": true, "--doctor": true, "--update": true, "--speed": true,
-	}
-	for _, c := range Commands() {
-		if c.EnsureConfig == noConfig[c.Name] {
-			t.Errorf("%s: ensureConfig = %v", c.Name, c.EnsureConfig)
+	got := CompleteWords([]string{"ccgp", "--profile", "add", "x", "--type", ""}, testNames)
+	for _, want := range []string{"codex", "codex_api", "anthropic_compat", "claude"} {
+		if !contains(got, want) {
+			t.Errorf("--type does not offer %q: %q", want, got)
 		}
 	}
-}
-
-var testNames = CompletionNames{
-	Profiles:  func() []string { return []string{"codex", "codex2", "zai"} },
-	Providers: func() []string { return []string{"codex", "zai"} },
+	if got := CompleteWords([]string{"ccgp", "--profile", "add", "x", "--type", "cl"}, testNames); !reflect.DeepEqual(got, []string{"claude", "claude_api"}) {
+		t.Errorf("--type cl = %q", got)
+	}
 }

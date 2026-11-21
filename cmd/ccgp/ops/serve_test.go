@@ -1,17 +1,12 @@
 package ops
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +16,26 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server"
 )
+
+func write(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// waitFor polls cond until it holds or the timeout elapses.
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met within timeout")
+}
 
 func TestTailLines(t *testing.T) {
 	dir := t.TempDir()
@@ -468,118 +483,4 @@ func TestEnsureServerNotRunningStartsSilently(t *testing.T) {
 	if out := fc.stderr.(*bytes.Buffer).String(); out != "" {
 		t.Errorf("stderr = %q, want empty", out)
 	}
-}
-
-// The platforms --update knows are exactly the archives release.yml builds.
-func TestReleasePlatformsMatchReleaseWorkflow(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "release.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	built := map[string]bool{}
-	for _, m := range regexp.MustCompile(`goos:\s*(\w+),\s*goarch:\s*(\w+)`).FindAllStringSubmatch(string(data), -1) {
-		built[m[1]+"/"+m[2]] = true
-	}
-	if len(built) == 0 {
-		t.Fatal("no build matrix found in release.yml")
-	}
-	for p := range built {
-		if !releasePlatforms[p] {
-			t.Errorf("release.yml builds %s, --update does not know it", p)
-		}
-	}
-	for p := range releasePlatforms {
-		if !built[p] {
-			t.Errorf("--update knows %s, release.yml does not build it", p)
-		}
-	}
-}
-
-func TestCompareVersions(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want int
-	}{
-		{"0.1.0", "0.1.0", 0},
-		{"0.1.1", "0.1.10", -1},
-		{"0.1.10", "0.1.1", 1},
-		{"v0.2.0", "0.2.0", 0},
-		{"0.2.0", "v0.2.0", 0},
-		{"0.2.0-dev", "0.2.0", 0},
-		{"v0.3.0-rc1", "v0.2.9", 1},
-		{"0.10.0", "0.9.9", 1},
-		{"1.0", "1.0.0", 0},
-		{"", "0.1.0", -1},
-	}
-	for _, c := range cases {
-		if got := compareVersions(c.a, c.b); got != c.want {
-			t.Errorf("compareVersions(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
-		}
-	}
-}
-
-func TestArchiveName(t *testing.T) {
-	cases := []struct {
-		ver, goos, goarch string
-		dir, archive      string
-		zipArch           bool
-		wantErr           bool
-	}{
-		{"0.1.2", "linux", "amd64", "ccgp_0.1.2_linux_amd64", "ccgp_0.1.2_linux_amd64.tar.gz", false, false},
-		{"0.1.2", "darwin", "arm64", "ccgp_0.1.2_darwin_arm64", "ccgp_0.1.2_darwin_arm64.tar.gz", false, false},
-		{"0.1.2", "windows", "amd64", "ccgp_0.1.2_windows_amd64", "ccgp_0.1.2_windows_amd64.zip", true, false},
-		{"0.1.2", "windows", "arm64", "ccgp_0.1.2_windows_arm64", "ccgp_0.1.2_windows_arm64.zip", true, false},
-		// Every archive release.yml builds can be updated from.
-		{"0.1.2", "linux", "arm", "ccgp_0.1.2_linux_arm", "ccgp_0.1.2_linux_arm.tar.gz", false, false},
-		{"0.1.2", "linux", "riscv64", "ccgp_0.1.2_linux_riscv64", "ccgp_0.1.2_linux_riscv64.tar.gz", false, false},
-		{"0.1.2", "freebsd", "amd64", "ccgp_0.1.2_freebsd_amd64", "ccgp_0.1.2_freebsd_amd64.tar.gz", false, false},
-		{"0.1.2", "freebsd", "arm64", "ccgp_0.1.2_freebsd_arm64", "ccgp_0.1.2_freebsd_arm64.tar.gz", false, false},
-		{"0.1.2", "linux", "386", "", "", false, true},
-		{"0.1.2", "darwin", "arm", "", "", false, true},
-		{"0.1.2", "freebsd", "riscv64", "", "", false, true},
-	}
-	for _, c := range cases {
-		dir, archive, zipArch, err := archiveName(c.ver, c.goos, c.goarch)
-		if c.wantErr {
-			if err == nil {
-				t.Errorf("archiveName(%s, %s, %s): want error, got %q", c.ver, c.goos, c.goarch, archive)
-			}
-			continue
-		}
-		if err != nil || dir != c.dir || archive != c.archive || zipArch != c.zipArch {
-			t.Errorf("archiveName(%s, %s, %s) = %q, %q, %v, %v; want %q, %q, %v",
-				c.ver, c.goos, c.goarch, dir, archive, zipArch, err, c.dir, c.archive, c.zipArch)
-		}
-	}
-}
-
-func sum(b []byte) string {
-	h := sha256.Sum256(b)
-	return hex.EncodeToString(h[:])
-}
-
-func TestVerifyChecksum(t *testing.T) {
-	data := []byte("archive bytes")
-	sums := fmt.Sprintf("%s  other.tar.gz\n%s  ccgp_0.1.0_linux_amd64.tar.gz\n", sum([]byte("x")), sum(data))
-	if err := verifyChecksum([]byte(sums), "ccgp_0.1.0_linux_amd64.tar.gz", data); err != nil {
-		t.Errorf("valid checksum rejected: %v", err)
-	}
-	if err := verifyChecksum([]byte(sums), "other.tar.gz", data); err == nil {
-		t.Error("mismatching checksum accepted")
-	}
-	if err := verifyChecksum([]byte(sums), "missing.tar.gz", data); err == nil {
-		t.Error("archive missing from SHA256SUMS accepted")
-	}
-}
-
-// buildTarGz packs name -> content pairs as regular files.
-func buildTarGz(t *testing.T, files map[string][]byte) []byte {
-	t.Helper()
-	headers := make([]*tar.Header, 0, len(files))
-	bodies := make(map[string][]byte, len(files))
-	for name, content := range files {
-		headers = append(headers, &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o755, Size: int64(len(content))})
-		bodies[name] = content
-	}
-	return buildTarGzHeaders(t, headers, bodies)
 }

@@ -1,8 +1,8 @@
 package codexh
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,9 +23,12 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/oauth"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server/codexh/tier"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/obs"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server/rt"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server/shared"
+	"github.com/PHPCraftdream/cc-go-proxy/pkg/models"
 	"github.com/coder/websocket"
 	"github.com/gofiber/fiber/v2"
 )
@@ -158,71 +161,6 @@ func TestBackendAskingForNewerClientRaisesConfig(t *testing.T) {
 	status, reply = h.post(t, body)
 	if status != fiber.StatusBadRequest || !strings.Contains(reply, "requires a newer version") || lookups != 1 {
 		t.Errorf("refused again %d (lookups %d): %s", status, lookups, reply)
-	}
-}
-
-func TestDropShownMessage(t *testing.T) {
-	for _, tt := range []struct {
-		name, detail, msg, want string
-		dropped                 bool
-	}{
-		{"error event",
-			`{"type":"error","error":{"code":"cyber_policy","message":"flagged"}}`, "cyber_policy: flagged",
-			`{"type":"error","error":{"code":"cyber_policy","message":"(shown before)"}}`, true},
-		{"response.failed, spaces",
-			`{"type":"response.failed","response":{"error":{"message" : "boom ’x\""}}}`, "server_error: boom ’x\"",
-			`{"type":"response.failed","response":{"error":{"message" : "(shown before)"}}}`, true},
-		{"another message is kept",
-			`{"error":{"message":"other"}}`, "boom", `{"error":{"message":"other"}}`, false},
-		{"a value named message is kept",
-			`{"type":"message","error":{"message":"boom"}}`, "boom", `{"type":"message","error":{"message":"(shown before)"}}`, true},
-		{"empty message is kept",
-			`{"error":{"message":""}}`, "boom", `{"error":{"message":""}}`, false},
-		{"not a string",
-			`{"message":null,"error":{"message":"boom"}}`, "boom", `{"message":null,"error":{"message":"(shown before)"}}`, true},
-		{"broken json", `{"message":"bo`, "boom", `{"message":"bo`, false},
-		{"found inside the reason is another text", `{"error":{"message":"a"}}`, "bad", `{"error":{"message":"a"}}`, false},
-		{"the end of a word is not the message", `{"error":{"message":"boom"}}`, "kaboom", `{"error":{"message":"boom"}}`, false},
-		{"no detail", "", "boom", "", false},
-	} {
-		got, dropped := shared.DropShownMessage(tt.detail, tt.msg)
-		if got != tt.want || dropped != tt.dropped {
-			t.Errorf("%s: got %q, %v; want %q, %v", tt.name, got, dropped, tt.want, tt.dropped)
-		}
-	}
-}
-
-// The live cyber_policy refusal: its long message is written once, whole.
-func TestStreamFailureWritesARepeatedMessageOnce(t *testing.T) {
-	text := "This content was flagged for possible cybersecurity risk. " + strings.Repeat("If this seems wrong, try rephrasing your request. ", 8) + "END"
-	ev := `{"type":"error","error":{"type":"invalid_request_error","code":"cyber_policy","message":"` + text + `","param":null}}`
-	var b bytes.Buffer
-	shared.LogStreamFailure(&b, time.Now(), "stream", "codex", "a -> b", "cyber_policy: "+text, ev, "cf-ray=1")
-	got := b.String()
-	if n := strings.Count(got, "This content was flagged"); n != 1 {
-		t.Errorf("message written %d times: %q", n, got)
-	}
-	want := ": cyber_policy: " + text + ` | upstream event: {"type":"error","error":{"type":"invalid_request_error","code":"cyber_policy","message":"(shown before)","param":null}} | cf-ray=1` + "\n"
-	if !strings.HasSuffix(got, want) {
-		t.Errorf("line %q\nwant suffix %q", got, want)
-	}
-}
-
-func TestUpstreamRetryDropsTheShownMessage(t *testing.T) {
-	var b bytes.Buffer
-	rt.LogUpstreamRetry(&b, "codex", "a -> b", 1, 2, 2*time.Second, "server_is_overloaded: overloaded",
-		`{"type":"error","error":{"code":"server_is_overloaded","message":"overloaded"}}`, "cf-ray=1")
-	want := `server_is_overloaded: overloaded | upstream event: {"type":"error","error":{"code":"server_is_overloaded","message":"(shown before)"}} | cf-ray=1` + "\n"
-	if got := b.String(); !strings.HasSuffix(got, want) {
-		t.Errorf("line %q\nwant suffix %q", got, want)
-	}
-}
-
-// Without a repeat the reason keeps its usual cap.
-func TestEventTextCapsAReasonNotRepeated(t *testing.T) {
-	long := strings.Repeat("x", shared.MaxLogErr+50)
-	if got := shared.EventText(long, `{"error":{"message":"other"}}`); !strings.HasPrefix(got, strings.Repeat("x", shared.MaxLogErr)+"… | upstream event: ") {
-		t.Errorf("got %q", got)
 	}
 }
 
@@ -617,40 +555,6 @@ func TestFastWebsocketSwitch(t *testing.T) {
 	}
 }
 
-// syncBuf is a log sink the stream-writer goroutine and the test share.
-type syncBuf struct {
-	mu sync.Mutex
-	b  bytes.Buffer
-}
-
-func (s *syncBuf) Write(p []byte) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.Write(p)
-}
-
-func (s *syncBuf) String() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.b.String()
-}
-
-// codexCall runs one streaming /v1/messages request through handleCodexMessages
-// against backend and returns the status, body, access log and stream log.
-// codexTestBody replaces the request the helpers send (default: a streaming one).
-var codexTestBody string
-
-func nonStreamBody(t *testing.T) {
-	t.Helper()
-	codexTestBody = `{"model":"claude-opus-5-5","max_tokens":10,"stream":false,"messages":[{"role":"user","content":"hi"}]}`
-	t.Cleanup(func() { codexTestBody = "" })
-}
-
-func codexCall(t *testing.T, backend http.Handler, headerTimeout time.Duration) (status int, body, access, stream string) {
-	t.Helper()
-	return codexCallWith(t, backend, &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: headerTimeout}}, nil)
-}
-
 // codexCallWith is codexCall with the upstream client and a change to the profile's config given.
 func codexCallWith(t *testing.T, backend http.Handler, client *http.Client, tweak func(*config.Config)) (status int, body, access, stream string) {
 	t.Helper()
@@ -697,144 +601,225 @@ func codexCallWith(t *testing.T, backend http.Handler, client *http.Client, twea
 	return resp.StatusCode, string(b), al.String(), sl.String()
 }
 
-func TestStalledBackendIs502WithReasonInLog(t *testing.T) {
-	status, _, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Reading the body lets the server notice the client hanging up; without
-		// it the handler, and so httptest.Server.Close, would block forever.
-		_, _ = io.Copy(io.Discard, r.Body)
-		<-r.Context().Done()
-	}), 100*time.Millisecond)
-	if status != fiber.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", status)
-	}
-	if !strings.Contains(access, " 502 - ") || !strings.Contains(access, "timeout awaiting response headers") {
-		t.Errorf("access log = %q", access)
-	}
-	// Which connection it waited on tells a dead one from a bad route.
-	if !strings.Contains(access, " | conn new (dns ") {
-		t.Errorf("access log lacks the connection: %q", access)
-	}
-}
-
-func TestUpstreamErrorMessageIsLogged(t *testing.T) {
-	status, _, access, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
-		_, _ = w.Write([]byte(`{"error":{"message":"usage limit reached"}}`))
-	}), time.Minute)
-	if status != fiber.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429", status)
-	}
-	if !strings.Contains(access, " 429 - ") || !strings.Contains(access, ": codex: usage limit reached") {
-		t.Errorf("access log = %q", access)
-	}
-}
-
-// A refusal by the edge (a 403 page) names the ids and the verdict of the edge
-// and shows what the page says, so a challenge can be told from a block.
-func TestEdgeRefusalLogsIdsAndPageText(t *testing.T) {
-	fastRetries(t, 2)
-	var calls atomic.Int32
-	status, body, access, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Cf-Ray", "abc123-PIT")
-		w.Header().Set("Cf-Mitigated", "challenge")
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`<html><body><script>var a=1;</script><h1>Enable JavaScript</h1></body></html>`))
-	}), time.Minute)
-	if status != fiber.StatusForbidden || !strings.Contains(body, "html error page: Enable JavaScript") {
-		t.Fatalf("status %d, body %q", status, body)
-	}
-	for _, want := range []string{" 403 - ", "html error page: Enable JavaScript | cf-ray=abc123-PIT cf-mitigated=challenge | conn "} {
-		if !strings.Contains(access, want) {
-			t.Errorf("access log lacks %q: %q", want, access)
-		}
-	}
-	if strings.Contains(access, "var a") {
-		t.Errorf("a script reached the log: %q", access)
-	}
-	// A page is the edge's, not the backend's: asked again, twice, then given up.
-	if calls.Load() != 3 {
-		t.Errorf("backend calls = %d, want 3 (the request and two retries)", calls.Load())
-	}
-	for _, want := range []string{"upstream retry 1/2", "upstream retry 2/2", "HTTP 403: html error page: Enable JavaScript", "cf-ray=abc123-PIT cf-mitigated=challenge | conn new"} {
-		if !strings.Contains(stream, want) {
-			t.Errorf("stream log lacks %q: %q", want, stream)
-		}
-	}
-}
-
-// A page the edge turned the connection away with is asked again; the address
-// the page names reaches the log whole, and the retry gets a fresh connection.
-func TestBlockedRouteIsAskedAgainOnAFreshConnection(t *testing.T) {
-	fastRetries(t, 2)
-	var calls, dials atomic.Int32
-	ok := overloadBackend(new(atomic.Int32), 0)
-	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			_, _ = io.Copy(io.Discard, r.Body)
-			w.Header().Set("Cf-Ray", "ray-hel")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = io.WriteString(w, `<html><body><p>Unable to load site Please try again later. If you are using a VPN, try turning it off. `+
-				`Check the status page for information on outages. [IP: 203.0.113.7]</p></body></html>`)
+// connectProxy is an HTTP CONNECT proxy that counts its tunnels.
+func connectProxy(t *testing.T) (proxyURL string, tunnels *atomic.Int32) {
+	t.Helper()
+	tunnels = &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		up, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		ok.ServeHTTP(w, r)
-	})
-	router := connpool.NewRouter(0, 1, 1, func() *http.Transport {
-		return &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			dials.Add(1)
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
-		}}
-	})
-	status, body, _, stream := codexCallWith(t, backend, &http.Client{Transport: router}, nil)
-	if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
-		t.Fatalf("status %d, body %q: want the answer of the second call", status, body)
-	}
-	if calls.Load() != 2 {
-		t.Errorf("backend calls = %d, want 2", calls.Load())
-	}
-	// The block was met on the first connection; the retry must not reuse it.
-	if dials.Load() != 2 {
-		t.Errorf("connections opened = %d, want 2: the retry needs a new one", dials.Load())
-	}
-	for _, want := range []string{"upstream retry 1/2", "[IP: 203.0.113.7]", "cf-ray=ray-hel | conn new"} {
-		if !strings.Contains(stream, want) {
-			t.Errorf("stream log lacks %q: %q", want, stream)
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		tunnels.Add(1)
+		_, _ = io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\n")
+		go func() { _, _ = io.Copy(c, up); _ = c.Close() }()
+		_, _ = io.Copy(up, c)
+		_ = up.Close()
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, tunnels
+}
+
+// A profile uses the global proxy unless it has a proxy of its own, or none.
+func TestCodexRequestsFollowTheProfileProxy(t *testing.T) {
+	var calls atomic.Int32
+	backend := overloadBackend(&calls, 0) // always a complete answer
+	global, viaGlobal := connectProxy(t)
+	own, viaOwn := connectProxy(t)
+
+	run := func(profile string) {
+		t.Helper()
+		router := connpool.NewRouter(0, 1, 1, nil)
+		status, body, _, _ := codexCallWith(t, backend, &http.Client{Transport: router}, func(cfg *config.Config) {
+			cfg.Profile = profile
+			cfg.ConnectionsProxy = global
+			cfg.Profiles = map[string]*config.Profile{
+				"inherits": {Name: "inherits", Provider: "codex"},
+				"direct":   {Name: "direct", Provider: "codex", Proxy: config.ProxyNone},
+				"own":      {Name: "own", Provider: "codex", Proxy: own},
+			}
+		})
+		if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+			t.Fatalf("%s: status %d, body %q", profile, status, body)
 		}
 	}
-}
-
-// The backend's own 403 is JSON: it is the client's to see, not to be asked again.
-func TestBackendForbiddenIsNotAskedAgain(t *testing.T) {
-	fastRetries(t, 2)
-	var calls atomic.Int32
-	status, body, access, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"error":{"message":"not allowed for this account"}}`)
-	}), time.Minute)
-	if status != fiber.StatusForbidden || !strings.Contains(body, "not allowed for this account") {
-		t.Fatalf("status %d, body %q: want the backend's 403", status, body)
+	run("inherits")
+	if g, o := viaGlobal.Load(), viaOwn.Load(); g != 1 || o != 0 {
+		t.Fatalf("inherits: tunnels global %d, own %d; want 1 and 0", g, o)
 	}
-	if calls.Load() != 1 || stream != "" {
-		t.Errorf("backend calls = %d, log %q: a JSON 403 must not be retried", calls.Load(), stream)
+	run("direct")
+	if g, o := viaGlobal.Load(), viaOwn.Load(); g != 1 || o != 0 {
+		t.Fatalf("direct: tunnels global %d, own %d; want no new tunnel", g, o)
 	}
-	if !strings.Contains(access, " 403 - ") || !strings.Contains(access, "codex: not allowed for this account") {
-		t.Errorf("access log = %q", access)
+	run("own")
+	if g, o := viaGlobal.Load(), viaOwn.Load(); g != 1 || o != 1 {
+		t.Fatalf("own: tunnels global %d, own %d; want 1 and 1", g, o)
 	}
 }
 
-// A gateway error is still asked again, and the failed line says which connection it was on.
-func TestGatewayErrorLineNamesTheConnection(t *testing.T) {
-	fastRetries(t, 1)
-	status, _, access, stream := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = io.WriteString(w, "bad gateway")
-	}), time.Minute)
-	if status != fiber.StatusBadGateway {
-		t.Fatalf("status %d, want 502", status)
+func TestOpenAIRequestsFollowTheProfileProxy(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer backend.Close()
+	global, viaGlobal := connectProxy(t)
+	oldT := rt.OpenAITransport
+	t.Cleanup(func() { rt.OpenAITransport = oldT })
+
+	call := func(profile string, proxy string) {
+		t.Helper()
+		rt.OpenAITransport = connpool.NewRouter(0, 1, 1, nil)
+		cfg := &config.Config{
+			Profile: profile, OpenAIBaseURL: backend.URL, ConnectionsProxy: global,
+			Profiles: map[string]*config.Profile{profile: {Name: profile, Proxy: proxy}},
+		}
+		if _, err := rt.CallOpenAIInternal(&models.OpenAIRequest{Model: "m"}, cfg); err != nil {
+			t.Fatalf("%s: %v", profile, err)
+		}
 	}
-	if !strings.Contains(stream, "upstream retry 1/1") || !strings.Contains(access, " 502 - ") || !strings.Contains(access, "| conn ") {
-		t.Errorf("stream %q, access %q", stream, access)
+	call("inherits", "")
+	if g := viaGlobal.Load(); g != 1 {
+		t.Fatalf("inherits: tunnels = %d, want 1", g)
+	}
+	call("direct", config.ProxyNone)
+	if g := viaGlobal.Load(); g != 1 {
+		t.Fatalf("direct: tunnels = %d, want no new one", g)
 	}
 }
+
+func TestUpstreamCtxCarriesTheProfileChoice(t *testing.T) {
+	global, _ := proxydial.Parse("socks5://127.0.0.1:1080")
+	cfg := &config.Config{
+		Profile: "p", ConnectionsProxy: global.String(),
+		Profiles: map[string]*config.Profile{"p": {Name: "p", Proxy: config.ProxyNone}},
+	}
+	if c := proxydial.ChoiceFor(rt.UpstreamCtx(context.Background(), cfg)); !c.Direct {
+		t.Errorf("profile none: %+v", c)
+	}
+	cfg.Profiles["p"].Proxy = ""
+	if c := proxydial.ChoiceFor(rt.UpstreamCtx(context.Background(), cfg)); c.URL == nil || c.URL.Host != "127.0.0.1:1080" {
+		t.Errorf("inheriting profile: %+v", c)
+	}
+}
+
+// lastCodexClose is whether that reply closed its connection (the client drops the header).
+var lastCodexClose bool
+
+// A registration is active only for the lifetime of its request, including
+// paths that fail before a response can be translated.
+func TestCodexPromptRegistrationFinishesOnEveryExit(t *testing.T) {
+	oldWatch := obs.PromptWatch
+	t.Cleanup(func() { obs.PromptWatch = oldWatch })
+	keyedBody := func(stream bool) string {
+		return `{"model":"claude-opus-5-5","max_tokens":10,"stream":` + map[bool]string{true: "true", false: "false"}[stream] + `,"metadata":{"user_id":"shared-subagent-session"},"messages":[{"role":"user","content":"hi"}]}`
+	}
+	assertFinished := func(t *testing.T) {
+		t.Helper()
+		active, entries, unended := obs.PromptWatch.Pending()
+		if active != 0 {
+			t.Errorf("active prompt keys remain: %d", active)
+		}
+		if entries != 1 {
+			t.Errorf("watched entries = %d, want one", entries)
+		}
+		for _, key := range unended {
+			t.Errorf("current watched request %q has no end time", key)
+		}
+	}
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { okStream(w) })
+
+	t.Run("transport error", func(t *testing.T) {
+		obs.PromptWatch = &obs.CacheWatch{}
+		codexTestBody = keyedBody(true)
+		t.Cleanup(func() { codexTestBody = "" })
+		client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("injected transport failure")
+		})}
+		status, _, _, _ := codexCallWith(t, backend, client, nil)
+		if status != fiber.StatusBadGateway {
+			t.Fatalf("status = %d, want 502", status)
+		}
+		assertFinished(t)
+	})
+
+	t.Run("non-2xx response", func(t *testing.T) {
+		obs.PromptWatch = &obs.CacheWatch{}
+		codexTestBody = keyedBody(true)
+		t.Cleanup(func() { codexTestBody = "" })
+		status, _, _, _ := codexCall(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad request"}}`))
+		}), time.Minute)
+		if status != fiber.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+		assertFinished(t)
+	})
+
+	t.Run("successful non-stream", func(t *testing.T) {
+		obs.PromptWatch = &obs.CacheWatch{}
+		codexTestBody = keyedBody(false)
+		t.Cleanup(func() { codexTestBody = "" })
+		status, _, _, _ := codexCall(t, backend, time.Minute)
+		if status != fiber.StatusOK {
+			t.Fatalf("status = %d, want 200", status)
+		}
+		assertFinished(t)
+	})
+
+	t.Run("successful stream", func(t *testing.T) {
+		obs.PromptWatch = &obs.CacheWatch{}
+		codexTestBody = keyedBody(true)
+		t.Cleanup(func() { codexTestBody = "" })
+		status, _, _, _ := codexCall(t, backend, time.Minute)
+		if status != fiber.StatusOK {
+			t.Fatalf("status = %d, want 200", status)
+		}
+		assertFinished(t)
+	})
+}
+
+func TestCodexHTTPWithoutUserIDOmitsSessionCacheKey(t *testing.T) {
+	var upgrades, posts atomic.Int32
+	var mu sync.Mutex
+	var headers http.Header
+	var request map[string]json.RawMessage
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			upgrades.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		posts.Add(1)
+		mu.Lock()
+		headers = r.Header.Clone()
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &request)
+		mu.Unlock()
+		okStream(w)
+	})
+	h := newCodexWSTestHarness(t, backend, "websocket")
+	status, body := h.post(t, `{"model":"claude-opus-5-5","max_tokens":10,"stream":true,"messages":[{"role":"user","content":"no cache key"}]}`)
+	if status != fiber.StatusOK || !strings.Contains(body, "message_stop") {
+		t.Fatalf("status %d, body %q", status, body)
+	}
+	mu.Lock()
+	gotHeaders, gotRequest := headers.Clone(), request
+	mu.Unlock()
+	if gotHeaders.Get("session-id") != "" || upgrades.Load() != 0 || posts.Load() != 1 {
+		t.Errorf("HTTP session-id=%q websocket upgrades=%d HTTP posts=%d; want omitted, 0 and 1", gotHeaders.Get("session-id"), upgrades.Load(), posts.Load())
+	}
+	if _, ok := gotRequest["prompt_cache_key"]; ok {
+		t.Errorf("HTTP request contains an invented prompt_cache_key: %s", gotRequest["prompt_cache_key"])
+	}
+}
+
+// roundTripFunc is an http.RoundTripper made of a function.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

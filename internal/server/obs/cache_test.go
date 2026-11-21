@@ -751,3 +751,94 @@ func TestCacheWatchTracksConcurrentGenerations(t *testing.T) {
 		t.Fatalf("old generation cleanup left %d active; want re-added generation only", afterOldDone.running)
 	}
 }
+
+func TestCacheWatchMarksRunningHistoryBranches(t *testing.T) {
+	tests := []struct {
+		name       string
+		prev, cur  []uint64
+		complete   bool
+		wantBranch bool
+	}{
+		{"active mismatch", []uint64{1, 2, 3}, []uint64{1, 9, 3}, false, true},
+		{"identical", []uint64{1, 2}, []uint64{1, 2}, false, false},
+		{"extension", []uint64{1, 2}, []uint64{1, 2, 3}, false, false},
+		{"truncation", []uint64{1, 2, 3}, []uint64{1, 2}, false, false},
+		{"no previous hashes", nil, []uint64{1}, false, false},
+		{"no current hashes", []uint64{1}, nil, false, false},
+		{"completed mismatch", []uint64{1, 2}, []uint64{1, 9}, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := &CacheWatch{}
+			f := fp("branch-key", "s", "t", len(tt.prev))
+			prev := w.See(f, tt.prev)
+			if tt.complete {
+				w.Finish(f.Key, prev.Generation)
+			}
+			current := fp(f.Key, "s", "t", len(tt.cur))
+			reg := w.See(current, tt.cur)
+			if reg.branch != tt.wantBranch {
+				t.Errorf("branch = %t, want %t", reg.branch, tt.wantBranch)
+			}
+			text := PromptText(current, reg, time.Now())
+			marker := "branch: history diverges from the last request while it is running"
+			if strings.Contains(text, marker) != tt.wantBranch {
+				t.Errorf("formatted branch marker in %q, want present=%t", text, tt.wantBranch)
+			}
+		})
+	}
+}
+
+// A big prompt with nothing read from the cache is marked; small ones and
+// cached ones are not.
+func TestSummaryMarksACacheMiss(t *testing.T) {
+	start := time.Unix(1000, 0)
+	for _, c := range []struct {
+		name  string
+		usage sse.Usage
+		want  bool
+	}{
+		{"big, nothing cached", sse.Usage{Input: 575000, Cached: 0, Output: 10}, true},
+		{"big, mostly cached", sse.Usage{Input: 575000, Cached: 470000, Output: 10}, false},
+		{"small, nothing cached", sse.Usage{Input: 900, Output: 10}, false},
+		{"at the limit", sse.Usage{Input: cacheMissMin}, true},
+	} {
+		u := &UpstreamTrace{Start: start}
+		got := u.Summary(&sse.Translator{Usage: c.usage}, start.Add(time.Second), 10)
+		if has := strings.Contains(got, "| cache miss"); has != c.want {
+			t.Errorf("%s: cache miss marked = %v, want %v: %q", c.name, has, c.want, got)
+		}
+	}
+}
+
+// A prompt read from the cache for less than 90% is marked with the share; the
+// edges of the rule are exact, and small prompts are never marked.
+func TestCacheMark(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		usage sse.Usage
+		want  string
+	}{
+		{"nothing cached", sse.Usage{Input: 500000}, "cache miss"},
+		{"64 percent", sse.Usage{Input: 732972, Cached: 469888}, "cache partial 64% (469888 of 732972)"},
+		{"just under the share", sse.Usage{Input: 100000, Cached: 89999}, "cache partial 89% (89999 of 100000)"},
+		{"exactly the share", sse.Usage{Input: 100000, Cached: 90000}, ""},
+		{"all cached", sse.Usage{Input: 500000, Cached: 500000}, ""},
+		{"small and partial", sse.Usage{Input: cacheMissMin - 1, Cached: 10}, ""},
+		{"at the minimum and partial", sse.Usage{Input: cacheMissMin, Cached: 10}, "cache partial 0% (10 of 10000)"},
+		{"no usage", sse.Usage{}, ""},
+	} {
+		if got := cacheMark(c.usage); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSummaryMarksAPartialCache(t *testing.T) {
+	start := time.Unix(1000, 0)
+	u := &UpstreamTrace{Start: start}
+	got := u.Summary(&sse.Translator{Usage: sse.Usage{Input: 575000, Cached: 470000, Output: 10}}, start.Add(time.Second), 10)
+	if !strings.Contains(got, "| tokens in 575000 (cached 470000) out 10 (reasoning 0) | cache partial 81% (470000 of 575000)") || strings.Contains(got, "cache miss") {
+		t.Errorf("summary = %q", got)
+	}
+}
