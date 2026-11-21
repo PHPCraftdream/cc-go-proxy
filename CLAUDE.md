@@ -68,7 +68,8 @@ Guidance for Claude Code when working in this repository.
 At most 1000 lines in a file and 7 code files (`.go`, `.mjs`, `.sh`, `.cmd`, `.ps1`, …, tests included) in a directory;
 subdirectories do not count toward their parent. `node scripts/ci/limits.mjs` checks the tracked files, CI runs it. A file or
 directory over a limit is split, and in Go a subdirectory is a package of its own: cut along the seams of the code, export
-only what crosses a seam, and move a test with the code it tests.
+only what crosses a seam, and move a test with the code it tests. Name a test file after what it checks (`parity_test.go`,
+`retry_test.go`), never by a number.
 
 ## Gotchas
 
@@ -117,3 +118,6 @@ The whole suite runs in these cases:
 
 A partial run skips the coverage upload. Vet, build, lint and cross-compile jobs run in every case. Runs on main are never
 cancelled by a newer push: each push is tested by its own diff.
+
+The installers (`install.sh`, `install.ps1`) are checked against the published release by their own workflow,
+`.github/workflows/installers.yml`: when an installer changes, weekly, and by hand; not on every push.

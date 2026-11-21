@@ -6,15 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
+	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/cc-go-proxy/internal/codex"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/connpool"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/chat"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/server/obs"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server/rt"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/server/shared"
 	"github.com/gofiber/fiber/v2"
@@ -325,8 +332,6 @@ func waitForCount(t *testing.T, f *rt.InFlight, want int64) {
 	}
 }
 
-const authTestToken = "0123456789abcdef0123456789abcdef"
-
 func newAuthApp(build shared.ProfileBuilder) *fiber.App {
 	app := fiber.New()
 	idx := creds.StaticIndex("work", authTestToken)
@@ -467,92 +472,229 @@ func TestErrorHandlerLogsRejections(t *testing.T) {
 	}
 }
 
-// tcpPair is a connected pair of loopback TCP connections: server and client side.
-func tcpPair(t *testing.T) (server, client net.Conn) {
+func TestApplyConnectionLimits(t *testing.T) {
+	t.Cleanup(func() { applyConnectionLimits(&config.Config{}) })
+	if a, n := applyConnectionLimits(&config.Config{ConnectionsActive: 3, ConnectionsTotal: 4}); a != 3 || n != 4 {
+		t.Fatalf("applied %d/%d", a, n)
+	}
+	for name, rt := range map[string]http.RoundTripper{
+		"codex": codex.HTTPClient.Transport, "anthropic": chat.UpstreamClient.Transport, "openai": rt.OpenAITransport,
+	} {
+		tr, ok := rt.(*connpool.Router)
+		if !ok {
+			t.Errorf("%s: transport %T, want *connpool.Router", name, rt)
+			continue
+		}
+		if a, n := tr.Limits(); a != 3 || n != 4 {
+			t.Errorf("%s: limits %d/%d, want 3/4", name, a, n)
+		}
+	}
+}
+
+func TestWriteUpstreamStats(t *testing.T) {
+	ts := upstreamTransports()
+	if len(ts) != 3 {
+		t.Fatalf("transports = %d, want codex, anthropic and openai", len(ts))
+	}
+	for _, r := range ts {
+		r.Stats() // other tests in the package count too: start from zero
+	}
+	var b strings.Builder
+	writeUpstreamStats(&b, time.Unix(0, 0), ts)
+	if b.Len() != 0 {
+		t.Errorf("quiet transports logged %q", b.String())
+	}
+
+	// A client that retried a dropped connection gets a line.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = c.Close()
+		}
+	}))
+	defer srv.Close()
+	router := connpool.NewRouter(0, 1, 1, nil)
+	resp, err := (&http.Client{Transport: router}).Post(srv.URL, "text/plain", strings.NewReader("x"))
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("a dropped connection produced an answer")
+	}
+	b.Reset()
+	writeUpstreamStats(&b, time.Unix(0, 0), map[string]*connpool.Router{"codex": router})
+	if got := b.String(); !strings.Contains(got, "upstream stats [codex]: ") || !strings.Contains(got, "0 after connect failures, 2 after broken connections") {
+		t.Errorf("stats line = %q", got)
+	}
+}
+
+// The profile and connection settings are read again when config.ktav changes:
+// a profile's proxy, the limits and the global proxy all follow the file, a
+// broken file leaves the previous settings in force.
+func TestConfigReloadAppliesProxyAndLimits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	t.Setenv(config.ConfigFileEnv, path)
+	t.Cleanup(func() {
+		proxydial.SetDefault(nil)
+		applyConnectionLimits(&config.Config{})
+	})
+	text := func(top, profileProxy string) string {
+		p := ""
+		if profileProxy != "" {
+			p = "        proxy: " + profileProxy + "\n"
+		}
+		return top + "providers: [\n    {\n        name: p\n        type: codex\n    }\n]\n\n" +
+			"profiles: [\n    {\n        name: a\n        provider: p\n" + p + "    }\n    {\n        name: b\n        provider: p\n    }\n]\n"
+	}
+	t0 := time.Now().Add(-time.Hour)
+	write := func(body string, n int) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mod := t0.Add(time.Duration(n) * 3 * time.Second) // a new modification time each time
+		if err := os.Chtimes(path, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write(text("", ""), 0)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := newCfgSource(cfg)
+	if src.get() != cfg {
+		t.Fatal("an unchanged file produced a new config")
+	}
+
+	write(text("connections.active: 3\nconnections.total: 4\nconnections.proxy: http://corp:3128\n\n", "none"), 1)
+	got := src.get()
+	if got == cfg {
+		t.Fatal("the changed file was not read")
+	}
+	if a, n := got.ConnectionLimits(); a != 3 || n != 4 {
+		t.Errorf("limits = %d/%d, want 3/4", a, n)
+	}
+	for name, r := range upstreamTransports() {
+		if a, n := r.Limits(); a != 3 || n != 4 {
+			t.Errorf("%s router limits = %d/%d after the reload, want 3/4", name, a, n)
+		}
+	}
+	if c := got.ProxyChoice("a"); !c.Direct {
+		t.Errorf("profile a (proxy none) = %+v, want direct", c)
+	}
+	if c := got.ProxyChoice("b"); c.URL == nil || c.URL.Host != "corp:3128" {
+		t.Errorf("profile b (inherits) = %+v, want the global proxy", c)
+	}
+	if d := proxydial.Default(); d == nil || d.Host != "corp:3128" {
+		t.Errorf("default proxy = %v, want the global one", d)
+	}
+
+	write("providers: [\n", 2) // broken: the previous settings stay
+	if again := src.get(); again != got {
+		t.Error("a broken file replaced the working config")
+	}
+	if a, _ := got.ConnectionLimits(); a != 3 {
+		t.Errorf("limits changed to %d", a)
+	}
+
+	write(text("connections.active: 5\n\n", "socks5://other:1080"), 3)
+	fixed := src.get()
+	if fixed == got {
+		t.Fatal("the repaired file was not read")
+	}
+	if a, n := fixed.ConnectionLimits(); a != 5 || n != 10 {
+		t.Errorf("limits = %d/%d, want 5/10 (total back at its default)", a, n)
+	}
+	if c := fixed.ProxyChoice("a"); c.URL == nil || c.URL.Host != "other:1080" {
+		t.Errorf("profile a = %+v, want its own proxy", c)
+	}
+	if c := fixed.ProxyChoice("b"); c.URL != nil || c.Direct {
+		t.Errorf("profile b = %+v, want the environment's way (no global proxy any more)", c)
+	}
+	if proxydial.Default() != nil {
+		t.Error("the removed global proxy is still the default")
+	}
+}
+
+// The monitoring reads these lines; their shape is a contract.
+func TestLogLineShapes(t *testing.T) {
+	start := time.Now().Add(-1500 * time.Millisecond)
+	line := func(f func(w io.Writer)) string {
+		var b bytes.Buffer
+		f(&b)
+		return b.String()
+	}
+	hms := `\[\d\d:\d\d:\d\d\] `
+	tests := []struct {
+		name, got, want string
+	}{
+		{"failure", line(func(w io.Writer) {
+			shared.LogStreamFailure(w, start, "stream", "codex", "a -> b", "boom", `{"type":"error"}`, "x-request-id=r1 | conn new")
+		}), `^` + hms + `stream failed after \S+ \[codex\] a -> b: boom \| upstream event: \{"type":"error"\} \| x-request-id=r1 \| conn new\n$`},
+		{"failure without details", line(func(w io.Writer) { shared.LogStreamFailure(w, start, "stream", "codex", "a -> b", "boom", "", "") }),
+			`^` + hms + `stream failed after \S+ \[codex\] a -> b: boom\n$`},
+		{"slow", line(func(w io.Writer) { rt.LogSlowStream(w, start, "stream", "codex", "a -> b", "conn reused | total 3m") }),
+			`^` + hms + `slow stream \S+ \[codex\] a -> b: conn reused \| total 3m\n$`},
+		{"canceled", line(func(w io.Writer) { rt.LogStreamCanceled(w, start, "stream", "codex", "a -> b", "conn new") }),
+			`^` + hms + `stream canceled by client after \S+ \[codex\] a -> b: conn new\n$`},
+		{"overload retry", line(func(w io.Writer) {
+			rt.LogUpstreamRetry(w, "codex", "a -> b", 1, 2, 2*time.Second, "overloaded", `{"x":1}`, "cf-ray=1")
+		}), `^` + hms + `upstream retry 1/2 in 2s \[codex\] a -> b: overloaded \| upstream event: \{"x":1\} \| cf-ray=1\n$`},
+		{"reconnect", line(func(w io.Writer) {
+			obs.LogReconnect(w, "codex", "a -> b", 2, 1500*time.Millisecond, "wsasend: aborted", "reused, idle 52s, pool 8m12s", "")
+		}), `^` + hms + `upstream reconnect 2 after 1\.5s \[codex\] a -> b: wsasend: aborted \| the failed try was on a reused, idle 52s, pool 8m12s connection\n$`},
+		{"rate limit", line(func(w io.Writer) { shared.LogRateRetry(w, "codex", "a -> b", 2*time.Second, "retry-after=2") }),
+			`^` + hms + `upstream rate limit: retrying in 2s \[codex\] a -> b: retry-after=2\n$`},
+	}
+	for _, tt := range tests {
+		if !regexp.MustCompile(tt.want).MatchString(tt.got) {
+			t.Errorf("%s: line %q does not match %s", tt.name, tt.got, tt.want)
+		}
+	}
+}
+
+// A proxy password must never reach the log or the console.
+func TestProxyTextHidesThePassword(t *testing.T) {
+	cfg := &config.Config{ConnectionsProxy: "socks5://me:s3cret@proxy.example:1080"}
+	if got := proxyText(cfg); got != "socks5://me:***@proxy.example:1080" || strings.Contains(got, "s3cret") {
+		t.Errorf("proxyText = %q", got)
+	}
+	if got := proxyText(&config.Config{}); got != "none" {
+		t.Errorf("no proxy: %q", got)
+	}
+}
+
+// The route must be mounted by the same function Start uses, behind auth.
+func TestRegisterCallRoutesMountsModelRoute(t *testing.T) {
+	app := fiber.New()
+	registerCallRoutes(app, shared.RequireProfile(creds.StaticIndex("work", authTestToken),
+		func(string) (*config.Config, error) {
+			return &config.Config{Profile: "work", DefaultModel: "mapped"}, nil
+		}),
+		shared.NewSessions(creds.Store{Dir: t.TempDir()}))
+
+	status, body := routeGet(t, app, "/call/"+authTestToken+"/model?requested=claude-opus-5-5")
+	if status != fiber.StatusOK || !strings.Contains(body, `"backendModel":"mapped"`) {
+		t.Fatalf("mounted route: status %d body %s", status, body)
+	}
+	if status, _ := routeGet(t, app, "/call/wrong/model?requested=claude-opus-5-5"); status != fiber.StatusNotFound {
+		t.Fatalf("unknown token: status %d, want 404", status)
+	}
+	if status, body := routeGet(t, app, "/call/"+authTestToken+"/"); status != fiber.StatusOK || !strings.Contains(body, `"profile":"work"`) {
+		t.Fatalf("info route: status %d body %s", status, body)
+	}
+}
+
+func routeGet(t *testing.T, app *fiber.App, path string) (int, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	resp, err := app.Test(httptest.NewRequest("GET", path, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = ln.Close() }()
-	accepted := make(chan net.Conn, 1)
-	go func() {
-		c, _ := ln.Accept()
-		accepted <- c
-	}()
-	client, err = net.Dial("tcp", ln.Addr().String())
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server = <-accepted
-	if server == nil {
-		t.Fatal("accept failed")
-	}
-	t.Cleanup(func() { _ = server.Close(); _ = client.Close() })
-	return server, client
-}
-
-func TestWatchClientGoneTellsAClosedClient(t *testing.T) {
-	server, client := tcpPair(t)
-	gone := make(chan struct{}, 1)
-	stop := rt.WatchClientGone(server, func() { gone <- struct{}{} })
-	defer stop()
-	_ = client.Close()
-	select {
-	case <-gone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the closed client was not told")
-	}
-}
-
-func TestWatchClientGoneStopsQuietlyAndLeavesTheConnectionUsable(t *testing.T) {
-	server, client := tcpPair(t)
-	var calls atomic.Int32
-	stop := rt.WatchClientGone(server, func() { calls.Add(1) })
-	time.Sleep(2 * rt.ClientWatchTick) // a few idle rounds
-	started := time.Now()
-	stop()
-	stop() // twice is harmless
-	if took := time.Since(started); took > 2*rt.ClientWatchTick {
-		t.Errorf("stop took %s", took)
-	}
-	if calls.Load() != 0 {
-		t.Fatal("a client that stayed was taken for gone")
-	}
-	// No deadline is left behind: the connection still reads and writes.
-	if _, err := client.Write([]byte("x")); err != nil {
-		t.Fatal(err)
-	}
-	var b [1]byte
-	if _, err := io.ReadFull(server, b[:]); err != nil || b[0] != 'x' {
-		t.Fatalf("read after the watch: %q, %v", b[:], err)
-	}
-	_ = client.Close()
-	time.Sleep(100 * time.Millisecond)
-	if calls.Load() != 0 {
-		t.Error("the watch went on after stop")
-	}
-}
-
-func TestWatchClientGoneIgnoresAConnectionThatIsNotTCP(t *testing.T) {
-	a, b := net.Pipe()
-	defer func() { _ = a.Close(); _ = b.Close() }()
-	var calls atomic.Int32
-	stop := rt.WatchClientGone(a, func() { calls.Add(1) })
-	_ = b.Close()
-	time.Sleep(50 * time.Millisecond)
-	stop()
-	if calls.Load() != 0 {
-		t.Error("an in-memory connection was watched")
-	}
-}
-
-// A request without streaming sends nothing until its reply is complete; when
-// its client goes away meanwhile, the upstream call is canceled and the log says
-// so, whether the backend's reply had started (headers and a first event in) or
-// not (the client left while ccgp waited for the headers: once only a race of
-// the first case on a slow runner, which left no canceled line).
-func TestNonStreamReplyIsCanceledWhenTheClientGoesAway(t *testing.T) {
-	t.Run("reply started", func(t *testing.T) { nonStreamClientLeaves(t, true) })
-	t.Run("before the reply", func(t *testing.T) { nonStreamClientLeaves(t, false) })
+	return resp.StatusCode, string(raw)
 }

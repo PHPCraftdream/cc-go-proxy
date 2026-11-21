@@ -525,23 +525,3 @@ func TestDoctorLeavesClaudeProfilesToClaudeCode(t *testing.T) {
 		t.Errorf("login check with a key = %+v", checks)
 	}
 }
-
-func write(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// waitFor polls cond until it holds or the timeout elapses.
-func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("condition not met within timeout")
-}

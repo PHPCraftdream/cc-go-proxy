@@ -436,7 +436,7 @@ Whatever a command can do the interface can, and whatever the interface offers a
 settings (`ccgp --profile set zai default_model glm-5.3`, `ccgp --provider set zai base_url …`). The only commands
 the interface does not have are `--serve` (it runs the server in the foreground), `--completion` (a script for the
 shell), `--help` (every screen shows its keys) and the flag that starts the interface itself. A test
-(`cmd/ccgp/parity_test.go`) crawls every screen and every command and fails when either side has something the other
+(`cmd/ccgp/tui/parity_test.go`) crawls every screen and every command and fails when either side has something the other
 has not; for the edits it also runs the command and the keys on the same config and compares the files they leave.
 
 It needs `config.ktav`; in the env-only mode (no config file, `PROXY_TOKEN` in the environment) it says so and exits.

@@ -2,23 +2,314 @@ package tui
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/cli"
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/core"
-	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/sess"
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/tune"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
-	"github.com/PHPCraftdream/cc-go-proxy/internal/config/cfgedit"
 	peakcfg "github.com/PHPCraftdream/cc-go-proxy/internal/config/peak"
+	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/proxydial"
+	tea "github.com/charmbracelet/bubbletea"
 )
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+var testNames = cli.CompletionNames{
+	Profiles:  func() []string { return []string{"codex", "codex2", "zai"} },
+	Providers: func() []string { return []string{"codex", "zai"} },
+}
+
+// tui plays the interface: keys go to Update, the screen is what View draws.
+type tui struct {
+	t          *testing.T
+	a          *app
+	cfgPath    string
+	claudeBase string
+	store      creds.Store
+	ran        []ran
+}
+
+// ran is a command the interface started: its arguments, and whether it had
+// the terminal.
+type ran struct {
+	args     []string
+	terminal bool
+}
+
+// fakeRun stands for runSelf: it records the command and answers at once.
+func (h *tui) fakeRun(title string, args []string, terminal bool) tea.Cmd {
+	h.ran = append(h.ran, ran{args: args, terminal: terminal})
+	return func() tea.Msg {
+		if terminal {
+			return termDoneMsg{title: title}
+		}
+		return outputMsg{title: title, text: "output of ccgp " + strings.Join(args, " ")}
+	}
+}
+
+// settle runs the command a key returned and gives its answer to the model,
+// as the program does.
+func (h *tui) settle(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch m := cmd().(type) {
+	case outputMsg, termDoneMsg:
+		h.a.Update(m)
+	}
+}
+
+// open opens items by their ids: "profile:zai" is the item of the id profile
+// whose label starts with zai. It fails when an item is not there.
+func (h *tui) open(path ...string) {
+	h.t.Helper()
+	for _, step := range path {
+		id, name, _ := strings.Cut(step, ":")
+		m, ok := h.a.top().(*menu)
+		if !ok {
+			h.t.Fatalf("the top screen is not a menu at %q:\n%s", step, h.view())
+		}
+		at := -1
+		for i, it := range m.items(h.a) {
+			if it.id == id && (name == "" || strings.Fields(it.label)[0] == name) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			h.t.Fatalf("no item %q on the screen:\n%s", step, h.view())
+		}
+		h.pick(at)
+	}
+}
+
+var (
+	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
+	spaces = regexp.MustCompile(` +`)
+)
+
+var namedKeys = map[string]tea.KeyType{
+	"enter": tea.KeyEnter, "esc": tea.KeyEsc, "up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft,
+	"right": tea.KeyRight, "backspace": tea.KeyBackspace, "delete": tea.KeyDelete, "home": tea.KeyHome,
+	"end": tea.KeyEnd, "ctrl+c": tea.KeyCtrlC, "ctrl+u": tea.KeyCtrlU, "ctrl+k": tea.KeyCtrlK,
+	"ctrl+w": tea.KeyCtrlW, "ctrl+a": tea.KeyCtrlA, "ctrl+e": tea.KeyCtrlE,
+}
+
+// press sends keys: a name from namedKeys, or a single character.
+func (h *tui) press(keys ...string) {
+	h.t.Helper()
+	for _, k := range keys {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		if typ, ok := namedKeys[k]; ok {
+			msg = tea.KeyMsg{Type: typ}
+		} else if k == " " {
+			msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+		}
+		_, cmd := h.a.Update(msg)
+		h.settle(cmd)
+	}
+}
+
+// typ types a text, a space as the key it is.
+func (h *tui) typ(s string) {
+	h.t.Helper()
+	for _, r := range s {
+		h.press(string(r))
+	}
+}
+
+// replace clears the field and types s into it.
+func (h *tui) replace(s string) {
+	h.t.Helper()
+	h.press("end", "ctrl+u")
+	h.typ(s)
+}
+
+func (h *tui) view() string { return ansiRe.ReplaceAllString(h.a.View(), "") }
+
+func (h *tui) config() *config.Config {
+	h.t.Helper()
+	cfg, err := config.Load()
+	if err != nil {
+		h.t.Fatalf("the config does not load: %v\n%s", err, h.text())
+	}
+	return cfg
+}
+
+func (h *tui) text() string {
+	b, err := os.ReadFile(h.cfgPath)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return string(b)
+}
+
+// has checks that the screen holds each text, ignoring runs of spaces.
+func (h *tui) has(wants ...string) {
+	h.t.Helper()
+	view := spaces.ReplaceAllString(h.view(), " ")
+	for _, w := range wants {
+		if !strings.Contains(view, spaces.ReplaceAllString(w, " ")) {
+			h.t.Errorf("the screen lacks %q:\n%s", w, h.view())
+		}
+	}
+}
+
+func (h *tui) lacks(unwanted ...string) {
+	h.t.Helper()
+	view := spaces.ReplaceAllString(h.view(), " ")
+	for _, w := range unwanted {
+		if strings.Contains(view, spaces.ReplaceAllString(w, " ")) {
+			h.t.Errorf("the screen has %q:\n%s", w, h.view())
+		}
+	}
+}
+
+func (h *tui) input() *input {
+	h.t.Helper()
+	in, ok := h.a.top().(*input)
+	if !ok {
+		h.t.Fatalf("the top screen is not an input:\n%s", h.view())
+	}
+	return in
+}
+
+// cliOnly are the commands the interface does not have, and why.
+var cliOnly = map[string]string{
+	"--serve":       "runs the server in the foreground, which is the opposite of a menu; the interface starts and stops the background one",
+	"--completion":  "prints a script for the shell; there is no shell in a full-screen interface",
+	"--help":        "the interface shows its keys on every screen and each item says what it does",
+	"--interactive": "the interface itself",
+	"-i":            "the interface itself",
+}
+
+// feature ties the entries of the command line to the id paths of the
+// interface that do the same.
+type feature struct {
+	cli []string
+	tui []string
+}
+
+// peakAt are the two places where the peak hours of a provider are edited.
+var peakAt = []string{"peak/provider", "providers/provider/peak"}
+
+func under(prefixes []string, tail string) []string {
+	var out []string
+	for _, p := range prefixes {
+		out = append(out, p+"/"+tail)
+	}
+	return out
+}
+
+func backendKinds(prefix string) []string {
+	var out []string
+	for _, k := range []string{"codex", "codex_api", "anthropic_compat", "claude", "claude_api"} {
+		out = append(out, prefix+"/kind_"+k)
+	}
+	return out
+}
+
+func features() []feature {
+	f := []feature{
+		{[]string{"--profile list"}, []string{"profiles", "profiles/profile"}},
+		{[]string{"--profile add --like"}, []string{"profiles/add/add_like/name"}},
+		{[]string{"--profile add --provider"}, []string{"profiles/add/add_provider/name"}},
+		{[]string{"--profile add --type"}, append(backendKinds("profiles/add/add_type"), backendKinds("providers/add")...)},
+		{[]string{"--profile rm"}, []string{"profiles/profile/rm/rm_keep", "profiles/profile/rm/rm_purge"}},
+		{[]string{"--profile set default_model", "--profile unset default_model"}, []string{"profiles/profile/default_model"}},
+		{[]string{"--profile set context_window", "--profile unset context_window"}, []string{"profiles/profile/context_window"}},
+		{[]string{"--profile set compact_percent", "--profile unset compact_percent"}, []string{"profiles/profile/compact_percent"}},
+		{[]string{"--profile set provider"}, []string{"profiles/profile/move/provider"}},
+
+		{[]string{"--provider"}, []string{"providers", "providers/provider"}},
+		{[]string{"--provider set base_url", "--provider unset base_url"}, []string{"providers/provider/base_url", "profiles/profile/base_url"}},
+		{[]string{"--provider set api_key_env", "--provider unset api_key_env"}, []string{"providers/provider/api_key_env"}},
+
+		{[]string{"--connections"}, []string{"config"}},
+		{[]string{"--connections active"}, []string{"config/active"}},
+		{[]string{"--connections total"}, []string{"config/total"}},
+		{[]string{"--connections proxy"}, []string{"config/proxy"}},
+		{[]string{"--connections proxy provider"}, []string{"providers/provider/proxy"}},
+		{[]string{"--connections proxy profile"}, []string{"profiles/profile/proxy"}},
+
+		{[]string{"--speed"}, []string{"config/speed", "config/speed/profile", "config/speed/profile/family", "config/speed/profile/family/fast", "config/speed/profile/family/standard", "config/speed/profile/family/unset"}},
+		{[]string{"--peak"}, append([]string{"peak"}, peakAt...)},
+		{[]string{"--peak set"}, under(peakAt, "set")},
+		{[]string{"--peak add"}, under(peakAt, "add")},
+		{[]string{"--peak rm"}, under(peakAt, "rm/window")},
+		{[]string{"--peak tz"}, under(peakAt, "tz")},
+		{[]string{"--peak clear"}, under(peakAt, "clear")},
+		{[]string{"--peak pause"}, under(peakAt, "pause")},
+		{[]string{"--peak resume"}, under(peakAt, "resume")},
+
+		{[]string{"--models"}, []string{"models/show", "models/profile", "models/profile/show"}},
+		{[]string{"--models apply"}, []string{"models/apply", "models/profile/apply"}},
+		{[]string{"--which"}, []string{"models/profile/which"}},
+		{[]string{"--config reset"}, []string{"config/reset"}},
+
+		{[]string{"--login"}, []string{"providers/provider/login", "profiles/profile/login"}},
+		{[]string{"--login --device"}, []string{"providers/provider/login_device"}},
+		{[]string{"--logout"}, []string{"providers/provider/logout"}},
+
+		{[]string{"--send"}, []string{"sessions/send/name/name/copy"}},
+		{[]string{"--send --fork"}, []string{"sessions/send/name/name/fork", "sessions/send/name/name/forkforce"}},
+		{[]string{"--send --force"}, []string{"sessions/send/name/name/force"}},
+		{[]string{"--import"}, []string{"sessions/import/name/copy"}},
+		{[]string{"--import --fork"}, []string{"sessions/import/name/fork", "sessions/import/name/forkforce"}},
+		{[]string{"--import --force"}, []string{"sessions/import/name/force"}},
+		{[]string{"--export"}, []string{"sessions/export/name/copy"}},
+		{[]string{"--export --fork"}, []string{"sessions/export/name/fork", "sessions/export/name/forkforce"}},
+		{[]string{"--export --force"}, []string{"sessions/export/name/force"}},
+
+		{[]string{"--status"}, []string{"server/status"}},
+		{[]string{"--start"}, []string{"server/start"}},
+		{[]string{"--stop"}, []string{"server/stop"}},
+		{[]string{"--restart"}, []string{"server/restart"}},
+		{[]string{"--logs"}, []string{"server/logs"}},
+		{[]string{"--doctor"}, []string{"server/doctor"}},
+		{[]string{"--version"}, []string{"server/version"}},
+		{[]string{"--update --check"}, []string{"server/check_update"}},
+		{[]string{"--update"}, []string{"server/update"}},
+	}
+	return f
+}
+
+// cliEntries are the commands and their verbs, as "--peak tz".
+// needsVerb are the commands that do nothing without one.
+var needsVerb = map[string]bool{"--profile": true, "--config": true}
+
+func cliEntries() []string {
+	var out []string
+	for _, c := range cli.Commands() {
+		if c.Hidden {
+			continue
+		}
+		if !needsVerb[c.Name] {
+			out = append(out, c.Name)
+		}
+		for _, v := range c.Verbs {
+			out = append(out, c.Name+" "+v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // parityConfig has one of everything the screens list: every kind of provider,
 // profiles that set every key, peak hours.
@@ -301,11 +592,6 @@ type editRun struct {
 	cli     []string
 	prime   [][]string // peak commands run first on both sides
 	tui     func(h *tui)
-}
-
-func replaceAndEnter(h *tui, text string) {
-	h.replace(text)
-	h.press("enter")
 }
 
 func editRuns() []editRun {
@@ -619,271 +905,4 @@ func TestParityShowScreensShowWhatTheCommandsPrint(t *testing.T) {
 	}
 }
 
-const peakTestBody = "listen.port: 60093\n\nproviders: [\n    {\n        name: p\n        type: codex\n    }\n    {\n        name: work\n        type: claude\n    }\n]\n\nprofiles: [\n    {\n        name: pp\n        provider: p\n    }\n    {\n        name: work\n        provider: work\n    }\n]\n"
-
-func peakTestConfig(t *testing.T) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), "config.ktav")
-	if err := os.WriteFile(p, []byte(peakTestBody), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(config.ConfigFileEnv, p)
-	return p
-}
-
 var peakNow = time.Date(2026, 11, 3, 15, 42, 0, 0, time.FixedZone("+08:00", 8*3600))
-
-// pickTUI is the list of `ccgp .` over uiConfig (profiles codex, work, zai).
-func pickTUI(t *testing.T) (*tui, *string) {
-	t.Helper()
-	h := newTUI(t, uiConfig)
-	picked := new(string)
-	h.a.stack = []screen{pickMenu(picked)}
-	return h, picked
-}
-
-func TestPickListsTheProfilesAndYourOwnClaude(t *testing.T) {
-	h, _ := pickTUI(t)
-	h.has("Run Claude Code with which profile?", "1 codex codex codex", "2 work work claude", "3 zai zai anthropic_compat",
-		"4 claude your own Claude Code, as plain claude (no ccgp)",
-		"c your own Claude Code · esc, q or ctrl+c leave without running")
-	h.lacks("esc back")
-}
-
-func TestPickChoosesAndQuits(t *testing.T) {
-	for _, c := range []struct {
-		keys []string
-		want string
-	}{
-		{[]string{"2"}, "work"},
-		{[]string{"enter"}, "codex"},
-		{[]string{"down", "down", "enter"}, "zai"},
-		{[]string{"up", "enter"}, sess.ClaudeEndpointLabel}, // up from the first wraps to the last
-		{[]string{"c"}, sess.ClaudeEndpointLabel},
-		{[]string{"4"}, sess.ClaudeEndpointLabel},
-	} {
-		h, picked := pickTUI(t)
-		h.press(c.keys...)
-		if *picked != c.want || !h.a.quit {
-			t.Errorf("%q: picked %q, quit %v; want %q", c.keys, *picked, h.a.quit, c.want)
-		}
-		if h.text() != uiConfig {
-			t.Errorf("%q: choosing changed the config", c.keys)
-		}
-	}
-}
-
-func TestPickClosedWithoutAChoice(t *testing.T) {
-	for _, k := range []string{"esc", "q", "ctrl+c"} {
-		h, picked := pickTUI(t)
-		h.press(k)
-		if *picked != "" || !h.a.quit {
-			t.Errorf("%q: picked %q, quit %v; want nothing and quit", k, *picked, h.a.quit)
-		}
-	}
-}
-
-// Without a terminal there is no list to draw: the error says to name a profile.
-func TestLaunchPickedNeedsATerminal(t *testing.T) {
-	newTUI(t, uiConfig)
-	if err := LaunchPicked(nil); err == nil || !strings.Contains(err.Error(), "needs a terminal") ||
-		!strings.Contains(err.Error(), "ccgp <profile>") {
-		t.Errorf("launchPicked without a terminal: %v", err)
-	}
-}
-
-// "." is a profile word for the parser, never a valid profile name.
-func TestPickArgIsAProfileWordThatNoProfileCanHave(t *testing.T) {
-	inv, err := cli.ParseInvocation([]string{cli.PickArg, "-c", "x"})
-	if err != nil || inv.Cmd != nil || inv.Profile != cli.PickArg || strings.Join(inv.Args, "|") != "-c|x" {
-		t.Errorf("parseInvocation(. -c x) = %+v, %v", inv, err)
-	}
-	if err := cfgedit.ValidateProfileName(cli.PickArg); err == nil {
-		t.Error(`"." must not be a valid profile name`)
-	}
-}
-
-// What the list returned is run: nothing, plain claude (found in PATH) or the
-// profile (launch, which names an unknown one).
-func TestRunPicked(t *testing.T) {
-	newTUI(t, uiConfig)
-	if err := runPicked("", nil); !errors.Is(err, errNotPicked) {
-		t.Errorf("nothing picked: %v", err)
-	}
-	t.Setenv("PATH", t.TempDir())
-	if err := runPicked(sess.ClaudeEndpointLabel, []string{"-c"}); err == nil || err.Error() != "claude not found in PATH" {
-		t.Errorf("claude picked, none in PATH: %v", err)
-	}
-	if err := runPicked("gone", nil); err == nil || !strings.Contains(err.Error(), `unknown profile "gone"`) {
-		t.Errorf("a profile removed meanwhile: %v", err)
-	}
-}
-
-func TestSpeedTUIUnsetParityAndRepeat(t *testing.T) {
-	h := newTUI(t, parityConfig)
-	if err := tune.Speed(&bytes.Buffer{}, []string{"codex", "astra", "fast"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.a.reload(); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(h.cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	backups, err := filepath.Glob(h.cfgPath + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.open("config", "speed", "profile:codex", "family:astra")
-	if !strings.Contains(h.view(), "fast (profile rule)") {
-		t.Fatalf("inspection: %s", h.view())
-	}
-	inspected, err := os.ReadFile(h.cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterInspect, err := filepath.Glob(h.cfgPath + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, inspected) || len(backups) != len(afterInspect) {
-		t.Fatal("inspection wrote config or backup")
-	}
-	h.open("unset")
-	if h.a.errMsg != "" {
-		t.Fatal(h.a.errMsg)
-	}
-	viaTUI, err := os.ReadFile(h.cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	backups, err = filepath.Glob(h.cfgPath + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.open("unset")
-	if h.a.errMsg != "" {
-		t.Fatal(h.a.errMsg)
-	}
-	if !strings.Contains(h.a.msg, "unchanged") {
-		t.Fatalf("repeated unset: %q", h.a.msg)
-	}
-	repeated, err := os.ReadFile(h.cfgPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterRepeat, err := filepath.Glob(h.cfgPath + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(viaTUI, repeated) || len(backups) != len(afterRepeat) {
-		t.Fatal("repeated TUI unset wrote config or backup")
-	}
-	path := filepath.Join(t.TempDir(), "config.ktav")
-	if err := os.WriteFile(path, before, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(config.ConfigFileEnv, path)
-	if err := tune.Speed(&bytes.Buffer{}, []string{"codex", "astra", "unset"}); err != nil {
-		t.Fatal(err)
-	}
-	viaCLI, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(viaTUI, viaCLI) {
-		t.Fatal("TUI and CLI unset produced different configs")
-	}
-	backups, err = filepath.Glob(path + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := tune.Speed(&bytes.Buffer{}, []string{"codex", "astra", "unset"}); err != nil {
-		t.Fatal(err)
-	}
-	repeated, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterRepeat, err = filepath.Glob(path + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(viaCLI, repeated) || len(backups) != len(afterRepeat) {
-		t.Fatal("repeated CLI unset wrote config or backup")
-	}
-}
-
-func TestSpeedProfileIsolation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.ktav")
-	body := strings.Replace(parityConfig, "name: zai2\n        provider: zai", "name: zai2\n        provider: codex", 1)
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(config.ConfigFileEnv, path)
-	if err := tune.Speed(&bytes.Buffer{}, []string{"codex", "astra", "fast"}); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := tune.Speed(&out, []string{"zai2", "astra"}); err != nil || !strings.Contains(out.String(), "inherit (client request)") {
-		t.Fatalf("other profile: %q %v", out.String(), err)
-	}
-}
-
-func TestSpeedRulesCommand(t *testing.T) {
-	path := peakTestConfig(t)
-	run := func(args ...string) (string, error) {
-		var b bytes.Buffer
-		err := tune.Speed(&b, args)
-		return b.String(), err
-	}
-	for _, args := range [][]string{{"pp"}, {"work", "astra"}, {"missing", "astra"}, {"pp", "astra-1", "fast"}, {"pp", "astra", "turbo"}} {
-		if _, err := run(args...); err == nil {
-			t.Errorf("accepted %v", args)
-		}
-	}
-	if out, err := run("pp", "astra"); err != nil || !strings.Contains(out, "inherit (client request)") {
-		t.Fatalf("inspect: %q %v", out, err)
-	}
-	if out, err := run("pp", "astra", "fast"); err != nil || !strings.Contains(out, "fast (profile rule)") {
-		t.Fatalf("set: %q %v", out, err)
-	}
-	if out, err := run(); err != nil || !strings.Contains(out, "pp astra: fast") {
-		t.Fatalf("list: %q %v", out, err)
-	}
-	if out, err := run("pp", "sol", "standard"); err != nil || !strings.Contains(out, "standard") {
-		t.Fatalf("set standard: %q %v", out, err)
-	}
-	if _, err := run("pp", "astra", "inherit"); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := run("pp", "astra"); err != nil || !strings.Contains(out, "inherit") {
-		t.Fatalf("inspect unset: %q %v", out, err)
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	backups, err := filepath.Glob(path + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out, err := run("pp", "astra", "unset"); err != nil || !strings.Contains(out, "unchanged") {
-		t.Fatalf("repeat unset: %q %v", out, err)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next, err := filepath.Glob(path + ".bak-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, after) || len(backups) != len(next) {
-		t.Fatal("repeat unset wrote config or backup")
-	}
-	if out, err := run(); err != nil || strings.Contains(out, "astra") || !strings.Contains(out, "pp sol: standard") {
-		t.Fatalf("list after unset: %q %v", out, err)
-	}
-}

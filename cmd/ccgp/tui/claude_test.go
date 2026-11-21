@@ -7,11 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/cli"
 	"github.com/PHPCraftdream/cc-go-proxy/cmd/ccgp/common"
@@ -19,7 +17,6 @@ import (
 	"github.com/PHPCraftdream/cc-go-proxy/internal/config"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/creds"
 	"github.com/PHPCraftdream/cc-go-proxy/internal/home"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Profiles, sorted: api, codex, zai. Providers, sorted: api, codex, zai.
@@ -390,15 +387,6 @@ func captureStdout(t *testing.T, fn func()) string {
 	return <-done
 }
 
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
 // fakeClaude puts a `claude` that records its arguments and environment into
 // the file named by CCGP_FAKE_OUT and exits with status 3 first on PATH. The
 // rest of PATH stays, the Windows script needs cmd.exe.
@@ -482,11 +470,6 @@ func ownSetup(t *testing.T) (userDir, profileDir string) {
 	return userDir, filepath.Join(base, "work")
 }
 
-var testNames = cli.CompletionNames{
-	Profiles:  func() []string { return []string{"codex", "codex2", "zai"} },
-	Providers: func() []string { return []string{"codex", "zai"} },
-}
-
 // addClaude creates profile name of type claude in a fresh test config.
 func addClaude(t *testing.T, name string) (string, *config.Config) {
 	t.Helper()
@@ -497,11 +480,6 @@ func addClaude(t *testing.T, name string) (string, *config.Config) {
 	return path, loadTestConfig(t)
 }
 
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func loadTestConfig(t *testing.T) *config.Config {
 	t.Helper()
 	cfg, err := config.Load()
@@ -509,15 +487,6 @@ func loadTestConfig(t *testing.T) *config.Config {
 		t.Fatal(err)
 	}
 	return cfg
-}
-
-func profileByName(t *testing.T, cfg *config.Config, name string) *config.Profile {
-	t.Helper()
-	pf, ok := cfg.Profiles[name]
-	if !ok {
-		t.Fatalf("profile %q missing after the edit (have %v)", name, common.Names(cfg.Profiles))
-	}
-	return pf
 }
 
 func runLogout(t *testing.T, store creds.Store, cfg *config.Config, provider, input string, yes bool) (string, error) {
@@ -601,269 +570,7 @@ profiles: [
 ]
 `
 
-// The proxy of a provider is edited on its screen, and a profile says which
-// level its own proxy comes from.
-func TestTUIProviderProxy(t *testing.T) {
-	h := newTUI(t, uiConfig)
-	h.press("2", "3", "3") // Providers, zai, proxy
-	if got := string(h.input().text); got != "" {
-		t.Errorf("the field starts with %q", got)
-	}
-	h.typ("http://corp:3128")
+func replaceAndEnter(h *tui, text string) {
+	h.replace(text)
 	h.press("enter")
-	h.has("proxy http://corp:3128 (its own)", "3 proxy http://corp:3128", "config.ktav updated")
-	if pr := h.config().Providers["zai"]; pr.Proxy != "http://corp:3128" {
-		t.Errorf("provider proxy = %q", pr.Proxy)
-	}
-
-	// The profile of the provider goes through it, until it has a proxy of its own.
-	h.press("esc", "esc", "1", "3") // main menu, Profiles, zai
-	h.has("proxy http://corp:3128 (of provider zai)")
-	h.press("4")
-	h.typ("socks5://own:1080")
-	h.press("enter")
-	h.has("proxy socks5://own:1080 (its own)")
-	h.press("4")
-	h.replace("none")
-	h.press("enter")
-	h.has("proxy none (its own)")
-	h.press("4", "ctrl+u", "enter") // empty: the provider's proxy again
-	h.has("proxy http://corp:3128 (of provider zai)")
-
-	// none for the provider: direct; empty: the global proxy again.
-	h.press("esc", "esc", "2", "3", "3")
-	h.replace("none")
-	h.press("enter")
-	h.has("proxy none (its own)")
-	h.press("3", "ctrl+u", "enter")
-	h.has("proxy global (")
-	if pr := h.config().Providers["zai"]; pr.Proxy != "" {
-		t.Errorf("provider proxy after emptying = %q", pr.Proxy)
-	}
-
-	// A wrong proxy changes nothing.
-	before := h.text()
-	h.press("3")
-	h.typ("ftp://nope")
-	h.press("enter")
-	h.has("error:")
-	h.press("esc")
-	if h.text() != before {
-		t.Error("a wrong proxy changed the config")
-	}
-}
-
-// codex has no base_url to show but a proxy and peak hours all the same; a
-// Claude provider has no proxy at all.
-func TestTUIProviderProxyOfOtherKinds(t *testing.T) {
-	h := newTUI(t, uiConfig)
-	h.press("2", "1", "2") // Providers, codex, proxy
-	h.typ("socks5://127.0.0.1:1080")
-	h.press("enter")
-	h.has("Provider codex", "proxy socks5://127.0.0.1:1080 (its own)")
-	if pr := h.config().Providers["codex"]; pr.Proxy != "socks5://127.0.0.1:1080" {
-		t.Errorf("codex proxy = %q", pr.Proxy)
-	}
-
-	h = newTUI(t, uiConfig)
-	h.press("2", "2")
-	h.has("Provider work", "type claude")
-	h.lacks("proxy")
-}
-
-// Profiles, sorted: codex, work, zai. Providers, sorted: codex, work, zai.
-const uiConfig = `listen.port: 60093
-
-providers: [
-    {
-        name: codex
-        type: codex
-    }
-    {
-        name: zai
-        type: anthropic_compat
-        base_url: https://api.z.ai/api/anthropic
-    }
-    {
-        name: work
-        type: claude
-    }
-]
-
-profiles: [
-    {
-        name: codex
-        provider: codex
-    }
-    {
-        name: zai
-        provider: zai
-        models: [
-            {
-                match: *
-                model: glm-5.3-flash
-                context_window: 1000000
-            }
-        ]
-    }
-    {
-        name: work
-        provider: work
-    }
-]
-`
-
-// tui plays the interface: keys go to Update, the screen is what View draws.
-type tui struct {
-	t          *testing.T
-	a          *app
-	cfgPath    string
-	claudeBase string
-	store      creds.Store
-	ran        []ran
-}
-
-func newTUI(t *testing.T, cfgText string) *tui {
-	t.Helper()
-	root := t.TempDir()
-	t.Setenv("CCGP_HOME", filepath.Join(root, "home"))
-	path := filepath.Join(root, "config.ktav")
-	if err := os.WriteFile(path, []byte(cfgText), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv(config.ConfigFileEnv, path)
-	h := &tui{t: t, cfgPath: path, claudeBase: filepath.Join(root, "claude"), store: creds.Store{Dir: filepath.Join(root, "creds")}}
-	a, err := newApp(h.store, h.claudeBase, func() time.Time { return peakNow })
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.run = h.fakeRun
-	h.a = a
-	return h
-}
-
-// ran is a command the interface started: its arguments, and whether it had
-// the terminal.
-type ran struct {
-	args     []string
-	terminal bool
-}
-
-// fakeRun stands for runSelf: it records the command and answers at once.
-func (h *tui) fakeRun(title string, args []string, terminal bool) tea.Cmd {
-	h.ran = append(h.ran, ran{args: args, terminal: terminal})
-	return func() tea.Msg {
-		if terminal {
-			return termDoneMsg{title: title}
-		}
-		return outputMsg{title: title, text: "output of ccgp " + strings.Join(args, " ")}
-	}
-}
-
-// settle runs the command a key returned and gives its answer to the model,
-// as the program does.
-func (h *tui) settle(cmd tea.Cmd) {
-	if cmd == nil {
-		return
-	}
-	switch m := cmd().(type) {
-	case outputMsg, termDoneMsg:
-		h.a.Update(m)
-	}
-}
-
-// open opens items by their ids: "profile:zai" is the item of the id profile
-// whose label starts with zai. It fails when an item is not there.
-func (h *tui) open(path ...string) {
-	h.t.Helper()
-	for _, step := range path {
-		id, name, _ := strings.Cut(step, ":")
-		m, ok := h.a.top().(*menu)
-		if !ok {
-			h.t.Fatalf("the top screen is not a menu at %q:\n%s", step, h.view())
-		}
-		at := -1
-		for i, it := range m.items(h.a) {
-			if it.id == id && (name == "" || strings.Fields(it.label)[0] == name) {
-				at = i
-				break
-			}
-		}
-		if at < 0 {
-			h.t.Fatalf("no item %q on the screen:\n%s", step, h.view())
-		}
-		h.pick(at)
-	}
-}
-
-var (
-	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]`)
-	spaces = regexp.MustCompile(` +`)
-)
-
-var namedKeys = map[string]tea.KeyType{
-	"enter": tea.KeyEnter, "esc": tea.KeyEsc, "up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft,
-	"right": tea.KeyRight, "backspace": tea.KeyBackspace, "delete": tea.KeyDelete, "home": tea.KeyHome,
-	"end": tea.KeyEnd, "ctrl+c": tea.KeyCtrlC, "ctrl+u": tea.KeyCtrlU, "ctrl+k": tea.KeyCtrlK,
-	"ctrl+w": tea.KeyCtrlW, "ctrl+a": tea.KeyCtrlA, "ctrl+e": tea.KeyCtrlE,
-}
-
-// press sends keys: a name from namedKeys, or a single character.
-func (h *tui) press(keys ...string) {
-	h.t.Helper()
-	for _, k := range keys {
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
-		if typ, ok := namedKeys[k]; ok {
-			msg = tea.KeyMsg{Type: typ}
-		} else if k == " " {
-			msg = tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
-		}
-		_, cmd := h.a.Update(msg)
-		h.settle(cmd)
-	}
-}
-
-// typ types a text, a space as the key it is.
-func (h *tui) typ(s string) {
-	h.t.Helper()
-	for _, r := range s {
-		h.press(string(r))
-	}
-}
-
-// replace clears the field and types s into it.
-func (h *tui) replace(s string) {
-	h.t.Helper()
-	h.press("end", "ctrl+u")
-	h.typ(s)
-}
-
-func (h *tui) view() string { return ansiRe.ReplaceAllString(h.a.View(), "") }
-
-func (h *tui) config() *config.Config {
-	h.t.Helper()
-	cfg, err := config.Load()
-	if err != nil {
-		h.t.Fatalf("the config does not load: %v\n%s", err, h.text())
-	}
-	return cfg
-}
-
-func (h *tui) text() string {
-	b, err := os.ReadFile(h.cfgPath)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	return string(b)
-}
-
-// has checks that the screen holds each text, ignoring runs of spaces.
-func (h *tui) has(wants ...string) {
-	h.t.Helper()
-	view := spaces.ReplaceAllString(h.view(), " ")
-	for _, w := range wants {
-		if !strings.Contains(view, spaces.ReplaceAllString(w, " ")) {
-			h.t.Errorf("the screen lacks %q:\n%s", w, h.view())
-		}
-	}
 }
